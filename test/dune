@@ -1,0 +1,6 @@
+(test
+ (name test_cwl)
+ (libraries cwl alcotest qcheck-core qcheck-alcotest)
+ (modules test_cwl harness)
+ (deps
+  (source_tree fixtures)))

@@ -1,0 +1,5 @@
+(library
+ (name cwl)
+ (public_name caml-cwl-runner)
+ (libraries yaml)
+ (private_modules data))
