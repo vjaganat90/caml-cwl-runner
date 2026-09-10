@@ -280,3 +280,87 @@ let rec string_of_value = function
       ^ String.concat ", "
           (List.map (fun (k, v) -> k ^ ": " ^ string_of_value v) kvs)
       ^ "}"
+
+let json_string s =
+  let buf = Buffer.create (String.length s + 2) in
+  Buffer.add_char buf '"';
+  String.iter
+    (function
+      | '"' -> Buffer.add_string buf "\\\""
+      | '\\' -> Buffer.add_string buf "\\\\"
+      | '\b' -> Buffer.add_string buf "\\b"
+      | '\n' -> Buffer.add_string buf "\\n"
+      | '\r' -> Buffer.add_string buf "\\r"
+      | '\t' -> Buffer.add_string buf "\\t"
+      | c when Char.code c < 0x20 ->
+          Buffer.add_string buf (Printf.sprintf "\\u%04x" (Char.code c))
+      | c -> Buffer.add_char buf c)
+    s;
+  Buffer.add_char buf '"';
+  Buffer.contents buf
+
+let json_object fields =
+  let body =
+    String.concat "," (List.map (fun (k, v) -> json_string k ^ ":" ^ v) fields)
+  in
+  "{" ^ body ^ "}"
+
+let rec to_json = function
+  | Vnull -> "null"
+  | Vbool true -> "true"
+  | Vbool false -> "false"
+  | Vint n -> Int64.to_string n
+  | Vfloat f ->
+      if Float.is_integer f && Float.abs f < 1e15 then Printf.sprintf "%.0f" f
+      else string_of_float f
+  | Vstring s -> json_string s
+  | Vfile f ->
+      let fields = [ ("class", json_string "File") ] in
+      let fields =
+        match f.location with
+        | Some loc ->
+            let loc =
+              if String.starts_with ~prefix:"file:" loc then loc
+              else "file://" ^ loc
+            in
+            fields @ [ ("location", json_string loc) ]
+        | None -> fields
+      in
+      let fields =
+        match f.path with
+        | Some p -> fields @ [ ("path", json_string p) ]
+        | None -> fields
+      in
+      let fields =
+        match f.basename with
+        | Some b -> fields @ [ ("basename", json_string b) ]
+        | None -> fields
+      in
+      let fields =
+        match f.size with
+        | Some n -> fields @ [ ("size", Int64.to_string n) ]
+        | None -> fields
+      in
+      json_object fields
+  | Vdir d ->
+      let fields = [ ("class", json_string "Directory") ] in
+      let fields =
+        match d.location with
+        | Some loc ->
+            let loc =
+              if String.starts_with ~prefix:"file:" loc then loc
+              else "file://" ^ loc
+            in
+            fields @ [ ("location", json_string loc) ]
+        | None -> fields
+      in
+      let fields =
+        match d.path with
+        | Some p -> fields @ [ ("path", json_string p) ]
+        | None -> fields
+      in
+      json_object fields
+  | Varray xs -> "[" ^ String.concat "," (List.map to_json xs) ^ "]"
+  | Vrecord kvs -> json_object (List.map (fun (k, v) -> (k, to_json v)) kvs)
+
+let object_to_json obj = to_json (Vrecord obj)

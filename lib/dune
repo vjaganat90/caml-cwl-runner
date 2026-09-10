@@ -1,5 +1,5 @@
 (library
  (name cwl)
  (public_name caml-cwl-runner)
- (libraries yaml)
+ (libraries yaml re eio eio.unix)
  (private_modules data))

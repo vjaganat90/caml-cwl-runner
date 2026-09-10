@@ -35,6 +35,7 @@ let pp fmt = function
   | Expr { message } -> Format.fprintf fmt "expression error: %s" message
   | Missing { param } ->
       Format.fprintf fmt "missing required input parameter '%s'" param
+  | Runtime { message } -> Format.fprintf fmt "runtime error: %s" message
 
 let to_string t = Format.asprintf "%a" pp t
 

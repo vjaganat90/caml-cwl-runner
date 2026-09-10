@@ -1,4 +1,5 @@
-(** Expected failure vs shift-left "we parsed this and do not implement it". *)
+(** Failure of the current operation vs a parsed construct that is not
+    implemented. *)
 
 include module type of Data.Error
 

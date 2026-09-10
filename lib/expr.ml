@@ -9,6 +9,10 @@ let default_runtime =
   }
 
 let runtime_with_cores cores = { default_runtime with cores }
+
+let runtime_with ~outdir ~tmpdir ~cores =
+  { outdir; tmpdir; cores; ram = default_runtime.ram }
+
 let expr_err message = Error (Error.Expr { message })
 let unsupported feature = Error (Error.Unsupported { feature })
 

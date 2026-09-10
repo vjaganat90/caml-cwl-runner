@@ -58,13 +58,13 @@ let implemented_tool_keys =
     "$graph";
     "$import";
     "$include";
+    "successCodes";
   ]
 
 let known_tool_keys =
   implemented_tool_keys
   @ [
       "intent";
-      "successCodes";
       "temporaryFailCodes";
       "permanentFailCodes";
       "$namespaces";
@@ -84,6 +84,17 @@ let implemented_binding_keys =
 
 let known_binding_keys =
   implemented_binding_keys @ [ "shellQuote"; "loadContents" ]
+
+let implemented_output_keys = [ "id"; "label"; "doc"; "type"; "outputBinding" ]
+
+let known_output_keys =
+  implemented_output_keys
+  @ [ "secondaryFiles"; "format"; "streamable"; "loadContents" ]
+
+let implemented_output_binding_keys = [ "glob" ]
+
+let known_output_binding_keys =
+  implemented_output_binding_keys @ [ "loadContents"; "outputEval" ]
 
 let diagnostics_for_keys ~implemented ~known ~json_path kvs =
   List.filter_map
@@ -376,34 +387,146 @@ let parse_req_list ~json_path ~in_requirements v :
         (Format.asprintf "expected requirements/hints list or map, got %a"
            Doc.pp other)
 
+let parse_glob_list ~json_path v =
+  match v with
+  | Doc.Null -> Ok []
+  | Doc.String s -> Ok [ s ]
+  | Doc.Array xs ->
+      let rec go acc = function
+        | [] -> Ok (List.rev acc)
+        | Doc.String s :: rest -> go (s :: acc) rest
+        | other :: _ ->
+            schema_err json_path
+              (Format.asprintf "expected glob string, got %a" Doc.pp other)
+      in
+      go [] xs
+  | other ->
+      schema_err json_path
+        (Format.asprintf "expected glob string or array, got %a" Doc.pp other)
+
+let parse_output_binding ~json_path v :
+    (output_binding * Error.diagnostic list, Error.t) result =
+  match v with
+  | Doc.Object kvs ->
+      let diags =
+        diagnostics_for_keys ~implemented:implemented_output_binding_keys
+          ~known:known_output_binding_keys ~json_path kvs
+      in
+      let* glob =
+        match List.assoc_opt "glob" kvs with
+        | None -> Ok []
+        | Some g -> parse_glob_list ~json_path:(child json_path "glob") g
+      in
+      Ok ({ glob; unimplemented = diags }, diags)
+  | Doc.Null -> Ok ({ glob = []; unimplemented = [] }, [])
+  | other ->
+      schema_err json_path
+        (Format.asprintf "expected outputBinding object, got %a" Doc.pp other)
+
+let parse_output_type ~json_path v =
+  match v with
+  | Doc.String "stdout" -> Ok (Ty.File, Stdout, [])
+  | Doc.String "stderr" -> Ok (Ty.File, Stderr, [])
+  | _ ->
+      let* t, d = parse_cwl_type ~json_path v in
+      Ok (t, No_stream, d)
+
+let parse_output ~json_path ~id_opt v :
+    (output * Error.diagnostic list, Error.t) result =
+  match v with
+  | Doc.String s ->
+      let id = match id_opt with Some id -> id | None -> "" in
+      if id = "" then schema_err json_path "output missing id"
+      else
+        let* ty, stream, diags = parse_output_type ~json_path (Doc.String s) in
+        Ok
+          ( {
+              id = shortname id;
+              ty;
+              output_binding = None;
+              stream;
+              unimplemented = [];
+            },
+            diags )
+  | Doc.Object kvs ->
+      let id =
+        match id_opt with
+        | Some id -> Some id
+        | None -> Doc.string_field kvs "id"
+      in
+      let* id =
+        match id with
+        | Some id -> Ok (shortname id)
+        | None -> schema_err json_path "output missing id"
+      in
+      let* ty, stream, ty_diags =
+        match List.assoc_opt "type" kvs with
+        | None -> schema_err (child json_path "type") "output missing type"
+        | Some t -> parse_output_type ~json_path:(child json_path "type") t
+      in
+      let* output_binding, bind_diags =
+        match List.assoc_opt "outputBinding" kvs with
+        | None -> Ok (None, [])
+        | Some b ->
+            let* b, d =
+              parse_output_binding
+                ~json_path:(child json_path "outputBinding")
+                b
+            in
+            Ok (Some b, d)
+      in
+      let unimplemented =
+        diagnostics_for_keys ~implemented:implemented_output_keys
+          ~known:known_output_keys ~json_path kvs
+      in
+      Ok
+        ( { id; ty; output_binding; stream; unimplemented },
+          ty_diags @ bind_diags @ unimplemented )
+  | other ->
+      schema_err json_path
+        (Format.asprintf "expected output parameter, got %a" Doc.pp other)
+
 let parse_outputs ~json_path v :
     (output list * Error.diagnostic list, Error.t) result =
-  let stub id path =
-    let d = diag "outputs" path in
-    ({ id; unimplemented = [ d ] }, [ d ])
-  in
   match v with
   | Doc.Null -> Ok ([], [])
-  | Doc.Array [] -> Ok ([], [ diag "outputs" json_path ])
   | Doc.Array xs ->
       map_i
-        (fun i x ->
-          let path = nth json_path i in
-          let id =
-            match x with
-            | Doc.Object kvs -> (
-                match Doc.string_field kvs "id" with
-                | Some s -> shortname s
-                | None -> string_of_int i)
-            | _ -> string_of_int i
-          in
-          Ok (stub id path))
+        (fun i x -> parse_output ~json_path:(nth json_path i) ~id_opt:None x)
         xs
   | Doc.Object kvs ->
-      Ok
-        ( List.map (fun (k, _) -> fst (stub k (child json_path k))) kvs,
-          [ diag "outputs" json_path ] )
-  | _ -> Ok ([], [ diag "outputs" json_path ])
+      map_assoc
+        (fun k v ->
+          parse_output ~json_path:(child json_path k) ~id_opt:(Some k) v)
+        kvs
+  | other ->
+      schema_err json_path
+        (Format.asprintf "expected outputs array or map, got %a" Doc.pp other)
+
+let parse_success_codes v =
+  let one path x =
+    match x with
+    | Doc.Int n -> Ok (Int64.to_int n)
+    | Doc.Float f when Float.is_integer f -> Ok (int_of_float f)
+    | other ->
+        schema_err path (Format.asprintf "expected int, got %a" Doc.pp other)
+  in
+  match v with
+  | Doc.Null -> Ok [ 0 ]
+  | Doc.Int _ | Doc.Float _ ->
+      let* n = one "successCodes" v in
+      Ok [ n ]
+  | Doc.Array xs ->
+      let rec go i acc = function
+        | [] -> Ok (List.rev acc)
+        | x :: xs ->
+            let* n = one (nth "successCodes" i) x in
+            go (i + 1) (n :: acc) xs
+      in
+      go 0 [] xs
+  | other ->
+      schema_err "successCodes"
+        (Format.asprintf "expected int or array of int, got %a" Doc.pp other)
 
 let command_line_tool doc =
   match doc with
@@ -439,13 +562,10 @@ let command_line_tool doc =
       let stdout = Doc.string_field kvs "stdout" in
       let stdin = Doc.string_field kvs "stdin" in
       let stderr = Doc.string_field kvs "stderr" in
-      let diag_present feature value =
-        match value with Some _ -> [ diag feature feature ] | None -> []
-      in
-      let stream_diags =
-        diag_present "stdout" stdout
-        @ diag_present "stdin" stdin
-        @ diag_present "stderr" stderr
+      let* success_codes =
+        match List.assoc_opt "successCodes" kvs with
+        | None -> Ok [ 0 ]
+        | Some v -> parse_success_codes v
       in
       let present k =
         match List.assoc_opt k kvs with Some _ -> [ diag k k ] | None -> []
@@ -463,13 +583,14 @@ let command_line_tool doc =
           stdout;
           stdin;
           stderr;
+          success_codes;
           requirements;
           hints;
         }
       in
       let diagnostics =
         top_diags @ class_diag @ arg_diags @ in_diags @ out_diags @ req_diags
-        @ hint_diags @ stream_diags @ graph_diag @ import_diag
+        @ hint_diags @ graph_diag @ import_diag
       in
       Ok { Error.value = tool; diagnostics }
   | other ->

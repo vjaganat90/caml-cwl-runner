@@ -12,6 +12,7 @@ let mk_tool ?(base_command = [ "echo" ]) ?(arguments = []) inputs =
     stdout = None;
     stdin = None;
     stderr = None;
+    success_codes = [ 0 ];
     requirements = [];
     hints = [];
   }
@@ -74,3 +75,48 @@ let example ?(docker = false) name tool job expected () =
 
 let example_case ?docker name tool job expected =
   (name, `Quick, example ?docker name tool job expected)
+
+let mem_fs ~root files : (module Cwl.Glob.FS) =
+  let trim p =
+    let n = String.length p in
+    if n > 1 && p.[n - 1] = '/' then String.sub p 0 (n - 1) else p
+  in
+  let root = trim root in
+  let files =
+    List.map
+      (fun f ->
+        if f = root || String.starts_with ~prefix:(root ^ "/") f then f
+        else root ^ "/" ^ f)
+      files
+  in
+  let rec parents p acc =
+    match String.rindex_opt p '/' with
+    | None -> acc
+    | Some 0 -> "/" :: acc
+    | Some i ->
+        let d = String.sub p 0 i in
+        parents d (d :: acc)
+  in
+  let dirs =
+    root :: List.concat_map (fun f -> parents f []) files
+    |> List.sort_uniq String.compare
+  in
+  (module struct
+    let exists p = List.mem p files || List.mem p dirs
+    let is_dir p = List.mem p dirs
+
+    let read_dir p =
+      let prefix = if p = "/" then "/" else p ^ "/" in
+      let plen = String.length prefix in
+      let names =
+        List.filter_map
+          (fun q ->
+            if String.starts_with ~prefix q then
+              let rest = String.sub q plen (String.length q - plen) in
+              if rest = "" || String.contains rest '/' then None else Some rest
+            else None)
+          (files @ dirs)
+        |> List.sort_uniq String.compare
+      in
+      Ok names
+  end)

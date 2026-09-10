@@ -19,7 +19,7 @@
  (name caml-cwl-runner)
  (synopsis "A CWL v1.2 runner in OCaml")
  (description
-  "Minimal Common Workflow Language v1.2.1 runner. Slice 1 builds CommandLineTool argv without executing.")
+  "Common Workflow Language v1.2.1 runner. Executes CommandLineTool locally.")
  (depends
   (ocaml
    (>= 5.5.0))
@@ -27,6 +27,9 @@
    (>= 3.17))
   cmdliner
   yaml
+  re
+  eio
+  eio_main
   (alcotest :with-test)
   (qcheck-core :with-test)
   (qcheck-alcotest :with-test)))
