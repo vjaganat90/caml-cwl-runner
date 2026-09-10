@@ -1,5 +1,4 @@
-(** InputBinding → argv. Pure. The JS/parameter-ref hole is a module argument.
-*)
+(** InputBinding → argv. Pure. Expression evaluation is a module argument. *)
 
 val argv :
   (module Expr.ENGINE) ->

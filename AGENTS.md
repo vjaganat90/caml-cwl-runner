@@ -2,7 +2,7 @@
 
 CWL v1.2.1 runner in OCaml 5.5. Binary: `ccr`.
 Source of truth, in order: CWL v1.2 spec → conformance tests → cwltool
-only for a disputed corner. Not a cwltool port.
+only for a disputed corner.
 
 CLI: `ccr [tool] [job]`. When execution exists, print the output object
 as JSON on stdout. Non-zero on failure; 33 means unimplemented feature.
@@ -11,11 +11,12 @@ as JSON on stdout. Non-zero on failure; 33 means unimplemented feature.
 
 `.mli` is the design. ADTs live once in private `Data` and are `include`d
 into `Cwl.Error`, `Cwl.Doc`, `Cwl.Type`, `Cwl.Schema`, `Cwl.Expr`.
-Module-dependent functions `(module E : ENGINE) -> …` at effectful holes
-(JS eval, FS, process spawn). Stdlib + `Result.t`. No objects, `Obj`,
+Module-dependent functions `(module E : ENGINE) -> …` at JS eval, FS, and
+process spawn. Stdlib + `Result.t`. No objects, `Obj`,
 refs, or Hashtbl unless a Runtime body truly needs them.
-I/O only in `Doc` and (when it exists) `Runtime`. Known-unimplemented
-CWL is a diagnostic, never a silent drop.
+I/O only in `Doc` and `Runtime`. Eio is the Runtime body and the CLI
+scheduler (`Eio_main.run`). No Lwt. `Glob` is pure given `(module FS)`.
+Known-unimplemented CWL is a diagnostic, never a silent drop.
 
 ## Tests
 
@@ -32,5 +33,5 @@ dune exec -- ccr --version
 dune fmt
 ```
 
-Do not add Eio/Lwt, a JS engine, or a vendored cwl-v1.2 tree until the
-module that needs them exists.
+Lwt is not used. A JavaScript engine and a vendored cwl-v1.2 tree belong
+in the modules that need them. Eio is confined to Runtime and `bin`.

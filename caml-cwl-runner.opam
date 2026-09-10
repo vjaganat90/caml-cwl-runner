@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "0.1.0"
 synopsis: "A CWL v1.2 runner in OCaml"
 description:
-  "Minimal Common Workflow Language v1.2.1 runner. Slice 1 builds CommandLineTool argv without executing."
+  "Common Workflow Language v1.2.1 runner. Executes CommandLineTool locally."
 maintainer: ["caml-cwl-runner contributors"]
 authors: ["caml-cwl-runner contributors"]
 license: "Apache-2.0"
@@ -14,6 +14,9 @@ depends: [
   "dune" {>= "3.17" & >= "3.17"}
   "cmdliner"
   "yaml"
+  "re"
+  "eio"
+  "eio_main"
   "alcotest" {with-test}
   "qcheck-core" {with-test}
   "qcheck-alcotest" {with-test}

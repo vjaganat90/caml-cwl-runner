@@ -2,9 +2,9 @@
 
 A CWL v1.2.1 runner in OCaml 5.5. Binary name: `ccr`.
 
-Slice 1 loads a `CommandLineTool` and a job and builds argv. It does not
-execute processes. `ccr tool.cwl job.json` prints diagnostics and exits 33
-(unimplemented feature).
+`ccr` executes a local `CommandLineTool` (no Docker, no JavaScript) and
+prints the CWL output object as JSON on stdout. Exit 33 means an
+unimplemented feature was required.
 
 ## Setup
 
@@ -24,4 +24,6 @@ dune fmt
 ```
 
 Source of truth: CWL v1.2 spec, then conformance tests, then cwltool only
-for a disputed corner. This is not a cwltool port.
+for a disputed corner.
+
+Architecture: [design_docs/runner.md](design_docs/runner.md).

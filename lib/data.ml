@@ -1,4 +1,4 @@
-(** ADTs written once. Each public module [include]s its slice. *)
+(** ADTs defined once. Public modules [include] their part. *)
 
 module Error = struct
   type t =
@@ -8,6 +8,7 @@ module Error = struct
     | Type of { param : string; expected : string; got : string }
     | Expr of { message : string }
     | Missing of { param : string }
+    | Runtime of { message : string }
 
   type diagnostic = {
     feature : string;
@@ -102,7 +103,20 @@ module Schema = struct
     | Resource of { cores_min : float option }
     | Unimplemented of { class_ : string; in_requirements : bool }
 
-  type output = { id : string; unimplemented : Error.diagnostic list }
+  type output_binding = {
+    glob : string list;
+    unimplemented : Error.diagnostic list;
+  }
+
+  type stream = Stdout | Stderr | No_stream
+
+  type output = {
+    id : string;
+    ty : cwl_type;
+    output_binding : output_binding option;
+    stream : stream;
+    unimplemented : Error.diagnostic list;
+  }
 
   type command_line_tool = {
     cwl_version : string;
@@ -114,6 +128,7 @@ module Schema = struct
     stdout : string option;
     stdin : string option;
     stderr : string option;
+    success_codes : int list;
     requirements : requirement list;
     hints : requirement list;
   }

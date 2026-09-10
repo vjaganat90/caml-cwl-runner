@@ -1,4 +1,4 @@
 (executable
  (public_name ccr)
  (name main)
- (libraries cwl cmdliner))
+ (libraries cwl cmdliner eio_main))
