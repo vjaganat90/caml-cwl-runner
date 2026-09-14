@@ -373,6 +373,12 @@ Returns existing paths, sorted, unique, relative to `root` joined onto
 `root`. Files and directories both. The caller filters by CWL type
 (`capture_files` / `capture_dirs` / `capture_files_and_dirs`).
 
+The walker does not `read_dir` a directory whose `realpath` is outside
+the allowed roots (output directory, temp directory, Directory input
+sources). A symlink *name* under `root` may still be a hit; execute
+then rejects the hit if the target is outside those roots. Hits are
+the glob paths, not the symlink target.
+
 ### 8.2 Language
 
 Spec: POSIX glob(3) pathname matching, relative to the output directory.
@@ -427,6 +433,8 @@ is an alternative; `ocaml-re` is the declared dependency.
 ## 9. Runtime
 
 ```ocaml
+type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
+
 module type RUNTIME = sig
   include Glob.FS
   val mkdir_p : string -> (unit, Error.t) result
@@ -436,6 +444,11 @@ module type RUNTIME = sig
   val read_file : string -> (string, Error.t) result
   val write_file : string -> string -> (unit, Error.t) result
   val file_size : string -> (int64, Error.t) result
+  val lstat : string -> node
+  val stat : string -> node
+  val realpath : string -> (string, Error.t) result
+  val confined :
+    roots:string list -> path:string -> (unit, Error.t) result
   val spawn :
     cwd:string ->
     stdin_file:string option ->
@@ -487,6 +500,31 @@ write outside `outdir`.
 
 Copy, not symlink: deleting `outdir` must not delete the user’s inputs.
 
+File copies are from a regular file (`stat` after follow). Stdout,
+stderr, and stdin opens do not follow a pre-existing destination
+symlink.
+
+### 9.3 Confinement
+
+Legal roots: `realpath` of `outdir`, `tmpdir`, and every Directory
+input’s resolved source. File inputs are copied into `outdir` under
+`basename`, so the child does not see the original File path.
+
+`confined ~roots path` realpaths `path` and each root. The path is
+under a root when `path = root` or `path` starts with `root ^ "/"`.
+`/out` does not accept `/out-evil`.
+
+After `Cwl.run` returns `Ok`, every `File` / `Directory` `path` and
+`location` in the output object (declared outputs and extra JSON keys),
+once `file://` is stripped and the path is resolved, passes `confined`
+against the legal roots. `cwl.output.json` paths are checked against
+**`outdir` only** (invocation.md: `path` must not refer outside the
+output directory).
+
+A glob hit that is a symlink is allowed as a name under `outdir`.
+Building the File/Directory object then realpaths the hit; a target
+outside the legal roots is `Error.Runtime`.
+
 ---
 
 ## 10. CommandLineTool execution
@@ -535,19 +573,21 @@ sequenceDiagram
    unspecified non-zero is a permanent fail.
 10. If `outdir/cwl.output.json` exists: load it, `Type.object_of_doc`,
     ignore `outputBinding`. Relative File `path` / `location` resolve
-    against `outdir`. Declared outputs are type-checked (`Type.matches`);
-    extra keys are kept.
-11. Else walk `outputs`:
+    against `outdir`. Absolute `path` must already be under `outdir`.
+    Every File/Directory, including extra keys, is `confined` to
+    `outdir`. Declared outputs are type-checked (`Type.matches`).
+11. Else, if an outputBinding names `outputEval` or `loadContents`:
+    `Unsupported`. Otherwise walk `outputs`:
     - `stream = Stdout` → glob the stdout filename.
     - else `outputBinding.glob` (list of patterns, each may be a param-ref).
+    - Glob roots are `outdir`, `tmpdir`, and Directory input realpaths.
+    - Each hit is `confined` to those roots.
     - `File` + one hit → File object; zero + optional → `null`;
       zero + required → `Error.Runtime`; several + non-array → error.
     - `File[]` → array of Files, possibly empty.
     - Directory hits vs File type → `Error.Type` (conformance
       `capture_files` / `capture_dirs`).
-12. `outputEval` / `loadContents` on an outputBinding: `Unsupported` at
-    execute. `secondaryFiles` is a diagnostic; the File is still the glob
-    hit.
+12. `secondaryFiles` is a diagnostic; the File is still the glob hit.
 
 File objects emitted:
 
@@ -715,6 +755,7 @@ not delete user inputs. A Docker or InitialWorkDir Runtime may add
 | Eio in Runtime and `bin` only | Child cwd; Workflow fibers; no Lwt |
 | `Cwl.Glob` + `Re.Glob` + `FS` | POSIX/Python glob language, independently testable |
 | Copy staging, basename tokens | Matches existing argv; safe deletion of `outdir` |
+| `Runtime.confined` | Output File/Directory names are realpath + slash-prefix under legal roots |
 | `command_line` and `run` both public | Two oracles, one schema |
 | JS / Docker / Wf as extra modules of existing signatures | Bind and Schema stay unchanged |
 

@@ -266,6 +266,58 @@ let exec_cases =
         | None -> Alcotest.fail "missing example_out");
   ]
 
+let with_runtime f = Eio_main.run @@ fun env -> f (Cwl.Runtime.local env)
+
+let expect_ok = function
+  | Ok v -> v
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+
+let expect_runtime = function
+  | Error (Cwl.Error.Runtime _) -> ()
+  | Error e ->
+      Alcotest.fail ("expected Runtime error, got " ^ Cwl.Error.to_string e)
+  | Ok () -> Alcotest.fail "expected Runtime error"
+
+let runtime_setup (module R : Cwl.Runtime.RUNTIME) =
+  let parent = expect_ok (R.mkdtemp ~prefix:"ccr-conf-") in
+  let parent = expect_ok (R.abspath parent) in
+  let root = Filename.concat parent "out" in
+  expect_ok (R.mkdir_p root);
+  (parent, root)
+
+let confined_inside () =
+  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  let _parent, root = runtime_setup (module R) in
+  let file = Filename.concat root "a.txt" in
+  expect_ok (R.write_file file "x");
+  expect_ok (R.confined ~roots:[ root ] ~path:file)
+
+let confined_rejects_sibling () =
+  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  let parent, root = runtime_setup (module R) in
+  let evil = Filename.concat parent "out-evil" in
+  expect_ok (R.mkdir_p evil);
+  let file = Filename.concat evil "a.txt" in
+  expect_ok (R.write_file file "x");
+  expect_runtime (R.confined ~roots:[ root ] ~path:file)
+
+let confined_rejects_dotdot () =
+  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  let parent, root = runtime_setup (module R) in
+  let other = Filename.concat parent "other" in
+  expect_ok (R.mkdir_p other);
+  let file = Filename.concat other "a.txt" in
+  expect_ok (R.write_file file "x");
+  let via_dotdot = Filename.concat root (Filename.concat ".." "other/a.txt") in
+  expect_runtime (R.confined ~roots:[ root ] ~path:via_dotdot)
+
+let runtime_cases =
+  [
+    ("confined_inside", `Quick, confined_inside);
+    ("confined_rejects_sibling", `Quick, confined_rejects_sibling);
+    ("confined_rejects_dotdot", `Quick, confined_rejects_dotdot);
+  ]
+
 let glob_cases =
   [
     ("literal", `Quick, glob_ok [ "a.txt" ] "a.txt" [ "/out/a.txt" ]);
@@ -302,5 +354,6 @@ let () =
       ( "bind_properties",
         List.map (QCheck_alcotest.to_alcotest ~speed_level:`Quick) prop_tests );
       ("glob", glob_cases);
+      ("runtime", runtime_cases);
       ("execute", exec_cases);
     ]
