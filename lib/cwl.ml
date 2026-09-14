@@ -252,7 +252,7 @@ let collect_output (module R : Runtime.RUNTIME) ~outdir ~ctx ~stdout_name
   else
     let* groups =
       Error.map_list
-        (fun pattern -> Glob.glob (module R : Glob.FS) ~root:outdir ~pattern)
+        (fun pattern -> Glob.glob (module R) ~root:outdir ~pattern ())
         pats
     in
     let hits = List.concat groups |> List.sort_uniq String.compare in

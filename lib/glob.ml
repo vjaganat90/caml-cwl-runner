@@ -2,6 +2,7 @@ module type FS = sig
   val exists : string -> bool
   val is_dir : string -> bool
   val read_dir : string -> (string list, Error.t) result
+  val realpath : string -> (string, Error.t) result
 end
 
 let ( let* ) = Error.( let* )
@@ -93,7 +94,19 @@ let sort_unique xs =
 
 let max_glob_depth = 64
 
-let rec collect (module FS : FS) ~depth dir parts =
+let under ~root path =
+  let root = trim_slash root in
+  let path = trim_slash path in
+  path = root || String.starts_with ~prefix:(root ^ "/") path
+
+let in_roots ~roots path = List.exists (fun root -> under ~root path) roots
+
+let may_list (module FS : FS) ~roots dir =
+  match FS.realpath dir with
+  | Error _ -> Ok false
+  | Ok rp -> Ok (in_roots ~roots rp)
+
+let rec collect (module FS : FS) ~roots ~depth dir parts =
   if depth > max_glob_depth then
     Error (Error.Runtime { message = "glob exceeded directory depth" })
   else
@@ -102,48 +115,66 @@ let rec collect (module FS : FS) ~depth dir parts =
     | ".." :: _ ->
         Error (Error.Runtime { message = "glob pattern must not contain '..'" })
     | "**" :: rest ->
-        let* zero = collect (module FS : FS) ~depth dir rest in
+        let* zero = collect (module FS : FS) ~roots ~depth dir rest in
         if not (FS.is_dir dir) then Ok zero
         else
-          let* names = FS.read_dir dir in
-          let names =
-            List.filter (fun n -> n <> "." && n <> ".." && n <> "") names
-          in
-          let* nested =
-            Error.map_list
-              (fun name ->
-                collect
-                  (module FS : FS)
-                  ~depth:(depth + 1) (join dir name) parts)
-              names
-          in
-          Ok (zero @ List.concat nested)
+          let* list = may_list (module FS : FS) ~roots dir in
+          if not list then Ok zero
+          else
+            let* names = FS.read_dir dir in
+            let names =
+              List.filter (fun n -> n <> "." && n <> ".." && n <> "") names
+            in
+            let* nested =
+              Error.map_list
+                (fun name ->
+                  collect
+                    (module FS : FS)
+                    ~roots ~depth:(depth + 1) (join dir name) parts)
+                names
+            in
+            Ok (zero @ List.concat nested)
     | comp :: rest ->
         if not (FS.is_dir dir) then Ok []
-        else if is_literal comp then
-          let p = join dir comp in
-          collect (module FS : FS) ~depth:(depth + 1) p rest
         else
-          let* re = compile_component comp in
-          let* names = FS.read_dir dir in
-          let matched =
-            List.filter
-              (fun n -> n <> "." && n <> ".." && n <> "" && Re.execp re n)
-              names
-          in
-          let* groups =
-            Error.map_list
-              (fun name ->
-                collect (module FS : FS) ~depth:(depth + 1) (join dir name) rest)
-              matched
-          in
-          Ok (List.concat groups)
+          let* list = may_list (module FS : FS) ~roots dir in
+          if not list then Ok []
+          else if is_literal comp then
+            let p = join dir comp in
+            collect (module FS : FS) ~roots ~depth:(depth + 1) p rest
+          else
+            let* re = compile_component comp in
+            let* names = FS.read_dir dir in
+            let matched =
+              List.filter
+                (fun n -> n <> "." && n <> ".." && n <> "" && Re.execp re n)
+                names
+            in
+            let* groups =
+              Error.map_list
+                (fun name ->
+                  collect
+                    (module FS : FS)
+                    ~roots ~depth:(depth + 1) (join dir name) rest)
+                matched
+            in
+            Ok (List.concat groups)
 
-let glob (module FS : FS) ~root ~pattern =
+let glob (module FS : FS) ~root ~pattern ?roots () =
   let root = trim_slash root in
+  let roots =
+    match roots with
+    | None | Some [] -> [ root ]
+    | Some rs -> List.map trim_slash rs
+  in
+  let roots =
+    List.map
+      (fun r -> match FS.realpath r with Ok p -> trim_slash p | Error _ -> r)
+      roots
+  in
   let* parts = relativize ~root pattern in
   if List.exists (fun p -> p = "..") parts then
     Error (Error.Runtime { message = "glob pattern must not contain '..'" })
   else
-    let* hits = collect (module FS : FS) ~depth:0 root parts in
+    let* hits = collect (module FS : FS) ~roots ~depth:0 root parts in
     Ok (sort_unique hits)

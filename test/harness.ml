@@ -104,6 +104,7 @@ let mem_fs ~root files : (module Cwl.Glob.FS) =
   (module struct
     let exists p = List.mem p files || List.mem p dirs
     let is_dir p = List.mem p dirs
+    let realpath p = Ok (trim p)
 
     let read_dir p =
       let prefix = if p = "/" then "/" else p ^ "/" in
