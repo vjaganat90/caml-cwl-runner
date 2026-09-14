@@ -1,6 +1,6 @@
 (test
  (name test_cwl)
- (libraries cwl alcotest qcheck-core qcheck-alcotest eio_main)
+ (libraries cwl alcotest qcheck-core qcheck-alcotest eio_main unix)
  (modules test_cwl harness)
  (deps
   (source_tree fixtures)))

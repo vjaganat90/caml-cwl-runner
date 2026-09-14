@@ -47,6 +47,16 @@ let strip_file_uri loc =
     else rest
   else loc
 
+let ensure_local_path s =
+  match String.index_opt s ':' with
+  | Some i
+    when i > 0 && String.length s > i + 2 && s.[i + 1] = '/' && s.[i + 2] = '/'
+    ->
+      let scheme = String.lowercase_ascii (String.sub s 0 i) in
+      if scheme = "file" then Ok (strip_file_uri s)
+      else rt_err (Printf.sprintf "unsupported location scheme %S" scheme)
+  | _ -> Ok s
+
 let resolve ~job_dir loc =
   let loc = strip_file_uri loc in
   if Filename.is_relative loc then Filename.concat job_dir loc else loc
@@ -62,7 +72,7 @@ let rec stage (module R : Runtime.RUNTIME) ~outdir ~job_dir used v =
       let* src =
         match src with
         | None -> rt_err "File input missing location"
-        | Some s -> Ok s
+        | Some s -> ensure_local_path s
       in
       let raw_base =
         match f.basename with Some b -> b | None -> Filename.basename src
@@ -91,7 +101,7 @@ let rec stage (module R : Runtime.RUNTIME) ~outdir ~job_dir used v =
       let* src =
         match src with
         | None -> rt_err "Directory input missing location"
-        | Some s -> Ok s
+        | Some s -> ensure_local_path s
       in
       (* Directory inputs keep the resolved source path; they are not copied. *)
       Ok (Ty.Vdir { location = Some src; path = Some src }, used)
@@ -240,7 +250,7 @@ let glob_patterns ~ctx (o : Schema.output) ~stdout_name ~stderr_name =
               let* nested = Error.map_list (eval_glob_pattern ~ctx) glob in
               Ok (List.concat nested)))
 
-let collect_output (module R : Runtime.RUNTIME) ~outdir ~ctx ~stdout_name
+let collect_output (module R : Runtime.RUNTIME) ~outdir ~roots ~ctx ~stdout_name
     ~stderr_name (o : Schema.output) =
   let* pats = glob_patterns ~ctx o ~stdout_name ~stderr_name in
   if pats = [] then
@@ -252,15 +262,19 @@ let collect_output (module R : Runtime.RUNTIME) ~outdir ~ctx ~stdout_name
   else
     let* groups =
       Error.map_list
-        (fun pattern -> Glob.glob (module R) ~root:outdir ~pattern ())
+        (fun pattern -> Glob.glob (module R) ~root:outdir ~pattern ~roots ())
         pats
     in
     let hits = List.concat groups |> List.sort_uniq String.compare in
+    let* _ = Error.map_list (fun path -> R.confined ~roots ~path) hits in
     let* v = pack_hits (module R : Runtime.RUNTIME) ~id:o.id ~ty:o.ty hits in
     Ok (o.id, v)
 
 let rec resolve_output_paths ~outdir v =
-  let abs p = if Filename.is_relative p then Filename.concat outdir p else p in
+  let abs p =
+    let p = strip_file_uri p in
+    if Filename.is_relative p then Filename.concat outdir p else p
+  in
   match v with
   | Ty.Vfile f ->
       let path =
@@ -269,9 +283,7 @@ let rec resolve_output_paths ~outdir v =
         | None -> Option.map abs f.location
       in
       let location =
-        match f.location with
-        | Some loc -> Some (abs (strip_file_uri loc))
-        | None -> path
+        match f.location with Some loc -> Some (abs loc) | None -> path
       in
       Ty.Vfile { f with path; location }
   | Ty.Vdir d ->
@@ -281,9 +293,7 @@ let rec resolve_output_paths ~outdir v =
         | None -> Option.map abs d.location
       in
       let location =
-        match d.location with
-        | Some loc -> Some (abs (strip_file_uri loc))
-        | None -> path
+        match d.location with Some loc -> Some (abs loc) | None -> path
       in
       Ty.Vdir { path; location }
   | Ty.Varray xs -> Ty.Varray (List.map (resolve_output_paths ~outdir) xs)
@@ -291,6 +301,56 @@ let rec resolve_output_paths ~outdir v =
       Ty.Vrecord
         (List.map (fun (k, x) -> (k, resolve_output_paths ~outdir x)) kvs)
   | v -> v
+
+let rec confine_value (module R : Runtime.RUNTIME) ~roots v =
+  let confine_path raw =
+    if raw = "" then rt_err "File or Directory output missing path"
+    else
+      let* () = R.confined ~roots ~path:raw in
+      match R.realpath raw with Ok p -> Ok p | Error _ -> Ok raw
+  in
+  match v with
+  | Ty.Vfile f ->
+      let raw =
+        match f.path with
+        | Some p -> p
+        | None -> Option.value f.location ~default:""
+      in
+      let* path = confine_path raw in
+      Ok (Ty.Vfile { f with path = Some path; location = Some path })
+  | Ty.Vdir d ->
+      let raw =
+        match d.path with
+        | Some p -> p
+        | None -> Option.value d.location ~default:""
+      in
+      let* path = confine_path raw in
+      Ok (Ty.Vdir { path = Some path; location = Some path })
+  | Ty.Varray xs ->
+      let* xs =
+        Error.map_list (confine_value (module R : Runtime.RUNTIME) ~roots) xs
+      in
+      Ok (Ty.Varray xs)
+  | Ty.Vrecord kvs ->
+      let* kvs =
+        Error.map_list
+          (fun (k, x) ->
+            let* x = confine_value (module R : Runtime.RUNTIME) ~roots x in
+            Ok (k, x))
+          kvs
+      in
+      Ok (Ty.Vrecord kvs)
+  | v -> Ok v
+
+let rec collect_dir_roots acc = function
+  | Ty.Vdir d -> (
+      match d.path with
+      | Some p -> p :: acc
+      | None -> ( match d.location with Some p -> p :: acc | None -> acc))
+  | Ty.Varray xs -> List.fold_left collect_dir_roots acc xs
+  | Ty.Vrecord kvs ->
+      List.fold_left (fun acc (_, v) -> collect_dir_roots acc v) acc kvs
+  | _ -> acc
 
 let missing_json_output (o : Schema.output) =
   if Ty.is_optional o.ty then Ok (o.id, Ty.Vnull)
@@ -326,22 +386,6 @@ let first_unimplemented_requirement tool =
       | _ -> None)
     tool.Schema.requirements
 
-let first_fatal_output_feature tool =
-  List.find_map
-    (fun (o : Schema.output) ->
-      match o.output_binding with
-      | Some { unimplemented; _ } ->
-          List.find_map
-            (fun d ->
-              if
-                d.Error.feature = "outputEval"
-                || d.Error.feature = "loadContents"
-              then Some d.Error.feature
-              else None)
-            unimplemented
-      | None -> None)
-    tool.Schema.outputs
-
 let run (module R : Runtime.RUNTIME) ?outdir ~tool_path ~job_path () =
   let* tool_doc = Doc.load_file tool_path in
   let* tool_ann = Schema.command_line_tool tool_doc in
@@ -351,93 +395,101 @@ let run (module R : Runtime.RUNTIME) ?outdir ~tool_path ~job_path () =
   else
     match first_unimplemented_requirement tool with
     | Some feature -> Error (Error.Unsupported { feature })
-    | None -> (
-        match first_fatal_output_feature tool with
-        | Some feature -> Error (Error.Unsupported { feature })
-        | None ->
-            let* outdir =
-              match outdir with
-              | Some d ->
-                  let* () = R.mkdir_p d in
-                  R.abspath d
-              | None -> R.mkdtemp ~prefix:"ccr-"
-            in
-            let* tmpdir = R.mkdtemp ~prefix:"ccr-tmp-" in
-            let* tmpdir = R.abspath tmpdir in
-            let job_dir = Filename.dirname job_path in
-            let* job_doc = Doc.load_file job_path in
-            let* job_raw = Type.object_of_doc job_doc in
-            let* inputs =
-              Type.apply_defaults_and_check ~inputs:(Schema.input_specs tool)
-                ~job:job_raw
-            in
-            let* inputs =
-              stage_inputs (module R : Runtime.RUNTIME) ~outdir ~job_dir inputs
-            in
-            let cores = Option.value (Schema.cores_min tool) ~default:1. in
-            let runtime = Expr.runtime_with ~outdir ~tmpdir ~cores in
-            let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
-            let* argv =
-              Bind.argv (module Expr.Param_ref) ~tool ~inputs ~runtime
-            in
-            let* stdout_name =
-              match tool.stdout with
-              | None ->
-                  if
-                    List.exists
-                      (fun (o : Schema.output) -> o.stream = Schema.Stdout)
-                      tool.outputs
-                  then Ok (Some "cwl.stdout")
-                  else Ok None
-              | Some s ->
-                  let* n = eval_filename ~ctx s in
-                  Ok (Some n)
-            in
-            let* stderr_name =
-              match tool.stderr with
-              | None ->
-                  if
-                    List.exists
-                      (fun (o : Schema.output) -> o.stream = Schema.Stderr)
-                      tool.outputs
-                  then Ok (Some "cwl.stderr")
-                  else Ok None
-              | Some s ->
-                  let* n = eval_filename ~ctx s in
-                  Ok (Some n)
-            in
-            let* stdin_file =
-              match tool.stdin with
-              | None -> Ok None
-              | Some s ->
-                  let* n = eval_filename ~ctx s in
-                  Ok (Some (Filename.concat outdir n))
-            in
-            let stdout_file = Option.map (Filename.concat outdir) stdout_name in
-            let stderr_file = Option.map (Filename.concat outdir) stderr_name in
-            let* code =
-              R.spawn ~cwd:outdir ~stdin_file ~stdout_file ~stderr_file ~argv
-            in
-            if not (List.mem code tool.success_codes) then
-              rt_err (Printf.sprintf "command failed with exit code %d" code)
-            else
-              let json_path = Filename.concat outdir "cwl.output.json" in
-              let* outputs =
-                if R.exists json_path then
-                  let* s = R.read_file json_path in
-                  let* doc = Doc.load_string ~path:json_path s in
-                  let* obj = Type.object_of_doc doc in
-                  let obj =
-                    List.map
-                      (fun (k, v) -> (k, resolve_output_paths ~outdir v))
-                      obj
-                  in
-                  check_json_outputs ~outputs:tool.outputs obj
-                else
-                  Error.map_list
-                    (collect_output
-                       (module R : Runtime.RUNTIME)
-                       ~outdir ~ctx ~stdout_name ~stderr_name)
-                    tool.outputs
+    | None ->
+        let* outdir =
+          match outdir with
+          | Some d ->
+              let* () = R.mkdir_p d in
+              R.abspath d
+          | None -> R.mkdtemp ~prefix:"ccr-"
+        in
+        let* tmpdir = R.mkdtemp ~prefix:"ccr-tmp-" in
+        let* tmpdir = R.abspath tmpdir in
+        let job_dir = Filename.dirname job_path in
+        let* job_doc = Doc.load_file job_path in
+        let* job_raw = Type.object_of_doc job_doc in
+        let* inputs =
+          Type.apply_defaults_and_check ~inputs:(Schema.input_specs tool)
+            ~job:job_raw
+        in
+        let* inputs =
+          stage_inputs (module R : Runtime.RUNTIME) ~outdir ~job_dir inputs
+        in
+        let cores = Option.value (Schema.cores_min tool) ~default:1. in
+        let runtime = Expr.runtime_with ~outdir ~tmpdir ~cores in
+        let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
+        let* argv = Bind.argv (module Expr.Param_ref) ~tool ~inputs ~runtime in
+        let* stdout_name =
+          match tool.stdout with
+          | None ->
+              if
+                List.exists
+                  (fun (o : Schema.output) -> o.stream = Schema.Stdout)
+                  tool.outputs
+              then Ok (Some "cwl.stdout")
+              else Ok None
+          | Some s ->
+              let* n = eval_filename ~ctx s in
+              Ok (Some n)
+        in
+        let* stderr_name =
+          match tool.stderr with
+          | None ->
+              if
+                List.exists
+                  (fun (o : Schema.output) -> o.stream = Schema.Stderr)
+                  tool.outputs
+              then Ok (Some "cwl.stderr")
+              else Ok None
+          | Some s ->
+              let* n = eval_filename ~ctx s in
+              Ok (Some n)
+        in
+        let* stdin_file =
+          match tool.stdin with
+          | None -> Ok None
+          | Some s ->
+              let* n = eval_filename ~ctx s in
+              Ok (Some (Filename.concat outdir n))
+        in
+        let stdout_file = Option.map (Filename.concat outdir) stdout_name in
+        let stderr_file = Option.map (Filename.concat outdir) stderr_name in
+        let* code =
+          R.spawn ~cwd:outdir ~stdin_file ~stdout_file ~stderr_file ~argv
+        in
+        if not (List.mem code tool.success_codes) then
+          rt_err (Printf.sprintf "command failed with exit code %d" code)
+        else
+          let json_path = Filename.concat outdir "cwl.output.json" in
+          let glob_roots =
+            outdir :: tmpdir
+            :: List.fold_left
+                 (fun acc (_, v) -> collect_dir_roots acc v)
+                 [] inputs
+          in
+          let* outputs =
+            if R.exists json_path then
+              let* s = R.read_file json_path in
+              let* doc = Doc.load_string ~path:json_path s in
+              let* obj = Type.object_of_doc doc in
+              let obj =
+                List.map (fun (k, v) -> (k, resolve_output_paths ~outdir v)) obj
               in
-              Ok { Error.value = outputs; diagnostics = tool_ann.diagnostics })
+              let* obj = check_json_outputs ~outputs:tool.outputs obj in
+              Error.map_list
+                (fun (k, v) ->
+                  let* v =
+                    confine_value
+                      (module R : Runtime.RUNTIME)
+                      ~roots:[ outdir ] v
+                  in
+                  Ok (k, v))
+                obj
+            else
+              Error.map_list
+                (collect_output
+                   (module R : Runtime.RUNTIME)
+                   ~outdir ~roots:glob_roots ~ctx ~stdout_name ~stderr_name)
+                tool.outputs
+          in
+          Ok { Error.value = outputs; diagnostics = tool_ann.diagnostics }
