@@ -1,6 +1,8 @@
 (** Stage files and spawn processes. The local body is Eio; tests inject fakes.
 *)
 
+type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
+
 module type RUNTIME = sig
   include Glob.FS
 
@@ -11,6 +13,10 @@ module type RUNTIME = sig
   val read_file : string -> (string, Error.t) result
   val write_file : string -> string -> (unit, Error.t) result
   val file_size : string -> (int64, Error.t) result
+  val lstat : string -> node
+  val stat : string -> node
+  val realpath : string -> (string, Error.t) result
+  val confined : roots:string list -> path:string -> (unit, Error.t) result
 
   val spawn :
     cwd:string ->
