@@ -165,19 +165,25 @@ let prop_tests =
 
 let glob_root = "/out"
 
-let glob_ok files pattern expected () =
+let glob_ok ?roots files pattern expected () =
   let fs = mem_fs ~root:glob_root files in
-  match Cwl.Glob.glob fs ~root:glob_root ~pattern with
+  match Cwl.Glob.glob fs ~root:glob_root ~pattern ?roots () with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok got -> Alcotest.(check (list string)) pattern expected got
 
 let glob_err files pattern () =
   let fs = mem_fs ~root:glob_root files in
-  match Cwl.Glob.glob fs ~root:glob_root ~pattern with
+  match Cwl.Glob.glob fs ~root:glob_root ~pattern () with
   | Error (Cwl.Error.Runtime _) -> ()
   | Error e ->
       Alcotest.fail ("expected Runtime error, got " ^ Cwl.Error.to_string e)
   | Ok hits -> Alcotest.fail ("expected error, got " ^ String.concat "," hits)
+
+let deep_glob_path n =
+  let rec dirs i acc =
+    if i = 0 then acc else dirs (i - 1) (("d" ^ string_of_int i) :: acc)
+  in
+  String.concat "/" (dirs n [] @ [ "leaf.txt" ])
 
 let run_tool tool job =
   Eio_main.run @@ fun env ->
@@ -344,7 +350,18 @@ let glob_cases =
     ("missing is empty", `Quick, glob_ok [ "a.txt" ] "nope" []);
     ("absolute rejected", `Quick, glob_err [ "a.txt" ] "/etc/passwd");
     ("dotdot rejected", `Quick, glob_err [ "a.txt" ] "../x");
+    ("dotdot in middle", `Quick, glob_err [ "foo/bar" ] "foo/../bar");
     ("outdir itself", `Quick, glob_ok [ "a.txt" ] "." [ "/out" ]);
+    ( "double star",
+      `Quick,
+      glob_ok
+        [ "a.txt"; "dir/b.txt"; "dir/sub/c.txt" ]
+        "**/*.txt"
+        [ "/out/a.txt"; "/out/dir/b.txt"; "/out/dir/sub/c.txt" ] );
+    ("double star depth", `Quick, glob_err [ deep_glob_path 70 ] "**");
+    ( "roots exclude outdir",
+      `Quick,
+      glob_ok ~roots:[ "/elsewhere" ] [ "a.txt" ] "*" [] );
   ]
 
 let () =

@@ -296,6 +296,7 @@ Bind.argv     : (module Expr.ENGINE) ->
                 (string list, Error.t) result
 Glob.glob     : (module Glob.FS) ->
                 root:string -> pattern:string ->
+                ?roots:string list -> unit ->
                 (string list, Error.t) result
 Cwl.run       : (module Runtime.RUNTIME) ->
                 ?outdir:string ->
@@ -362,16 +363,22 @@ module type FS = sig
   val exists : string -> bool
   val is_dir : string -> bool
   val read_dir : string -> (string list, Error.t) result
+  val realpath : string -> (string, Error.t) result
 end
 
 val glob :
-  (module FS) -> root:string -> pattern:string ->
+  (module FS) ->
+  root:string ->
+  pattern:string ->
+  ?roots:string list ->
+  unit ->
   (string list, Error.t) result
 ```
 
 Returns existing paths, sorted, unique, relative to `root` joined onto
 `root`. Files and directories both. The caller filters by CWL type
 (`capture_files` / `capture_dirs` / `capture_files_and_dirs`).
+`roots` defaults to `[root]`.
 
 The walker does not `read_dir` a directory whose `realpath` is outside
 the allowed roots (output directory, temp directory, Directory input
