@@ -83,13 +83,6 @@ let local env =
 
     let abspath s = wrap (fun () -> native s)
     let mkdtemp ~prefix = wrap (fun () -> Filename.temp_dir prefix "")
-
-    let copy_file ~src ~dst =
-      wrap (fun () ->
-          Eio.Path.with_open_in (p src) @@ fun inn ->
-          Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (p dst)
-          @@ fun out -> Eio.Flow.copy inn out)
-
     let read_file s = wrap (fun () -> Eio.Path.load (p s))
 
     let write_file s data =
@@ -106,34 +99,62 @@ let local env =
     let stat s =
       try node_of (Eio.Path.kind ~follow:true (p s)) with _ -> `Other
 
+    let copy_file ~src ~dst =
+      match stat src with
+      | `File ->
+          wrap (fun () ->
+              Eio.Path.with_open_in (p src) @@ fun inn ->
+              Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (p dst)
+              @@ fun out -> Eio.Flow.copy inn out)
+      | `Not_found -> rt_err (Printf.sprintf "copy source not found: %s" src)
+      | _ -> rt_err (Printf.sprintf "copy source is not a regular file: %s" src)
+
     let realpath s = wrap (fun () -> Unix.realpath (native s))
     let confined ~roots ~path = confined_using realpath ~roots path
+
+    let reject_stdio_symlink label = function
+      | None -> Ok ()
+      | Some f -> (
+          match lstat f with
+          | `Symlink ->
+              rt_err (Printf.sprintf "%s destination is a symlink" label)
+          | _ -> Ok ())
 
     let spawn ~cwd ~stdin_file ~stdout_file ~stderr_file ~argv =
       if argv = [] then rt_err "empty argv"
       else
-        wrap (fun () ->
-            Eio.Switch.run @@ fun sw ->
-            let open_in = function
-              | None ->
-                  (Eio.Path.open_in ~sw (p "/dev/null") :> _ Eio.Flow.source)
-              | Some f -> (Eio.Path.open_in ~sw (p f) :> _ Eio.Flow.source)
-            in
-            let open_out = function
-              | None ->
-                  (Eio.Path.open_out ~sw ~create:`Never (p "/dev/null")
-                    :> _ Eio.Flow.sink)
-              | Some f ->
-                  (Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644) (p f)
-                    :> _ Eio.Flow.sink)
-            in
-            let proc =
-              Eio.Process.spawn ~sw proc_mgr ~cwd:(p cwd)
-                ~stdin:(open_in stdin_file) ~stdout:(open_out stdout_file)
-                ~stderr:(open_out stderr_file) argv
-            in
-            match Eio.Process.await proc with
-            | `Exited n -> n
-            | `Signaled s ->
-                failwith (Printf.sprintf "process killed by signal %d" s))
+        match
+          let ( let* ) = Result.bind in
+          let* () = reject_stdio_symlink "stdin" stdin_file in
+          let* () = reject_stdio_symlink "stdout" stdout_file in
+          let* () = reject_stdio_symlink "stderr" stderr_file in
+          Ok ()
+        with
+        | Error _ as e -> e
+        | Ok () ->
+            wrap (fun () ->
+                Eio.Switch.run @@ fun sw ->
+                let open_in = function
+                  | None ->
+                      (Eio.Path.open_in ~sw (p "/dev/null")
+                        :> _ Eio.Flow.source)
+                  | Some f -> (Eio.Path.open_in ~sw (p f) :> _ Eio.Flow.source)
+                in
+                let open_out = function
+                  | None ->
+                      (Eio.Path.open_out ~sw ~create:`Never (p "/dev/null")
+                        :> _ Eio.Flow.sink)
+                  | Some f ->
+                      (Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644) (p f)
+                        :> _ Eio.Flow.sink)
+                in
+                let proc =
+                  Eio.Process.spawn ~sw proc_mgr ~cwd:(p cwd)
+                    ~stdin:(open_in stdin_file) ~stdout:(open_out stdout_file)
+                    ~stderr:(open_out stderr_file) argv
+                in
+                match Eio.Process.await proc with
+                | `Exited n -> n
+                | `Signaled s ->
+                    failwith (Printf.sprintf "process killed by signal %d" s))
   end : RUNTIME)

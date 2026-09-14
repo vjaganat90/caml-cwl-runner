@@ -261,8 +261,22 @@ let exec_cases =
     exec_unsupported "docker_requirement_fatal" "docker-req.cwl"
       "empty-job.json" "DockerRequirement";
     exec_runtime "basename_escape" "file-in.cwl" "escape-job.json";
-    exec_unsupported "output_eval_fatal" "output-eval.cwl" "empty-job.json"
+    exec_unsupported "output_eval_no_json" "output-eval.cwl" "empty-job.json"
       "outputEval";
+    exec_ok "json_ignores_output_eval" "json-and-eval.cwl" "empty-job.json"
+      (fun ann ->
+        match Cwl.Type.lookup "n" ann.value with
+        | Some (Cwl.Type.Vint n) -> Alcotest.(check int64) "n" 1L n
+        | _ -> Alcotest.fail "expected n = 1");
+    exec_runtime "json_path_escape" "json-path-escape.cwl" "empty-job.json";
+    exec_runtime "json_abs_escape" "json-abs-escape.cwl" "empty-job.json";
+    exec_runtime "json_location_escape" "json-location-escape.cwl"
+      "empty-job.json";
+    exec_runtime "json_extra_escape" "json-extra-escape.cwl" "empty-job.json";
+    exec_runtime "copy_device" "file-in.cwl" "device-job.json";
+    exec_runtime "copy_directory_as_file" "file-in.cwl" "dir-as-file-job.json";
+    exec_runtime "http_location" "file-in.cwl" "http-job.json";
+    exec_runtime "glob_symlink_out" "glob-symlink.cwl" "empty-job.json";
     exec_ok "docker_hint_ok" "docker-hint.cwl" "echo-job.json" (fun ann ->
         Alcotest.(check bool)
           "DockerRequirement diagnosed" true
@@ -272,11 +286,69 @@ let exec_cases =
         | None -> Alcotest.fail "missing example_out");
   ]
 
+let rec collect_paths acc = function
+  | Cwl.Type.Vfile f -> (
+      match f.Cwl.Type.path with Some p -> p :: acc | None -> acc)
+  | Cwl.Type.Vdir d -> (
+      match d.Cwl.Type.path with Some p -> p :: acc | None -> acc)
+  | Cwl.Type.Varray xs -> List.fold_left collect_paths acc xs
+  | Cwl.Type.Vrecord kvs ->
+      List.fold_left (fun acc (_, v) -> collect_paths acc v) acc kvs
+  | _ -> acc
+
+let leaks_host p =
+  String.starts_with ~prefix:"/etc/" p
+  || String.starts_with ~prefix:"/usr/" p
+  || p = "/etc" || p = "/usr" || p = "/"
+
+let glob_starstar_root =
+  ( "glob_starstar_root",
+    `Quick,
+    fun () ->
+      match run_tool "glob-starstar.cwl" "empty-job.json" with
+      | Error _ -> ()
+      | Ok ann ->
+          let paths =
+            List.fold_left (fun acc (_, v) -> collect_paths acc v) [] ann.value
+          in
+          List.iter
+            (fun p ->
+              if leaks_host p then Alcotest.fail ("leaked host path " ^ p))
+            paths )
+
 let with_runtime f = Eio_main.run @@ fun env -> f (Cwl.Runtime.local env)
 
 let expect_ok = function
   | Ok v -> v
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+
+let stdout_symlink_dest =
+  ( "stdout_symlink_dest",
+    `Quick,
+    fun () ->
+      Eio_main.run @@ fun env ->
+      let (module R : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+      let parent = expect_ok (R.mkdtemp ~prefix:"ccr-stdio-") in
+      let parent = expect_ok (R.abspath parent) in
+      let outdir = Filename.concat parent "out" in
+      let outside = Filename.concat parent "secret" in
+      expect_ok (R.mkdir_p outdir);
+      expect_ok (R.write_file outside "keep\n");
+      Unix.symlink outside (Filename.concat outdir "out.txt");
+      match
+        Cwl.run
+          (module R)
+          ~outdir
+          ~tool_path:(fixture "echo-stdout.cwl")
+          ~job_path:(fixture "echo-job.json") ()
+      with
+      | Error (Cwl.Error.Runtime _) ->
+          Alcotest.(check string)
+            "outside unchanged" "keep\n"
+            (In_channel.with_open_text outside In_channel.input_all)
+      | Error e ->
+          Alcotest.fail ("expected Runtime, got " ^ Cwl.Error.to_string e)
+      | Ok _ -> Alcotest.fail "expected Runtime error" )
 
 let expect_runtime = function
   | Error (Cwl.Error.Runtime _) -> ()
@@ -372,5 +444,5 @@ let () =
         List.map (QCheck_alcotest.to_alcotest ~speed_level:`Quick) prop_tests );
       ("glob", glob_cases);
       ("runtime", runtime_cases);
-      ("execute", exec_cases);
+      ("execute", exec_cases @ [ glob_starstar_root; stdout_symlink_dest ]);
     ]
