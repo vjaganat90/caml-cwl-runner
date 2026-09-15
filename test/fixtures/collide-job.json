@@ -1,0 +1,12 @@
+{
+  "a": {
+    "class": "File",
+    "location": "stdin-hello.txt",
+    "basename": "same.txt"
+  },
+  "b": {
+    "class": "File",
+    "location": "echo-job.json",
+    "basename": "same.txt"
+  }
+}

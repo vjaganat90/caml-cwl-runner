@@ -45,6 +45,13 @@ let file_basename_of location_or_path =
       let base = Filename.basename p in
       if base = "" then None else Some base
 
+let split_name basename =
+  match String.rindex_opt basename '.' with
+  | None | Some 0 -> (basename, "")
+  | Some i ->
+      ( String.sub basename 0 i,
+        String.sub basename i (String.length basename - i) )
+
 let fill_file (f : file) =
   let path =
     match f.path with Some _ as p -> p | None -> file_basename_of f.location
@@ -55,7 +62,15 @@ let fill_file (f : file) =
     | None -> (
         match path with Some p -> Some (Filename.basename p) | None -> None)
   in
-  { f with path; basename }
+  let nameroot, nameext =
+    match basename with
+    | None -> (f.nameroot, f.nameext)
+    | Some b -> (
+        let nr, ne = split_name b in
+        ( (match f.nameroot with Some _ as x -> x | None -> Some nr),
+          match f.nameext with Some _ as x -> x | None -> Some ne ))
+  in
+  { f with path; basename; nameroot; nameext }
 
 let rec fill_file_paths = function
   | Vfile f -> Vfile (fill_file f)
@@ -107,6 +122,8 @@ let rec parse_file_object ~param kvs =
                 location = Doc.string_field kvs "location";
                 path = Doc.string_field kvs "path";
                 basename = Doc.string_field kvs "basename";
+                nameroot = Doc.string_field kvs "nameroot";
+                nameext = Doc.string_field kvs "nameext";
                 checksum = Doc.string_field kvs "checksum";
                 size = Doc.int_field kvs "size";
               }))
@@ -334,6 +351,16 @@ let rec to_json = function
       let fields =
         match f.basename with
         | Some b -> fields @ [ ("basename", json_string b) ]
+        | None -> fields
+      in
+      let fields =
+        match f.nameroot with
+        | Some n -> fields @ [ ("nameroot", json_string n) ]
+        | None -> fields
+      in
+      let fields =
+        match f.nameext with
+        | Some n -> fields @ [ ("nameext", json_string n) ]
         | None -> fields
       in
       let fields =

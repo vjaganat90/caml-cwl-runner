@@ -96,6 +96,8 @@ let file_field (f : Ty.file) = function
   | "location" -> or_null (fun s -> Ty.Vstring s) f.location
   | "path" -> or_null (fun s -> Ty.Vstring s) f.path
   | "basename" -> or_null (fun s -> Ty.Vstring s) f.basename
+  | "nameroot" -> or_null (fun s -> Ty.Vstring s) f.nameroot
+  | "nameext" -> or_null (fun s -> Ty.Vstring s) f.nameext
   | "checksum" -> or_null (fun s -> Ty.Vstring s) f.checksum
   | "size" -> or_null (fun n -> Ty.Vint n) f.size
   | "class" -> Some (Ty.Vstring "File")

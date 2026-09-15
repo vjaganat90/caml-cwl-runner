@@ -63,6 +63,8 @@ module Type = struct
     location : string option;
     path : string option;
     basename : string option;
+    nameroot : string option;
+    nameext : string option;
     checksum : string option;
     size : int64 option;
   }
