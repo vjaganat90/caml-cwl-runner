@@ -170,14 +170,17 @@ let eval_glob_pattern ~ctx pat =
 let file_of (module R : Runtime.RUNTIME) path =
   let* size = R.file_size path in
   Ok
-    (Ty.Vfile
-       {
-         location = Some path;
-         path = Some path;
-         basename = Some (Filename.basename path);
-         checksum = None;
-         size = Some size;
-       })
+    (Ty.fill_file_paths
+       (Ty.Vfile
+          {
+            location = Some path;
+            path = Some path;
+            basename = Some (Filename.basename path);
+            nameroot = None;
+            nameext = None;
+            checksum = None;
+            size = Some size;
+          }))
 
 let dir_of path = Ty.Vdir { location = Some path; path = Some path }
 
@@ -317,7 +320,9 @@ let rec confine_value (module R : Runtime.RUNTIME) ~roots v =
         | None -> Option.value f.location ~default:""
       in
       let* path = confine_path raw in
-      Ok (Ty.Vfile { f with path = Some path; location = Some path })
+      Ok
+        (Ty.fill_file_paths
+           (Ty.Vfile { f with path = Some path; location = Some path }))
   | Ty.Vdir d ->
       let raw =
         match d.path with

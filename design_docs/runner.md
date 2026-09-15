@@ -599,11 +599,12 @@ sequenceDiagram
 File objects emitted:
 
 ```json
-{"class":"File","location":"file:///abs","path":"/abs","basename":"out.txt","size":12}
+{"class":"File","location":"file:///abs","path":"/abs","basename":"out.txt","nameroot":"out","nameext":".txt","size":12}
 ```
 
-`checksum` (`sha1$…`) is omitted until a SHA-1 implementation exists
-(stdlib `Digest` is MD5). Empty outputs → `{}`.
+`nameroot` / `nameext` are derived from `basename` (last `.`; none →
+`nameext` `""`). `checksum` (`sha1$…`) is omitted until a SHA-1
+implementation exists (stdlib `Digest` is MD5). Empty outputs → `{}`.
 
 JSON encoding is hand-written from `Type.value` (`Type.to_json` /
 `object_to_json`). No yojson, no yaml-as-JSON.
@@ -693,12 +694,12 @@ otherwise `Unsupported`.
 
 ### 12.5 File metadata
 
-`checksum` (`sha1$` + hex), `nameroot` / `nameext`, `secondaryFiles`,
-`format`, `contents` / `loadContents` (64 KiB cap per spec),
-`listing` / `loadListing` on Directory.
+`nameroot` / `nameext` are on `Type.file`, derived from `basename`.
+Still later: `checksum` (`sha1$` + hex), `secondaryFiles`, `format`,
+`contents` / `loadContents` (64 KiB cap per spec), `listing` /
+`loadListing` on Directory.
 
-Those fields belong on `Type.file` / `Type.directory` when a consumer
-exists. Checksum is a Runtime (or Hash) function, not Bind.
+Checksum is a Runtime (or Hash) function, not Bind.
 
 ### 12.6 Conformance entrypoint
 

@@ -193,98 +193,247 @@ let run_tool tool job =
 let file_basename v =
   match v with Cwl.Type.Vfile f -> f.Cwl.Type.basename | _ -> None
 
+let file_nameroot v =
+  match v with Cwl.Type.Vfile f -> f.Cwl.Type.nameroot | _ -> None
+
+let file_nameext v =
+  match v with Cwl.Type.Vfile f -> f.Cwl.Type.nameext | _ -> None
+
+let dir_path v = match v with Cwl.Type.Vdir { path; _ } -> path | _ -> None
+
+let mem_sub ~sub s =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
 let file_bytes v =
   match v with
   | Cwl.Type.Vfile { path = Some p; _ } ->
       In_channel.with_open_text p In_channel.input_all
   | _ -> Alcotest.fail "expected File with path"
 
-let exec_ok name tool job check =
-  ( name,
-    `Quick,
-    fun () ->
-      match run_tool tool job with
-      | Error e -> Alcotest.fail (Cwl.Error.to_string e)
-      | Ok ann -> check ann )
+type outcome =
+  | Expect_ok of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
+  | Expect_runtime
+  | Expect_type
+  | Expect_unsupported of string
 
-let exec_runtime name tool job =
-  ( name,
-    `Quick,
-    fun () ->
-      match run_tool tool job with
-      | Error (Cwl.Error.Runtime _) -> ()
-      | Error e ->
-          Alcotest.fail ("expected Runtime error, got " ^ Cwl.Error.to_string e)
-      | Ok _ -> Alcotest.fail "expected Runtime error" )
+type edge = { name : string; tool : string; job : string; outcome : outcome }
 
-let exec_unsupported name tool job feature =
-  ( name,
-    `Quick,
-    fun () ->
-      match run_tool tool job with
-      | Error (Cwl.Error.Unsupported { feature = f }) ->
-          Alcotest.(check string) "feature" feature f
-      | Error e ->
-          Alcotest.fail ("expected Unsupported, got " ^ Cwl.Error.to_string e)
-      | Ok _ -> Alcotest.fail "expected Unsupported" )
+let edge ?(job = "empty-job.json") name tool outcome =
+  { name; tool; job; outcome }
 
-let exec_cases =
+let lookup_null id ann =
+  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  | Some Cwl.Type.Vnull -> ()
+  | _ -> Alcotest.fail "expected null"
+
+let lookup_empty_array id ann =
+  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  | Some (Cwl.Type.Varray []) -> ()
+  | _ -> Alcotest.fail "expected empty array"
+
+let lookup_basenames id expected ann =
+  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  | Some (Cwl.Type.Varray xs) ->
+      let names =
+        List.filter_map file_basename xs |> List.sort String.compare
+      in
+      Alcotest.(check (list string)) "names" expected names
+  | _ -> Alcotest.fail "expected File array"
+
+let lookup_file_basename id expected ann =
+  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  | Some v ->
+      Alcotest.(check (option string))
+        "basename" (Some expected) (file_basename v)
+  | None -> Alcotest.fail ("missing " ^ id)
+
+let lookup_int id expected ann =
+  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  | Some (Cwl.Type.Vint n) -> Alcotest.(check int64) id expected n
+  | _ -> Alcotest.fail ("expected " ^ id ^ " int")
+
+let lookup_bytes id expected ann =
+  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  | Some v -> Alcotest.(check string) "bytes" expected (file_bytes v)
+  | None -> Alcotest.fail ("missing " ^ id)
+
+let lookup_dir id ann =
+  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  | Some v -> (
+      match dir_path v with
+      | Some p ->
+          Alcotest.(check string) "basename" id (Filename.basename p);
+          Alcotest.(check bool) "is dir" true (Sys.is_directory p)
+      | None -> Alcotest.fail "Directory missing path")
+  | _ -> Alcotest.fail "expected Directory"
+
+let execute_edges =
   [
-    exec_ok "echo_stdout" "echo-stdout.cwl" "echo-job.json" (fun ann ->
-        match Cwl.Type.lookup "example_out" ann.value with
-        | Some v ->
-            Alcotest.(check (option string))
-              "basename" (Some "out.txt") (file_basename v);
-            Alcotest.(check string) "bytes" "hello\n" (file_bytes v)
-        | None -> Alcotest.fail "missing example_out");
-    exec_ok "touch_glob" "touch-glob.cwl" "empty-job.json" (fun ann ->
-        match Cwl.Type.lookup "out" ann.value with
-        | Some v ->
-            Alcotest.(check (option string))
-              "basename" (Some "hello.txt") (file_basename v)
-        | None -> Alcotest.fail "missing out");
-    exec_ok "glob_star" "glob-star.cwl" "empty-job.json" (fun ann ->
-        match Cwl.Type.lookup "files" ann.value with
-        | Some (Cwl.Type.Varray xs) ->
-            let names =
-              List.filter_map file_basename xs |> List.sort String.compare
-            in
-            Alcotest.(check (list string)) "names" [ "a.txt"; "b.txt" ] names
-        | _ -> Alcotest.fail "expected File array");
-    exec_ok "empty_outputs" "empty-outputs.cwl" "empty-job.json" (fun ann ->
-        Alcotest.(check int) "empty" 0 (List.length ann.value));
-    exec_ok "success_codes" "success-codes.cwl" "empty-job.json" (fun _ -> ());
-    exec_ok "json_output" "json-output.cwl" "empty-job.json" (fun ann ->
-        match Cwl.Type.lookup "n" ann.value with
-        | Some (Cwl.Type.Vint n) -> Alcotest.(check int64) "n" 1L n
-        | _ -> Alcotest.fail "expected n = 1");
-    exec_unsupported "docker_requirement_fatal" "docker-req.cwl"
-      "empty-job.json" "DockerRequirement";
-    exec_runtime "basename_escape" "file-in.cwl" "escape-job.json";
-    exec_unsupported "output_eval_no_json" "output-eval.cwl" "empty-job.json"
-      "outputEval";
-    exec_ok "json_ignores_output_eval" "json-and-eval.cwl" "empty-job.json"
-      (fun ann ->
-        match Cwl.Type.lookup "n" ann.value with
-        | Some (Cwl.Type.Vint n) -> Alcotest.(check int64) "n" 1L n
-        | _ -> Alcotest.fail "expected n = 1");
-    exec_runtime "json_path_escape" "json-path-escape.cwl" "empty-job.json";
-    exec_runtime "json_abs_escape" "json-abs-escape.cwl" "empty-job.json";
-    exec_runtime "json_location_escape" "json-location-escape.cwl"
-      "empty-job.json";
-    exec_runtime "json_extra_escape" "json-extra-escape.cwl" "empty-job.json";
-    exec_runtime "copy_device" "file-in.cwl" "device-job.json";
-    exec_runtime "copy_directory_as_file" "file-in.cwl" "dir-as-file-job.json";
-    exec_runtime "http_location" "file-in.cwl" "http-job.json";
-    exec_runtime "glob_symlink_out" "glob-symlink.cwl" "empty-job.json";
-    exec_ok "docker_hint_ok" "docker-hint.cwl" "echo-job.json" (fun ann ->
-        Alcotest.(check bool)
-          "DockerRequirement diagnosed" true
-          (has_feature "DockerRequirement" ann.diagnostics);
-        match Cwl.Type.lookup "example_out" ann.value with
-        | Some v -> Alcotest.(check string) "bytes" "hello\n" (file_bytes v)
-        | None -> Alcotest.fail "missing example_out");
+    edge "echo_stdout" "echo-stdout.cwl" ~job:"echo-job.json"
+      (Expect_ok
+         (fun ann ->
+           lookup_file_basename "example_out" "out.txt" ann;
+           lookup_bytes "example_out" "hello\n" ann));
+    edge "touch_glob" "touch-glob.cwl"
+      (Expect_ok (lookup_file_basename "out" "hello.txt"));
+    edge "glob_star" "glob-star.cwl"
+      (Expect_ok (lookup_basenames "files" [ "a.txt"; "b.txt" ]));
+    edge "empty_outputs" "empty-outputs.cwl"
+      (Expect_ok
+         (fun ann -> Alcotest.(check int) "empty" 0 (List.length ann.value)));
+    edge "success_codes" "success-codes.cwl" (Expect_ok (fun _ -> ()));
+    edge "json_output" "json-output.cwl" (Expect_ok (lookup_int "n" 1L));
+    edge "docker_requirement_fatal" "docker-req.cwl"
+      (Expect_unsupported "DockerRequirement");
+    edge "output_eval_no_json" "output-eval.cwl"
+      (Expect_unsupported "outputEval");
+    edge "json_ignores_output_eval" "json-and-eval.cwl"
+      (Expect_ok (lookup_int "n" 1L));
+    edge "stdin_cat" "stdin-cat.cwl" ~job:"stdin-job.json"
+      (Expect_ok (lookup_bytes "out" "hello from file\n"));
+    edge "stderr_stream" "stderr-stream.cwl"
+      (Expect_ok (lookup_bytes "err" "err\n"));
+    edge "dir_glob" "dir-glob.cwl" (Expect_ok (lookup_dir "d"));
+    edge "param_ref_glob" "param-ref-glob.cwl" ~job:"param-ref-job.json"
+      (Expect_ok (lookup_file_basename "f" "hello.txt"));
+    edge "json_relative_file" "json-relative.cwl"
+      (Expect_ok
+         (fun ann ->
+           match Cwl.Type.lookup "out" ann.value with
+           | Some (Cwl.Type.Vfile f) -> (
+               match f.Cwl.Type.path with
+               | Some p ->
+                   Alcotest.(check bool)
+                     "absolute" true
+                     (not (Filename.is_relative p));
+                   Alcotest.(check string)
+                     "basename" "a.txt" (Filename.basename p)
+               | None -> Alcotest.fail "File missing path")
+           | _ -> Alcotest.fail "expected File"));
+    edge "nameroot_nameext" "nameroot.cwl"
+      (Expect_ok
+         (fun ann ->
+           match Cwl.Type.lookup "f" ann.value with
+           | Some v ->
+               Alcotest.(check (option string))
+                 "nameroot" (Some "foo") (file_nameroot v);
+               Alcotest.(check (option string))
+                 "nameext" (Some ".txt") (file_nameext v);
+               let json = Cwl.Type.to_json v in
+               Alcotest.(check bool)
+                 "json nameroot" true
+                 (mem_sub ~sub:"\"nameroot\":\"foo\"" json);
+               Alcotest.(check bool)
+                 "json nameext" true
+                 (mem_sub ~sub:"\"nameext\":\".txt\"" json)
+           | None -> Alcotest.fail "missing f"));
+    edge "symlink_dir_inside" "symlink-dir.cwl"
+      (Expect_ok (lookup_file_basename "f" "a.txt"));
+    edge "docker_hint_ok" "docker-hint.cwl" ~job:"echo-job.json"
+      (Expect_ok
+         (fun ann ->
+           Alcotest.(check bool)
+             "DockerRequirement diagnosed" true
+             (has_feature "DockerRequirement" ann.diagnostics);
+           lookup_bytes "example_out" "hello\n" ann));
+    edge "glob_required_missing" "glob-missing.cwl" Expect_runtime;
+    edge "glob_optional_missing" "glob-optional.cwl"
+      (Expect_ok (lookup_null "out"));
+    edge "glob_array_empty" "glob-array-empty.cwl"
+      (Expect_ok (lookup_empty_array "files"));
+    edge "glob_file_too_many" "glob-too-many.cwl" Expect_runtime;
+    edge "glob_file_is_dir" "glob-file-is-dir.cwl" Expect_type;
+    edge "glob_dir_is_file" "glob-dir-is-file.cwl" Expect_type;
+    edge "glob_mixed_star" "glob-mixed-star.cwl" Expect_type;
+    edge "glob_list_patterns" "glob-list.cwl"
+      (Expect_ok (lookup_basenames "files" [ "a.txt"; "b.dat" ]));
+    edge "glob_runtime_outdir" "glob-outdir.cwl"
+      (Expect_ok
+         (fun ann ->
+           match Cwl.Type.lookup "d" ann.value with
+           | Some v -> (
+               match dir_path v with
+               | Some p ->
+                   Alcotest.(check bool) "is dir" true (Sys.is_directory p)
+               | None -> Alcotest.fail "Directory missing path")
+           | _ -> Alcotest.fail "expected Directory"));
+    edge "glob_hidden_star" "glob-hidden.cwl"
+      (Expect_ok (lookup_basenames "files" [ "vis" ]));
+    edge "basename_collision" "two-files.cwl" ~job:"collide-job.json"
+      Expect_runtime;
+    edge "json_path_over_location" "json-path-wins.cwl"
+      (Expect_ok
+         (fun ann ->
+           match Cwl.Type.lookup "f" ann.value with
+           | Some (Cwl.Type.Vfile f) -> (
+               match f.Cwl.Type.path with
+               | Some p ->
+                   Alcotest.(check string)
+                     "basename" "a.txt" (Filename.basename p);
+                   Alcotest.(check bool)
+                     "not host path" true
+                     (not (String.starts_with ~prefix:"/etc/" p))
+               | None -> Alcotest.fail "File missing path")
+           | _ -> Alcotest.fail "expected File"));
+    edge "json_extra_int_kept" "json-extra-int.cwl"
+      (Expect_ok (lookup_int "n" 1L));
+    edge "nameroot_no_dot" "nameroot-plain.cwl"
+      (Expect_ok
+         (fun ann ->
+           match Cwl.Type.lookup "f" ann.value with
+           | Some v ->
+               Alcotest.(check (option string))
+                 "nameroot" (Some "foo") (file_nameroot v);
+               Alcotest.(check (option string))
+                 "nameext" (Some "") (file_nameext v)
+           | None -> Alcotest.fail "missing f"));
+    edge "stdout_from_input" "stdout-named.cwl" ~job:"stdout-named-job.json"
+      (Expect_ok
+         (fun ann ->
+           lookup_file_basename "out" "named.txt" ann;
+           lookup_bytes "out" "hi\n" ann));
+    edge "file_space_name" "file-space.cwl"
+      (Expect_ok (lookup_file_basename "f" "a b.txt"));
+    edge "json_path_escape" "json-path-escape.cwl" Expect_runtime;
+    edge "json_abs_escape" "json-abs-escape.cwl" Expect_runtime;
+    edge "json_location_escape" "json-location-escape.cwl" Expect_runtime;
+    edge "json_extra_escape" "json-extra-escape.cwl" Expect_runtime;
+    edge "basename_escape" "file-in.cwl" ~job:"escape-job.json" Expect_runtime;
+    edge "copy_device" "file-in.cwl" ~job:"device-job.json" Expect_runtime;
+    edge "copy_directory_as_file" "file-in.cwl" ~job:"dir-as-file-job.json"
+      Expect_runtime;
+    edge "http_location" "file-in.cwl" ~job:"http-job.json" Expect_runtime;
+    edge "glob_symlink_out" "glob-symlink.cwl" Expect_runtime;
   ]
+
+let run_edge (e : edge) () =
+  match run_tool e.tool e.job with
+  | Ok ann -> (
+      match e.outcome with
+      | Expect_ok f -> f ann
+      | Expect_runtime -> Alcotest.fail "expected Runtime error"
+      | Expect_type -> Alcotest.fail "expected Type error"
+      | Expect_unsupported _ -> Alcotest.fail "expected Unsupported")
+  | Error (Cwl.Error.Runtime _) -> (
+      match e.outcome with
+      | Expect_runtime -> ()
+      | _ -> Alcotest.fail "unexpected Runtime error")
+  | Error (Cwl.Error.Type _) -> (
+      match e.outcome with
+      | Expect_type -> ()
+      | _ -> Alcotest.fail "unexpected Type error")
+  | Error (Cwl.Error.Unsupported { feature }) -> (
+      match e.outcome with
+      | Expect_unsupported want ->
+          Alcotest.(check string) "feature" want feature
+      | _ -> Alcotest.fail ("unexpected Unsupported " ^ feature))
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+
+let edge_cases = List.map (fun e -> (e.name, `Quick, run_edge e)) execute_edges
 
 let rec collect_paths acc = function
   | Cwl.Type.Vfile f -> (
@@ -349,6 +498,58 @@ let stdout_symlink_dest =
       | Error e ->
           Alcotest.fail ("expected Runtime, got " ^ Cwl.Error.to_string e)
       | Ok _ -> Alcotest.fail "expected Runtime error" )
+
+let stdin_symlink_out =
+  ( "stdin_symlink_out",
+    `Quick,
+    fun () ->
+      Eio_main.run @@ fun env ->
+      let (module R : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+      let parent = expect_ok (R.mkdtemp ~prefix:"ccr-stdin-") in
+      let parent = expect_ok (R.abspath parent) in
+      let outdir = Filename.concat parent "out" in
+      let outside = Filename.concat parent "secret" in
+      expect_ok (R.mkdir_p outdir);
+      expect_ok (R.write_file outside "keep\n");
+      Unix.symlink outside (Filename.concat outdir "in.txt");
+      match
+        Cwl.run
+          (module R)
+          ~outdir
+          ~tool_path:(fixture "stdin-named.cwl")
+          ~job_path:(fixture "empty-job.json") ()
+      with
+      | Error (Cwl.Error.Runtime _) ->
+          Alcotest.(check string)
+            "outside unchanged" "keep\n"
+            (In_channel.with_open_text outside In_channel.input_all)
+      | Error e ->
+          Alcotest.fail ("expected Runtime, got " ^ Cwl.Error.to_string e)
+      | Ok _ -> Alcotest.fail "expected Runtime error" )
+
+let output_under_outdir =
+  ( "output_under_outdir",
+    `Quick,
+    fun () ->
+      Eio_main.run @@ fun env ->
+      let (module R : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+      let outdir = expect_ok (R.mkdtemp ~prefix:"ccr-under-") in
+      let outdir = expect_ok (R.abspath outdir) in
+      match
+        Cwl.run
+          (module R)
+          ~outdir
+          ~tool_path:(fixture "echo-stdout.cwl")
+          ~job_path:(fixture "echo-job.json") ()
+      with
+      | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+      | Ok ann ->
+          let paths =
+            List.fold_left (fun acc (_, v) -> collect_paths acc v) [] ann.value
+          in
+          List.iter
+            (fun p -> expect_ok (R.confined ~roots:[ outdir ] ~path:p))
+            paths )
 
 let expect_runtime = function
   | Error (Cwl.Error.Runtime _) -> ()
@@ -444,5 +645,12 @@ let () =
         List.map (QCheck_alcotest.to_alcotest ~speed_level:`Quick) prop_tests );
       ("glob", glob_cases);
       ("runtime", runtime_cases);
-      ("execute", exec_cases @ [ glob_starstar_root; stdout_symlink_dest ]);
+      ( "execute",
+        edge_cases
+        @ [
+            glob_starstar_root;
+            stdout_symlink_dest;
+            stdin_symlink_out;
+            output_under_outdir;
+          ] );
     ]
