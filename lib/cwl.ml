@@ -305,6 +305,21 @@ let rec resolve_output_paths ~outdir v =
         (List.map (fun (k, x) -> (k, resolve_output_paths ~outdir x)) kvs)
   | v -> v
 
+let node_matches ~path ~expected got =
+  match (expected, got) with
+  | `File, `File -> Ok ()
+  | `Directory, `Directory -> Ok ()
+  | `File, `Directory ->
+      Error (Error.Type { param = path; expected = "File"; got = "Directory" })
+  | `Directory, `File ->
+      Error (Error.Type { param = path; expected = "Directory"; got = "File" })
+  | `File, _ ->
+      Error (Error.Type { param = path; expected = "File"; got = "not a file" })
+  | `Directory, _ ->
+      Error
+        (Error.Type
+           { param = path; expected = "Directory"; got = "not a directory" })
+
 let rec confine_value (module R : Runtime.RUNTIME) ~roots v =
   let confine_path raw =
     if raw = "" then rt_err "File or Directory output missing path"
@@ -320,6 +335,7 @@ let rec confine_value (module R : Runtime.RUNTIME) ~roots v =
         | None -> Option.value f.location ~default:""
       in
       let* path = confine_path raw in
+      let* () = node_matches ~path ~expected:`File (R.stat path) in
       Ok
         (Ty.fill_file_paths
            (Ty.Vfile { f with path = Some path; location = Some path }))
@@ -330,6 +346,7 @@ let rec confine_value (module R : Runtime.RUNTIME) ~roots v =
         | None -> Option.value d.location ~default:""
       in
       let* path = confine_path raw in
+      let* () = node_matches ~path ~expected:`Directory (R.stat path) in
       Ok (Ty.Vdir { path = Some path; location = Some path })
   | Ty.Varray xs ->
       let* xs =

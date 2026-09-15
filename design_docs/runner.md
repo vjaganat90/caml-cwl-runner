@@ -582,7 +582,9 @@ sequenceDiagram
     ignore `outputBinding`. Relative File `path` / `location` resolve
     against `outdir`. Absolute `path` must already be under `outdir`.
     Every File/Directory, including extra keys, is `confined` to
-    `outdir`. Declared outputs are type-checked (`Type.matches`).
+    `outdir`. Declared outputs are type-checked (`Type.matches`). A JSON
+    `File` whose path is a directory (or a `Directory` whose path is a
+    file) is `Error.Type`, same as a glob hit.
 11. Else, if an outputBinding names `outputEval` or `loadContents`:
     `Unsupported`. Otherwise walk `outputs`:
     - `stream = Stdout` → glob the stdout filename.

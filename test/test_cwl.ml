@@ -408,6 +408,17 @@ let execute_edges =
       Expect_runtime;
     edge "http_location" "file-in.cwl" ~job:"http-job.json" Expect_runtime;
     edge "glob_symlink_out" "glob-symlink.cwl" Expect_runtime;
+    edge "directory_input_argv" "dir-in.cwl" ~job:"dir-in-job.json"
+      (Expect_ok
+         (fun ann ->
+           match Cwl.Type.lookup "out" ann.value with
+           | Some v ->
+               let p = String.trim (file_bytes v) in
+               Alcotest.(check bool) "is dir" true (Sys.is_directory p)
+           | None -> Alcotest.fail "missing out"));
+    edge "glob_overlap_uniq" "glob-overlap.cwl"
+      (Expect_ok (lookup_basenames "files" [ "a.txt" ]));
+    edge "json_file_is_dir" "json-file-is-dir.cwl" Expect_type;
   ]
 
 let run_edge (e : edge) () =
