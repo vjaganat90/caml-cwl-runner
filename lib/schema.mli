@@ -1,5 +1,6 @@
 (** CommandLineTool as typed OCaml. Known-unimplemented fields become
-    diagnostics; they are not dropped. *)
+    diagnostics; they are not dropped. Does not evaluate expressions or spawn.
+    Workflow is not decoded yet. *)
 
 include module type of Data.Schema
 

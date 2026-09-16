@@ -1,4 +1,11 @@
+(** Avro-ish CWL types and runtime values. Nested [inputBinding] on arrays lives
+    here so [Schema] can depend on [Type] without a cycle. Walkers recurse into
+    arrays and records; callers handle leaves. Does not load documents or spawn.
+*)
+
 include Data.Type
+
+let ( let* ) = Error.( let* )
 
 let default_binding =
   {
@@ -38,6 +45,60 @@ let value_kind = function
   | Varray _ -> "array"
   | Vrecord _ -> "record"
 
+let or_else a b = match a with Some _ as x -> x | None -> b
+let file_loc (f : file) = or_else f.location f.path
+let dir_loc (d : directory) = or_else d.location d.path
+let file_path (f : file) = or_else f.path f.location
+let dir_path (d : directory) = or_else d.path d.location
+
+let rec map f = function
+  | Varray xs -> Varray (List.map (map f) xs)
+  | Vrecord kvs -> Vrecord (List.map (fun (k, v) -> (k, map f v)) kvs)
+  | v -> f v
+
+let rec map_result f = function
+  | Varray xs ->
+      let ( let* ) = Error.( let* ) in
+      let* xs = Error.map_list (map_result f) xs in
+      Ok (Varray xs)
+  | Vrecord kvs ->
+      let ( let* ) = Error.( let* ) in
+      let* kvs =
+        Error.map_list
+          (fun (k, v) ->
+            let* v = map_result f v in
+            Ok (k, v))
+          kvs
+      in
+      Ok (Vrecord kvs)
+  | v -> f v
+
+let rec fold f acc = function
+  | Varray xs -> List.fold_left (fold f) acc xs
+  | Vrecord kvs -> List.fold_left (fun acc (_, v) -> fold f acc v) acc kvs
+  | v -> f acc v
+
+let rec fold_map f acc = function
+  | Varray xs ->
+      let ( let* ) = Error.( let* ) in
+      let rec go acc acc_xs = function
+        | [] -> Ok (Varray (List.rev acc_xs), acc)
+        | x :: xs ->
+            let* x, acc = fold_map f acc x in
+            go acc (x :: acc_xs) xs
+      in
+      go acc [] xs
+  | Vrecord kvs ->
+      let ( let* ) = Error.( let* ) in
+      let rec go acc acc_kvs = function
+        | [] -> Ok (Vrecord (List.rev acc_kvs), acc)
+        | (k, v) :: rest ->
+            let* v, acc = fold_map f acc v in
+            go acc ((k, v) :: acc_kvs) rest
+      in
+      go acc [] kvs
+  | v -> f acc v
+
 let file_basename_of location_or_path =
   match location_or_path with
   | None -> None
@@ -53,37 +114,23 @@ let split_name basename =
         String.sub basename i (String.length basename - i) )
 
 let fill_file (f : file) =
-  let path =
-    match f.path with Some _ as p -> p | None -> file_basename_of f.location
-  in
-  let basename =
-    match f.basename with
-    | Some _ as b -> b
-    | None -> (
-        match path with Some p -> Some (Filename.basename p) | None -> None)
-  in
+  let path = or_else f.path (file_basename_of f.location) in
+  let basename = or_else f.basename (Option.map Filename.basename path) in
   let nameroot, nameext =
     match basename with
     | None -> (f.nameroot, f.nameext)
-    | Some b -> (
+    | Some b ->
         let nr, ne = split_name b in
-        ( (match f.nameroot with Some _ as x -> x | None -> Some nr),
-          match f.nameext with Some _ as x -> x | None -> Some ne ))
+        (or_else f.nameroot (Some nr), or_else f.nameext (Some ne))
   in
   { f with path; basename; nameroot; nameext }
 
-let rec fill_file_paths = function
-  | Vfile f -> Vfile (fill_file f)
-  | Vdir d ->
-      let path =
-        match d.path with
-        | Some _ as p -> p
-        | None -> file_basename_of d.location
-      in
-      Vdir { d with path }
-  | Varray xs -> Varray (List.map fill_file_paths xs)
-  | Vrecord kvs -> Vrecord (List.map (fun (k, v) -> (k, fill_file_paths v)) kvs)
-  | v -> v
+let fill_file_paths =
+  map (function
+    | Vfile f -> Vfile (fill_file f)
+    | Vdir d ->
+        Vdir { d with path = or_else d.path (file_basename_of d.location) }
+    | v -> v)
 
 let lookup key obj = List.assoc_opt key obj
 
@@ -103,57 +150,40 @@ let rec matches ty value =
   | _, Vrecord _ -> false
   | _ -> false
 
-let rec parse_file_object ~param kvs =
-  let class_ =
-    match List.assoc_opt "class" kvs with
-    | Some (Doc.String "File") | None -> Ok ()
-    | Some v ->
-        Error
-          (Error.Type
-             { param; expected = "File"; got = Format.asprintf "%a" Doc.pp v })
-  in
-  match class_ with
-  | Error _ as e -> e
-  | Ok () ->
-      Ok
-        (Vfile
-           (fill_file
-              {
-                location = Doc.string_field kvs "location";
-                path = Doc.string_field kvs "path";
-                basename = Doc.string_field kvs "basename";
-                nameroot = Doc.string_field kvs "nameroot";
-                nameext = Doc.string_field kvs "nameext";
-                checksum = Doc.string_field kvs "checksum";
-                size = Doc.int_field kvs "size";
-              }))
+let require_class param expected kvs =
+  match List.assoc_opt "class" kvs with
+  | Some (Doc.String s) when s = expected -> Ok ()
+  | None -> Ok ()
+  | Some v ->
+      Error
+        (Error.Type { param; expected; got = Format.asprintf "%a" Doc.pp v })
 
-and parse_directory_object ~param kvs =
-  let class_ =
-    match List.assoc_opt "class" kvs with
-    | Some (Doc.String "Directory") | None -> Ok ()
-    | Some v ->
-        Error
-          (Error.Type
-             {
-               param;
-               expected = "Directory";
-               got = Format.asprintf "%a" Doc.pp v;
-             })
-  in
-  match class_ with
-  | Error _ as e -> e
-  | Ok () ->
-      Ok
-        (fill_file_paths
-           (Vdir
-              {
-                location = Doc.string_field kvs "location";
-                path = Doc.string_field kvs "path";
-              }))
+let rec parse_file_object param kvs =
+  let* () = require_class param "File" kvs in
+  Ok
+    (Vfile
+       (fill_file
+          {
+            location = Doc.string_field kvs "location";
+            path = Doc.string_field kvs "path";
+            basename = Doc.string_field kvs "basename";
+            nameroot = Doc.string_field kvs "nameroot";
+            nameext = Doc.string_field kvs "nameext";
+            checksum = Doc.string_field kvs "checksum";
+            size = Doc.int_field kvs "size";
+          }))
 
-and value_of_doc ~param ~ty doc =
-  let ( let* ) = Error.( let* ) in
+and parse_directory_object param kvs =
+  let* () = require_class param "Directory" kvs in
+  Ok
+    (fill_file_paths
+       (Vdir
+          {
+            location = Doc.string_field kvs "location";
+            path = Doc.string_field kvs "path";
+          }))
+
+and value_of_doc param ty doc =
   let fail expected =
     Error
       (Error.Type { param; expected; got = Format.asprintf "%a" Doc.pp doc })
@@ -163,7 +193,7 @@ and value_of_doc ~param ~ty doc =
       let rec try_ts = function
         | [] -> fail (type_name ty)
         | t :: rest -> (
-            match value_of_doc ~param ~ty:t doc with
+            match value_of_doc param t doc with
             | Ok v -> Ok v
             | Error _ -> try_ts rest)
       in
@@ -188,10 +218,10 @@ and value_of_doc ~param ~ty doc =
   | String, Doc.String s -> Ok (Vstring s)
   | String, Doc.Int n -> Ok (Vstring (Int64.to_string n))
   | String, Doc.Float f -> Ok (Vstring (string_of_float f))
-  | File, Doc.Object kvs -> parse_file_object ~param kvs
-  | Directory, Doc.Object kvs -> parse_directory_object ~param kvs
+  | File, Doc.Object kvs -> parse_file_object param kvs
+  | Directory, Doc.Object kvs -> parse_directory_object param kvs
   | Array { items; _ }, Doc.Array xs ->
-      let* xs = Error.map_list (value_of_doc ~param ~ty:items) xs in
+      let* xs = Error.map_list (value_of_doc param items) xs in
       Ok (Varray xs)
   | _, Doc.Null -> if is_optional ty then Ok Vnull else fail (type_name ty)
   | _ -> fail (type_name ty)
@@ -210,12 +240,12 @@ let object_of_doc = function
         | Doc.Object kvs -> (
             match List.assoc_opt "class" kvs with
             | Some (Doc.String "File") -> (
-                match parse_file_object ~param:"job" kvs with
+                match parse_file_object "job" kvs with
                 | Ok v -> v
                 | Error _ ->
                     Vrecord (List.map (fun (k, v) -> (k, of_any v)) kvs))
             | Some (Doc.String "Directory") -> (
-                match parse_directory_object ~param:"job" kvs with
+                match parse_directory_object "job" kvs with
                 | Ok v -> v
                 | Error _ ->
                     Vrecord (List.map (fun (k, v) -> (k, of_any v)) kvs))
@@ -232,7 +262,7 @@ let object_of_doc = function
                  (Format.asprintf "%a" Doc.pp other);
            })
 
-let apply_defaults_and_check ~inputs ~job =
+let apply_defaults_and_check inputs job =
   let rec go acc = function
     | [] -> Ok (List.rev acc)
     | spec :: rest -> (
@@ -283,14 +313,8 @@ let rec string_of_value = function
         in
         trim s
   | Vstring s -> s
-  | Vfile f -> (
-      match f.path with
-      | Some p -> p
-      | None -> Option.value f.location ~default:"")
-  | Vdir d -> (
-      match d.path with
-      | Some p -> p
-      | None -> Option.value d.location ~default:"")
+  | Vfile f -> Option.value (file_path f) ~default:""
+  | Vdir d -> Option.value (dir_path d) ~default:""
   | Varray xs -> "[" ^ String.concat ", " (List.map string_of_value xs) ^ "]"
   | Vrecord kvs ->
       "{"
@@ -322,6 +346,12 @@ let json_object fields =
   in
   "{" ^ body ^ "}"
 
+let add_opt name conv v fields =
+  match v with None -> fields | Some x -> fields @ [ (name, conv x) ]
+
+let file_uri loc =
+  if String.starts_with ~prefix:"file:" loc then loc else "file://" ^ loc
+
 let rec to_json = function
   | Vnull -> "null"
   | Vbool true -> "true"
@@ -332,61 +362,19 @@ let rec to_json = function
       else string_of_float f
   | Vstring s -> json_string s
   | Vfile f ->
-      let fields = [ ("class", json_string "File") ] in
-      let fields =
-        match f.location with
-        | Some loc ->
-            let loc =
-              if String.starts_with ~prefix:"file:" loc then loc
-              else "file://" ^ loc
-            in
-            fields @ [ ("location", json_string loc) ]
-        | None -> fields
-      in
-      let fields =
-        match f.path with
-        | Some p -> fields @ [ ("path", json_string p) ]
-        | None -> fields
-      in
-      let fields =
-        match f.basename with
-        | Some b -> fields @ [ ("basename", json_string b) ]
-        | None -> fields
-      in
-      let fields =
-        match f.nameroot with
-        | Some n -> fields @ [ ("nameroot", json_string n) ]
-        | None -> fields
-      in
-      let fields =
-        match f.nameext with
-        | Some n -> fields @ [ ("nameext", json_string n) ]
-        | None -> fields
-      in
-      let fields =
-        match f.size with
-        | Some n -> fields @ [ ("size", Int64.to_string n) ]
-        | None -> fields
-      in
-      json_object fields
+      [ ("class", json_string "File") ]
+      |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
+      |> add_opt "path" json_string f.path
+      |> add_opt "basename" json_string f.basename
+      |> add_opt "nameroot" json_string f.nameroot
+      |> add_opt "nameext" json_string f.nameext
+      |> add_opt "size" Int64.to_string f.size
+      |> json_object
   | Vdir d ->
-      let fields = [ ("class", json_string "Directory") ] in
-      let fields =
-        match d.location with
-        | Some loc ->
-            let loc =
-              if String.starts_with ~prefix:"file:" loc then loc
-              else "file://" ^ loc
-            in
-            fields @ [ ("location", json_string loc) ]
-        | None -> fields
-      in
-      let fields =
-        match d.path with
-        | Some p -> fields @ [ ("path", json_string p) ]
-        | None -> fields
-      in
-      json_object fields
+      [ ("class", json_string "Directory") ]
+      |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
+      |> add_opt "path" json_string d.path
+      |> json_object
   | Varray xs -> "[" ^ String.concat "," (List.map to_json xs) ^ "]"
   | Vrecord kvs -> json_object (List.map (fun (k, v) -> (k, to_json v)) kvs)
 

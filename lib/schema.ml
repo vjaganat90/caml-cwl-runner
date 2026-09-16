@@ -1,10 +1,14 @@
+(** CommandLineTool as typed OCaml. Known-unimplemented fields become
+    diagnostics; they are not dropped. Does not evaluate expressions or spawn.
+    Workflow is not decoded yet. *)
+
 include Data.Schema
 
 let ( let* ) = Error.( let* )
 let schema_err path message = Error (Error.Schema { path; message })
 
 let diag ?(in_requirements = false) feature path =
-  Error.unimplemented ~in_requirements ~feature path
+  Error.unimplemented ~in_requirements feature path
 
 let child path name = if path = "" then name else path ^ "." ^ name
 let nth path i = Printf.sprintf "%s[%d]" path i
@@ -213,7 +217,7 @@ and parse_type_object ~json_path kvs =
   | Some t -> parse_cwl_type ~json_path t
   | None -> schema_err json_path "type object missing 'type' field"
 
-let parse_default ~param ~ty v = Ty.value_of_doc ~param ~ty v
+let parse_default ~param ~ty v = Ty.value_of_doc param ty v
 
 let parse_input ~json_path ~id_opt v :
     (input * Error.diagnostic list, Error.t) result =

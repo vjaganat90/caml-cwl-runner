@@ -1,4 +1,5 @@
-(** ADTs defined once. Public modules [include] their part. *)
+(** ADTs defined once. Public modules [include] their part ([Error], [Doc],
+    [Type], [Schema], [Expr]). This file has no I/O and no functions. *)
 
 module Error = struct
   type t =
@@ -147,6 +148,6 @@ module Expr = struct
   type context = { inputs : Type.object_; self : Type.value; runtime : runtime }
 
   module type ENGINE = sig
-    val eval : ctx:context -> expr:string -> (Type.value, Error.t) result
+    val eval : context -> string -> (Type.value, Error.t) result
   end
 end

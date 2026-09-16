@@ -1,3 +1,7 @@
+(** Parameter references ([$(inputs…)], [$(self…)], [$(runtime…)]). Inline
+    JavaScript is a separate [ENGINE] of the same signature. Pure: no
+    filesystem. *)
+
 include Data.Expr
 
 let default_runtime =
@@ -175,7 +179,7 @@ let looks_like_js s =
   || (String.starts_with ~prefix:"$(" t && parse_param_ref t = None)
 
 module Param_ref : ENGINE = struct
-  let eval ~ctx ~expr =
+  let eval ctx expr =
     let t = String.trim expr in
     if looks_like_js t then unsupported "InlineJavascriptRequirement"
     else

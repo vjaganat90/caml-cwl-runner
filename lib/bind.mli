@@ -1,8 +1,9 @@
-(** InputBinding → argv. Pure. Expression evaluation is a module argument. *)
+(** [inputBinding] → argv. Pure: does not open files or spawn. Expression
+    evaluation is a module argument ([ENGINE]). *)
 
 val argv :
   (module Expr.ENGINE) ->
-  tool:Schema.command_line_tool ->
-  inputs:Ty.object_ ->
-  runtime:Expr.runtime ->
+  Schema.command_line_tool ->
+  Ty.object_ ->
+  Expr.runtime ->
   (string list, Error.t) result

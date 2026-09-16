@@ -1,3 +1,7 @@
+(** POSIX / Python glob against an abstract filesystem. CWL outputBinding rules
+    ([**], reject [..], roots) live here. Runtime only implements [FS]; this
+    module does not spawn or touch Eio. *)
+
 module type FS = sig
   val exists : string -> bool
   val is_dir : string -> bool
@@ -94,12 +98,12 @@ let sort_unique xs =
 
 let max_glob_depth = 64
 
-let under ~root path =
+let under root path =
   let root = trim_slash root in
   let path = trim_slash path in
   path = root || String.starts_with ~prefix:(root ^ "/") path
 
-let in_roots ~roots path = List.exists (fun root -> under ~root path) roots
+let in_roots ~roots path = List.exists (fun root -> under root path) roots
 
 let may_list (module FS : FS) ~roots dir =
   match FS.realpath dir with
@@ -160,7 +164,7 @@ let rec collect (module FS : FS) ~roots ~depth dir parts =
             in
             Ok (List.concat groups)
 
-let glob (module FS : FS) ~root ~pattern ?roots () =
+let glob (module FS : FS) ?roots root pattern =
   let root = trim_slash root in
   let roots =
     match roots with
