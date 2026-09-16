@@ -3,7 +3,7 @@
 
 val argv :
   (module Expr.ENGINE) ->
-  Schema.command_line_tool ->
+  Command_line_tool.t ->
   Ty.object_ ->
   Expr.runtime ->
   (string list, Error.t) result

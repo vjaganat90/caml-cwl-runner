@@ -40,7 +40,7 @@ let append_index key i = key @ [ I i ]
 let empty_binding = Ty.default_binding
 let is_argument name = String.starts_with ~prefix:"arguments" name
 
-let argv (module E : Expr.ENGINE) tool inputs runtime =
+let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
   let ctx0 = { Expr.inputs; self = Ty.Vnull; runtime } in
   let resolve_position ctx = function
     | Ty.Pos n -> Ok n
@@ -146,7 +146,7 @@ let argv (module E : Expr.ENGINE) tool inputs runtime =
   in
   let rec collect_arguments ctx i acc = function
     | [] -> Ok acc
-    | Schema.Literal s :: rest ->
+    | Command_line_tool.Literal s :: rest ->
         let item =
           {
             key = [ I 0; I i ];
@@ -156,7 +156,7 @@ let argv (module E : Expr.ENGINE) tool inputs runtime =
           }
         in
         collect_arguments ctx (i + 1) (item :: acc) rest
-    | Schema.Binding b :: rest ->
+    | Command_line_tool.Binding b :: rest ->
         let* p = resolve_position ctx b.Ty.position in
         let item =
           {
@@ -215,8 +215,8 @@ let argv (module E : Expr.ENGINE) tool inputs runtime =
         tokens ~separate:item.binding.separate item.binding.prefix
           [ Ty.string_of_value v ]
   in
-  let* acc = collect_arguments ctx0 0 [] tool.Schema.arguments in
-  let* items = collect_inputs ctx0 acc tool.Schema.inputs in
+  let* acc = collect_arguments ctx0 0 [] tool.arguments in
+  let* items = collect_inputs ctx0 acc tool.inputs in
   let rec eval_all acc = function
     | [] -> Ok (List.rev acc)
     | x :: xs ->
@@ -226,4 +226,4 @@ let argv (module E : Expr.ENGINE) tool inputs runtime =
   let* items = eval_all [] items in
   let items = List.sort cmp_item items in
   let args = List.concat_map generate_arg items in
-  Ok (tool.Schema.base_command @ args)
+  Ok (tool.base_command @ args)

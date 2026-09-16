@@ -1,7 +1,7 @@
 (** Avro-ish CWL types and runtime values. Nested [inputBinding] on arrays lives
-    here so [Schema] can depend on [Type] without a cycle. Walkers ([map],
-    [map_result], [fold], [fold_map]) recurse into arrays and records; callers
-    handle leaves. Does not load documents or spawn. *)
+    here so [Command_line_tool] can depend on [Type] without a cycle. Walkers
+    ([map], [map_result], [fold], [fold_map]) recurse into arrays and records;
+    callers handle leaves. Does not load documents or spawn. *)
 
 include module type of Data.Type
 
@@ -29,8 +29,8 @@ val fold_map :
 
 val fill_file_paths : value -> value
 val lookup : string -> object_ -> value option
-val value_of_doc : string -> t -> Doc.value -> (value, Error.t) result
-val object_of_doc : Doc.value -> (object_, Error.t) result
+val value_of_tree : string -> t -> Untyped_tree.value -> (value, Error.t) result
+val object_of_tree : Untyped_tree.value -> (object_, Error.t) result
 
 val apply_defaults_and_check :
   input_spec list -> object_ -> (object_, Error.t) result

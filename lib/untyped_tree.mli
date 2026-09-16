@@ -1,7 +1,8 @@
-(** YAML/JSON documents as our tree. The only document reader. Does not leak
-    [Yaml.value]. Default [FILE] is [In_channel]; Runtime is Eio. *)
+(** Nested YAML/JSON file contents, before CWL types. The only file reader. Does
+    not leak [Yaml.value]. Default [FILE] is [In_channel]. Not [Document]
+    (CommandLineTool | Workflow) and not [Type.value]. *)
 
-include module type of Data.Doc
+include module type of Data.Untyped_tree
 
 val of_yaml_string : ?path:string -> string -> (value, Error.t) result
 val load : (module FILE) -> string -> (value, Error.t) result

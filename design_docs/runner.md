@@ -15,8 +15,9 @@ Source of truth, in order: CWL v1.2.1 spec
 → v1.2 conformance tests → cwltool only for a disputed corner.
 
 Contracts live in `lib/*.mli`. Private ADTs live once in `lib/data.ml`
-and are `include`d into `Cwl.Error`, `Cwl.Doc`, `Cwl.Type`, `Cwl.Schema`,
-`Cwl.Expr`. If this file and an `.mli` disagree, the `.mli` wins.
+and are `include`d into `Cwl.Error`, `Cwl.Untyped_tree`, `Cwl.Type`,
+`Cwl.Command_line_tool`, `Cwl.Workflow`, `Cwl.Document`, `Cwl.Expr`. If
+this file and an `.mli` disagree, the `.mli` wins.
 
 ---
 
@@ -31,13 +32,13 @@ not a global. `let*` is `Result.bind`. Tests pack a fake `RUNTIME` or
 `Glob.FS`; spawn tests wrap `Eio_main.run`.
 
 Effectful holes are module arguments: `(module Expr.ENGINE)`,
-`(module Glob.FS)`, `(module Runtime.RUNTIME)`, `(module Doc.FILE)`.
-Not an IO monad. Stdlib + `Result.t`. I/O only in `Doc` (load) and
-`Runtime` (FS + spawn). Eio is the Runtime body and the CLI scheduler.
+`(module Glob.FS)`, `(module Runtime.RUNTIME)`, `(module Untyped_tree.FILE)`.
+Not an IO monad. Stdlib + `Result.t`. I/O only in `Untyped_tree` (load)
+and `Runtime` (FS + spawn). Eio is the Runtime body and the CLI scheduler.
 No Lwt. Known-unimplemented CWL is a `diagnostic`, never a silent drop.
 
-Salad compact forms (`T?`, `T[]`) are decoded by hand from `Doc.value`.
-No ppx derivers.
+Salad compact forms (`T?`, `T[]`) are decoded by hand from
+`Untyped_tree.value`. No ppx derivers.
 
 ---
 
@@ -46,22 +47,29 @@ No ppx derivers.
 ```mermaid
 flowchart TB
   CLI["bin/ccr\nEio_main.run"] --> Facade["Cwl"]
-  Facade --> Doc
+  Facade --> Untyped_tree
+  Facade --> Document
   Facade --> Schema
+  Facade --> Command_line_tool
+  Facade --> Workflow
   Facade --> Type
   Facade --> Expr
   Facade --> Bind
   Facade --> Glob
   Facade --> Runtime
-  Facade --> Wf["Wf"]
   Schema --> Type
+  Command_line_tool --> Schema
+  Workflow --> Schema
+  Command_line_tool --> Type
   Bind --> Expr
-  Bind --> Schema
+  Bind --> Command_line_tool
   Bind --> Type
+  Document --> Command_line_tool
+  Document --> Workflow
   Runtime --> Glob
-  Wf --> Facade
-  Doc --> Error
-  Schema --> Error
+  Untyped_tree --> Error
+  Command_line_tool --> Error
+  Document --> Untyped_tree
   Expr --> Error
   Bind --> Error
   Glob --> Error
@@ -71,17 +79,19 @@ flowchart TB
 | Module | Role |
 |---|---|
 | `Error` | Failure (`Error.t`) vs parsed-but-unimplemented (`diagnostic`). `in_requirements` is fatal at **execute**, not at argv. |
-| `Doc` | YAML/JSON tree. Does not leak `Yaml.value`. |
+| `Untyped_tree` | Nested YAML/JSON file contents, before CWL types. Does not leak `Yaml.value`. |
 | `Type` | Avro-ish types and runtime values. Optionality is `Union`. Nested array `inputBinding` is `item_binding` here so Schema can depend on Type. |
-| `Schema` | `CommandLineTool` records. Unknown or unimplemented keys become diagnostics; they are not dropped. |
+| `Schema` | Shared process fields and their parsers: inputs, outputs, requirements. Not a process class. |
+| `Command_line_tool` | Typed CommandLineTool. Unknown or unimplemented keys become diagnostics; they are not dropped. |
+| `Workflow` | Typed Workflow. Parse only; graph execution is not here. |
+| `Document` | Process file: `Command_line_tool` or `Workflow`. [of_tree] reads `class`. Not the job input object. |
 | `Expr` | Parameter-reference `ENGINE`. JavaScript is a second `ENGINE`, not a new Bind parameter. |
 | `Bind` | `inputBinding` → argv. Does not open files. |
 | `Glob` | POSIX/Python glob against `(module FS)`. Does not spawn. |
 | `Runtime` | Stage, temp dirs, spawn, confinement. Local body is Eio. |
 | `Cwl` | Facade: `command_line` and `run`. |
-| `Wf` | Not built. Workflow graph on the same scheduler. |
 
-`Type` does not depend on `Schema`. `Glob` does not depend on `Runtime`;
+`Type` does not depend on `Command_line_tool`. `Glob` does not depend on `Runtime`;
 Runtime implements `Glob.FS`.
 
 `Error.t` means this call cannot produce a result. A `diagnostic` means
@@ -101,12 +111,12 @@ left on disk. `--quiet` hides diagnostics, not errors.
 sequenceDiagram
   participant CLI
   participant Cwl
-  participant Schema
+  participant Document
   participant Runtime
   participant Bind
   participant Glob
   CLI->>Cwl: run (module R)
-  Cwl->>Schema: command_line_tool
+  Cwl->>Document: of_tree
   Note over Cwl: unimplemented requirements → Unsupported
   Cwl->>Runtime: outdir / tmpdir
   Cwl->>Runtime: copy File inputs as basename
@@ -120,8 +130,9 @@ sequenceDiagram
   CLI->>CLI: JSON on stdout
 ```
 
-Load process and job (`Doc`). Schema must be CommandLineTool (other
-`class` → `Unsupported`). A requirement that is unimplemented is
+Load process (`Untyped_tree` → `Document`) and job (`Untyped_tree` →
+`Type.object_`). `Workflow` is `Unsupported` until `Cwl.Wf`. Other
+`class` → `Unsupported`. A requirement that is unimplemented is
 `Unsupported` at execute; the same class in hints is a diagnostic.
 Create `outdir` and `tmpdir`. Type-check the job, then stage: File
 inputs are **copied** into `outdir` under `basename` (`path` becomes that
@@ -210,7 +221,7 @@ glob(3) relative to the output directory. Conformance matches Python
 
 ## Not built yet
 
-Unimplemented CWL stays in Schema as diagnostics. The types are not
+Unimplemented CWL stays on the process record as diagnostics. The types are not
 deleted.
 
 - **JavaScript** — `module Js : ENGINE`. Same `eval`. `Cwl.run` / `Bind.argv`
@@ -237,7 +248,7 @@ process cannot be chosen without them.
 ## Tests
 
 Alcotest only. QCheck2 via `qcheck-alcotest`. No ppx generators.
-Invariants in types and signatures first (no Yaml past `Doc`; Bind cannot
+Invariants in types and signatures first (no Yaml past `Untyped_tree`; Bind cannot
 load files; Glob cannot spawn). Argv examples (`bwa-mem-tool.cwl`,
 `cat1-testcli.cwl`, `binding-test.cwl`) are not executed. Execute fixtures
 are local (`echo`, `touch`, `true`, `sh -c`). `execute_edges` is one table

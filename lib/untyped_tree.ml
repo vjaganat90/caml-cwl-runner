@@ -1,7 +1,8 @@
-(** YAML/JSON documents as our tree. The only document reader. Does not leak
-    [Yaml.value]. Default [FILE] is [In_channel]; Runtime is Eio. *)
+(** Nested YAML/JSON file contents, before CWL types. The only file reader. Does
+    not leak [Yaml.value]. Default [FILE] is [In_channel]. Not [Document]
+    (CommandLineTool | Workflow) and not [Type.value]. *)
 
-include Data.Doc
+include Data.Untyped_tree
 
 let rec of_yaml : Yaml.value -> value = function
   | `Null -> Null
