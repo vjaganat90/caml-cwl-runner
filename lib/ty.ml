@@ -152,11 +152,12 @@ let rec matches ty value =
 
 let require_class param expected kvs =
   match List.assoc_opt "class" kvs with
-  | Some (Doc.String s) when s = expected -> Ok ()
+  | Some (Untyped_tree.String s) when s = expected -> Ok ()
   | None -> Ok ()
   | Some v ->
       Error
-        (Error.Type { param; expected; got = Format.asprintf "%a" Doc.pp v })
+        (Error.Type
+           { param; expected; got = Format.asprintf "%a" Untyped_tree.pp v })
 
 let rec parse_file_object param kvs =
   let* () = require_class param "File" kvs in
@@ -164,13 +165,13 @@ let rec parse_file_object param kvs =
     (Vfile
        (fill_file
           {
-            location = Doc.string_field kvs "location";
-            path = Doc.string_field kvs "path";
-            basename = Doc.string_field kvs "basename";
-            nameroot = Doc.string_field kvs "nameroot";
-            nameext = Doc.string_field kvs "nameext";
-            checksum = Doc.string_field kvs "checksum";
-            size = Doc.int_field kvs "size";
+            location = Untyped_tree.string_field kvs "location";
+            path = Untyped_tree.string_field kvs "path";
+            basename = Untyped_tree.string_field kvs "basename";
+            nameroot = Untyped_tree.string_field kvs "nameroot";
+            nameext = Untyped_tree.string_field kvs "nameext";
+            checksum = Untyped_tree.string_field kvs "checksum";
+            size = Untyped_tree.int_field kvs "size";
           }))
 
 and parse_directory_object param kvs =
@@ -179,28 +180,29 @@ and parse_directory_object param kvs =
     (fill_file_paths
        (Vdir
           {
-            location = Doc.string_field kvs "location";
-            path = Doc.string_field kvs "path";
+            location = Untyped_tree.string_field kvs "location";
+            path = Untyped_tree.string_field kvs "path";
           }))
 
-and value_of_doc param ty doc =
+and value_of_tree param ty doc =
   let fail expected =
     Error
-      (Error.Type { param; expected; got = Format.asprintf "%a" Doc.pp doc })
+      (Error.Type
+         { param; expected; got = Format.asprintf "%a" Untyped_tree.pp doc })
   in
   match (ty, doc) with
   | Union ts, doc ->
       let rec try_ts = function
         | [] -> fail (type_name ty)
         | t :: rest -> (
-            match value_of_doc param t doc with
+            match value_of_tree param t doc with
             | Ok v -> Ok v
             | Error _ -> try_ts rest)
       in
       (* Prefer a non-null match when the document is not null. *)
       let ordered =
         match doc with
-        | Doc.Null ->
+        | Untyped_tree.Null ->
             List.filter (function Null -> true | _ -> false) ts
             @ List.filter (function Null -> false | _ -> true) ts
         | _ ->
@@ -208,43 +210,44 @@ and value_of_doc param ty doc =
             @ List.filter (function Null -> true | _ -> false) ts
       in
       try_ts ordered
-  | Null, Doc.Null -> Ok Vnull
-  | Boolean, Doc.Bool b -> Ok (Vbool b)
-  | (Int | Long), Doc.Int n -> Ok (Vint n)
-  | (Int | Long), Doc.Float f when Float.is_integer f ->
+  | Null, Untyped_tree.Null -> Ok Vnull
+  | Boolean, Untyped_tree.Bool b -> Ok (Vbool b)
+  | (Int | Long), Untyped_tree.Int n -> Ok (Vint n)
+  | (Int | Long), Untyped_tree.Float f when Float.is_integer f ->
       Ok (Vint (Int64.of_float f))
-  | (Float | Double), Doc.Float f -> Ok (Vfloat f)
-  | (Float | Double), Doc.Int n -> Ok (Vfloat (Int64.to_float n))
-  | String, Doc.String s -> Ok (Vstring s)
-  | String, Doc.Int n -> Ok (Vstring (Int64.to_string n))
-  | String, Doc.Float f -> Ok (Vstring (string_of_float f))
-  | File, Doc.Object kvs -> parse_file_object param kvs
-  | Directory, Doc.Object kvs -> parse_directory_object param kvs
-  | Array { items; _ }, Doc.Array xs ->
-      let* xs = Error.map_list (value_of_doc param items) xs in
+  | (Float | Double), Untyped_tree.Float f -> Ok (Vfloat f)
+  | (Float | Double), Untyped_tree.Int n -> Ok (Vfloat (Int64.to_float n))
+  | String, Untyped_tree.String s -> Ok (Vstring s)
+  | String, Untyped_tree.Int n -> Ok (Vstring (Int64.to_string n))
+  | String, Untyped_tree.Float f -> Ok (Vstring (string_of_float f))
+  | File, Untyped_tree.Object kvs -> parse_file_object param kvs
+  | Directory, Untyped_tree.Object kvs -> parse_directory_object param kvs
+  | Array { items; _ }, Untyped_tree.Array xs ->
+      let* xs = Error.map_list (value_of_tree param items) xs in
       Ok (Varray xs)
-  | _, Doc.Null -> if is_optional ty then Ok Vnull else fail (type_name ty)
+  | _, Untyped_tree.Null ->
+      if is_optional ty then Ok Vnull else fail (type_name ty)
   | _ -> fail (type_name ty)
 
-let object_of_doc = function
-  | Doc.Null -> Ok []
-  | Doc.Object kvs ->
+let object_of_tree = function
+  | Untyped_tree.Null -> Ok []
+  | Untyped_tree.Object kvs ->
       (* Loose decode: files/dirs recognized by class, else generic. *)
       let rec of_any = function
-        | Doc.Null -> Vnull
-        | Doc.Bool b -> Vbool b
-        | Doc.Int n -> Vint n
-        | Doc.Float f -> Vfloat f
-        | Doc.String s -> Vstring s
-        | Doc.Array xs -> Varray (List.map of_any xs)
-        | Doc.Object kvs -> (
+        | Untyped_tree.Null -> Vnull
+        | Untyped_tree.Bool b -> Vbool b
+        | Untyped_tree.Int n -> Vint n
+        | Untyped_tree.Float f -> Vfloat f
+        | Untyped_tree.String s -> Vstring s
+        | Untyped_tree.Array xs -> Varray (List.map of_any xs)
+        | Untyped_tree.Object kvs -> (
             match List.assoc_opt "class" kvs with
-            | Some (Doc.String "File") -> (
+            | Some (Untyped_tree.String "File") -> (
                 match parse_file_object "job" kvs with
                 | Ok v -> v
                 | Error _ ->
                     Vrecord (List.map (fun (k, v) -> (k, of_any v)) kvs))
-            | Some (Doc.String "Directory") -> (
+            | Some (Untyped_tree.String "Directory") -> (
                 match parse_directory_object "job" kvs with
                 | Ok v -> v
                 | Error _ ->
@@ -259,7 +262,7 @@ let object_of_doc = function
              path = "/";
              message =
                Printf.sprintf "job must be a YAML/JSON object, got %s"
-                 (Format.asprintf "%a" Doc.pp other);
+                 (Format.asprintf "%a" Untyped_tree.pp other);
            })
 
 let apply_defaults_and_check inputs job =

@@ -123,8 +123,8 @@ let prop_integral_yaml =
   Test.make ~name:"integral YAML is Int" ~count:100
     Gen.(int_range (-10_000) 10_000)
     (fun n ->
-      match Cwl.Doc.load_string (string_of_int n) with
-      | Ok (Cwl.Doc.Int m) -> Int64.to_int m = n
+      match Cwl.Untyped_tree.load_string (string_of_int n) with
+      | Ok (Cwl.Untyped_tree.Int m) -> Int64.to_int m = n
       | _ -> false)
 
 let prop_docker_diagnosed =
@@ -143,10 +143,10 @@ outputs: []
 stdout: out.txt
 |}
       in
-      match Cwl.Doc.load_string src with
+      match Cwl.Untyped_tree.load_string src with
       | Error _ -> false
-      | Ok doc -> (
-          match Cwl.Schema.command_line_tool doc with
+      | Ok tree -> (
+          match Cwl.Schema.command_line_tool tree with
           | Error _ -> false
           | Ok ann ->
               has_feature "DockerRequirement" ann.diagnostics
@@ -425,6 +425,7 @@ let execute_edges =
     edge "glob_overlap_uniq" "glob-overlap.cwl"
       (Expect_ok (lookup_basenames "files" [ "a.txt" ]));
     edge "json_file_is_dir" "json-file-is-dir.cwl" Expect_type;
+    edge "workflow_unsupported" "workflow.cwl" (Expect_unsupported "Workflow");
     edge "glob_starstar_root" "glob-starstar.cwl"
       (Expect_ok_or_error
          (fun ann ->

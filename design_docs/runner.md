@@ -15,8 +15,9 @@ Source of truth, in order: CWL v1.2.1 spec
 → v1.2 conformance tests → cwltool only for a disputed corner.
 
 Contracts live in `lib/*.mli`. Private ADTs live once in `lib/data.ml`
-and are `include`d into `Cwl.Error`, `Cwl.Doc`, `Cwl.Type`, `Cwl.Schema`,
-`Cwl.Expr`. If this file and an `.mli` disagree, the `.mli` wins.
+and are `include`d into `Cwl.Error`, `Cwl.Untyped_tree`, `Cwl.Type`,
+`Cwl.Schema`, `Cwl.Expr`. If this file and an `.mli` disagree, the `.mli`
+wins.
 
 ---
 
@@ -31,13 +32,13 @@ not a global. `let*` is `Result.bind`. Tests pack a fake `RUNTIME` or
 `Glob.FS`; spawn tests wrap `Eio_main.run`.
 
 Effectful holes are module arguments: `(module Expr.ENGINE)`,
-`(module Glob.FS)`, `(module Runtime.RUNTIME)`, `(module Doc.FILE)`.
-Not an IO monad. Stdlib + `Result.t`. I/O only in `Doc` (load) and
-`Runtime` (FS + spawn). Eio is the Runtime body and the CLI scheduler.
+`(module Glob.FS)`, `(module Runtime.RUNTIME)`, `(module Untyped_tree.FILE)`.
+Not an IO monad. Stdlib + `Result.t`. I/O only in `Untyped_tree` (load)
+and `Runtime` (FS + spawn). Eio is the Runtime body and the CLI scheduler.
 No Lwt. Known-unimplemented CWL is a `diagnostic`, never a silent drop.
 
-Salad compact forms (`T?`, `T[]`) are decoded by hand from `Doc.value`.
-No ppx derivers.
+Salad compact forms (`T?`, `T[]`) are decoded by hand from
+`Untyped_tree.value`. No ppx derivers.
 
 ---
 
@@ -46,7 +47,8 @@ No ppx derivers.
 ```mermaid
 flowchart TB
   CLI["bin/ccr\nEio_main.run"] --> Facade["Cwl"]
-  Facade --> Doc
+  Facade --> Untyped_tree
+  Facade --> Document
   Facade --> Schema
   Facade --> Type
   Facade --> Expr
@@ -60,8 +62,10 @@ flowchart TB
   Bind --> Type
   Runtime --> Glob
   Wf --> Facade
-  Doc --> Error
+  Untyped_tree --> Error
   Schema --> Error
+  Schema --> Document
+  Schema --> Untyped_tree
   Expr --> Error
   Bind --> Error
   Glob --> Error
@@ -71,9 +75,10 @@ flowchart TB
 | Module | Role |
 |---|---|
 | `Error` | Failure (`Error.t`) vs parsed-but-unimplemented (`diagnostic`). `in_requirements` is fatal at **execute**, not at argv. |
-| `Doc` | YAML/JSON tree. Does not leak `Yaml.value`. |
+| `Untyped_tree` | Nested YAML/JSON file contents, before CWL types. Does not leak `Yaml.value`. |
+| `Document` | Process file: `CommandLineTool` or `Workflow`. Not the job input object. |
 | `Type` | Avro-ish types and runtime values. Optionality is `Union`. Nested array `inputBinding` is `item_binding` here so Schema can depend on Type. |
-| `Schema` | `CommandLineTool` records. Unknown or unimplemented keys become diagnostics; they are not dropped. |
+| `Schema` | Typed process records. Unknown or unimplemented keys become diagnostics; they are not dropped. |
 | `Expr` | Parameter-reference `ENGINE`. JavaScript is a second `ENGINE`, not a new Bind parameter. |
 | `Bind` | `inputBinding` → argv. Does not open files. |
 | `Glob` | POSIX/Python glob against `(module FS)`. Does not spawn. |
@@ -106,7 +111,7 @@ sequenceDiagram
   participant Bind
   participant Glob
   CLI->>Cwl: run (module R)
-  Cwl->>Schema: command_line_tool
+  Cwl->>Schema: document
   Note over Cwl: unimplemented requirements → Unsupported
   Cwl->>Runtime: outdir / tmpdir
   Cwl->>Runtime: copy File inputs as basename
@@ -120,8 +125,9 @@ sequenceDiagram
   CLI->>CLI: JSON on stdout
 ```
 
-Load process and job (`Doc`). Schema must be CommandLineTool (other
-`class` → `Unsupported`). A requirement that is unimplemented is
+Load process (`Untyped_tree` → `Document`) and job (`Untyped_tree` →
+`Type.object_`). `Workflow` is `Unsupported` until `Cwl.Wf`. Other
+`class` → `Unsupported`. A requirement that is unimplemented is
 `Unsupported` at execute; the same class in hints is a diagnostic.
 Create `outdir` and `tmpdir`. Type-check the job, then stage: File
 inputs are **copied** into `outdir` under `basename` (`path` becomes that
@@ -237,7 +243,7 @@ process cannot be chosen without them.
 ## Tests
 
 Alcotest only. QCheck2 via `qcheck-alcotest`. No ppx generators.
-Invariants in types and signatures first (no Yaml past `Doc`; Bind cannot
+Invariants in types and signatures first (no Yaml past `Untyped_tree`; Bind cannot
 load files; Glob cannot spawn). Argv examples (`bwa-mem-tool.cwl`,
 `cat1-testcli.cwl`, `binding-test.cwl`) are not executed. Execute fixtures
 are local (`echo`, `touch`, `true`, `sh -c`). `execute_edges` is one table

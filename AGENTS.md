@@ -10,11 +10,11 @@ as JSON on stdout. Non-zero on failure; 33 means unimplemented feature.
 ## Modules
 
 `.mli` is the design. ADTs live once in private `Data` and are `include`d
-into `Cwl.Error`, `Cwl.Doc`, `Cwl.Type`, `Cwl.Schema`, `Cwl.Expr`.
+into `Cwl.Error`, `Cwl.Untyped_tree`, `Cwl.Type`, `Cwl.Schema`, `Cwl.Expr`.
 Module-dependent functions `(module E : ENGINE) -> …` at JS eval, FS, and
 process spawn. Stdlib + `Result.t`. No objects, `Obj`,
 refs, or Hashtbl unless a Runtime body truly needs them.
-I/O only in `Doc` and `Runtime`. Eio is the Runtime body and the CLI
+I/O only in `Untyped_tree` and `Runtime`. Eio is the Runtime body and the CLI
 scheduler (`Eio_main.run`). No Lwt. `Glob` is pure given `(module FS)`.
 Known-unimplemented CWL is a diagnostic, never a silent drop.
 

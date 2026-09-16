@@ -1,5 +1,6 @@
-(** ADTs defined once. Public modules [include] their part ([Error], [Doc],
-    [Type], [Schema], [Expr]). This file has no I/O and no functions. *)
+(** ADTs defined once. Public modules [include] their part ([Error],
+    [Untyped_tree], [Type], [Schema], [Expr], [Document]). This file has no I/O
+    and no functions. *)
 
 module Error = struct
   type t =
@@ -21,7 +22,7 @@ module Error = struct
   type 'a annotated = { value : 'a; diagnostics : diagnostic list }
 end
 
-module Doc = struct
+module Untyped_tree = struct
   type value =
     | Null
     | Bool of bool
@@ -135,6 +136,14 @@ module Schema = struct
     requirements : requirement list;
     hints : requirement list;
   }
+
+  type workflow = { cwl_version : string; class_ : string }
+end
+
+module Document = struct
+  type t =
+    | CommandLineTool of Schema.command_line_tool
+    | Workflow of Schema.workflow
 end
 
 module Expr = struct
