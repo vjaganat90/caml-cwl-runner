@@ -1,4 +1,6 @@
-(** Parameter references. Inline JavaScript is a separate [ENGINE]. *)
+(** Parameter references ([$(inputs…)], [$(self…)], [$(runtime…)]). Inline
+    JavaScript is a separate [ENGINE] of the same signature. Pure: no
+    filesystem. *)
 
 include module type of Data.Expr
 

@@ -1,4 +1,6 @@
-(** Sealed public surface. *)
+(** Sealed public surface: [command_line] builds argv; [run] executes a local
+    CommandLineTool. Submodules are the engine. Workflow and a JavaScript
+    [ENGINE] are not here yet. *)
 
 module Error : module type of Error
 module Doc : module type of Doc
@@ -10,14 +12,11 @@ module Glob : module type of Glob
 module Runtime : module type of Runtime
 
 val command_line :
-  tool_path:string ->
-  job_path:string ->
-  (string list Error.annotated, Error.t) result
+  string -> string -> (string list Error.annotated, Error.t) result
 
 val run :
   (module Runtime.RUNTIME) ->
   ?outdir:string ->
-  tool_path:string ->
-  job_path:string ->
-  unit ->
+  string ->
+  string ->
   (Type.object_ Error.annotated, Error.t) result

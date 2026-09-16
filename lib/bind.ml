@@ -1,3 +1,6 @@
+(** [inputBinding] → argv. Pure: does not open files or spawn. Expression
+    evaluation is a module argument ([ENGINE]). *)
+
 let ( let* ) = Error.( let* )
 
 type key_atom = I of int | S of string
@@ -37,12 +40,12 @@ let append_index key i = key @ [ I i ]
 let empty_binding = Ty.default_binding
 let is_argument name = String.starts_with ~prefix:"arguments" name
 
-let argv (module E : Expr.ENGINE) ~tool ~inputs ~runtime =
+let argv (module E : Expr.ENGINE) tool inputs runtime =
   let ctx0 = { Expr.inputs; self = Ty.Vnull; runtime } in
   let resolve_position ctx = function
     | Ty.Pos n -> Ok n
     | Ty.Expr s -> (
-        match E.eval ~ctx ~expr:s with
+        match E.eval ctx s with
         | Ok (Ty.Vint n) -> Ok (Int64.to_int n)
         | Ok Ty.Vnull -> Ok 0
         | Ok v ->
@@ -185,7 +188,7 @@ let argv (module E : Expr.ENGINE) ~tool ~inputs ~runtime =
         Ok { item with payload = Value Ty.Vnull }
     | Value v, Some expr -> (
         let ctx = { ctx with Expr.self = v } in
-        match E.eval ~ctx ~expr with
+        match E.eval ctx expr with
         | Error _ as e -> e
         | Ok v -> Ok { item with payload = Value v })
   in

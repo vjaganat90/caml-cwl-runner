@@ -1,3 +1,6 @@
+(** YAML/JSON documents as our tree. The only document reader. Does not leak
+    [Yaml.value]. Default [FILE] is [In_channel]; Runtime is Eio. *)
+
 include Data.Doc
 
 let rec of_yaml : Yaml.value -> value = function
@@ -30,10 +33,10 @@ module Sys_file : FILE = struct
           (Error.Parse { path = Some path; message = Printexc.to_string exn })
 end
 
-let load (module F : FILE) ~path =
+let load (module F : FILE) path =
   match F.read path with Error _ as e -> e | Ok s -> of_yaml_string ~path s
 
-let load_file path = load (module Sys_file) ~path
+let load_file path = load (module Sys_file) path
 let load_string ?path s = of_yaml_string ?path s
 let assoc key = function Object kvs -> List.assoc_opt key kvs | _ -> None
 let object_fields = function Object kvs -> Some kvs | _ -> None

@@ -1,3 +1,7 @@
+(** Failure of the current operation ([t]) vs a parsed construct that is not
+    implemented ([diagnostic]). [in_requirements] is fatal at execute, not at
+    argv. No I/O. *)
+
 include Data.Error
 
 let ( let* ) = Result.bind
@@ -9,7 +13,7 @@ let rec map_list f = function
       let* ys = map_list f xs in
       Ok (y :: ys)
 
-let unimplemented ?(in_requirements = false) ~feature json_path =
+let unimplemented ?(in_requirements = false) feature json_path =
   {
     feature;
     json_path;

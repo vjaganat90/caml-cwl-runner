@@ -1,3 +1,6 @@
+(** Stage files and spawn processes. The local body is Eio; tests pack a fake.
+    Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
+
 type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
 
 module type RUNTIME = sig
@@ -5,37 +8,29 @@ module type RUNTIME = sig
 
   val mkdir_p : string -> (unit, Error.t) result
   val abspath : string -> (string, Error.t) result
-  val mkdtemp : prefix:string -> (string, Error.t) result
-  val copy_file : src:string -> dst:string -> (unit, Error.t) result
+  val mkdtemp : string -> (string, Error.t) result
+  val copy_file : string -> string -> (unit, Error.t) result
   val read_file : string -> (string, Error.t) result
   val write_file : string -> string -> (unit, Error.t) result
   val file_size : string -> (int64, Error.t) result
   val lstat : string -> node
   val stat : string -> node
   val realpath : string -> (string, Error.t) result
-  val confined : roots:string list -> path:string -> (unit, Error.t) result
+  val confined : string list -> string -> (unit, Error.t) result
 
-  val spawn :
-    cwd:string ->
-    stdin_file:string option ->
-    stdout_file:string option ->
-    stderr_file:string option ->
-    argv:string list ->
-    (int, Error.t) result
+  type stdio = {
+    stdin_file : string option;
+    stdout_file : string option;
+    stderr_file : string option;
+  }
+
+  val spawn : string -> stdio -> string list -> (int, Error.t) result
 end
 
 let rt_err message = Error (Error.Runtime { message })
 let wrap f = try Ok (f ()) with exn -> rt_err (Printexc.to_string exn)
 
-let trim_slash s =
-  let n = String.length s in
-  if n > 1 && s.[n - 1] = '/' then String.sub s 0 (n - 1) else s
-
-let under ~root path =
-  let root = trim_slash root in
-  path = root || String.starts_with ~prefix:(root ^ "/") path
-
-let confined_using realpath ~roots path =
+let confined_using realpath roots path =
   if roots = [] then rt_err "confined: no roots"
   else
     match realpath path with
@@ -46,7 +41,7 @@ let confined_using realpath ~roots path =
               rt_err (Printf.sprintf "path %S is not under a legal root" path)
           | root :: rest -> (
               match realpath root with
-              | Ok r when under ~root:r resolved -> Ok ()
+              | Ok r when Glob.under r resolved -> Ok ()
               | Ok _ | Error _ -> go rest)
         in
         go roots
@@ -82,7 +77,7 @@ let local env =
       wrap (fun () -> Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 (p s))
 
     let abspath s = wrap (fun () -> native s)
-    let mkdtemp ~prefix = wrap (fun () -> Filename.temp_dir prefix "")
+    let mkdtemp prefix = wrap (fun () -> Filename.temp_dir prefix "")
     let read_file s = wrap (fun () -> Eio.Path.load (p s))
 
     let write_file s data =
@@ -99,7 +94,7 @@ let local env =
     let stat s =
       try node_of (Eio.Path.kind ~follow:true (p s)) with _ -> `Other
 
-    let copy_file ~src ~dst =
+    let copy_file src dst =
       match stat src with
       | `File ->
           wrap (fun () ->
@@ -110,7 +105,13 @@ let local env =
       | _ -> rt_err (Printf.sprintf "copy source is not a regular file: %s" src)
 
     let realpath s = wrap (fun () -> Unix.realpath (native s))
-    let confined ~roots ~path = confined_using realpath ~roots path
+    let confined roots path = confined_using realpath roots path
+
+    type stdio = {
+      stdin_file : string option;
+      stdout_file : string option;
+      stderr_file : string option;
+    }
 
     let reject_stdio_symlink label = function
       | None -> Ok ()
@@ -120,7 +121,7 @@ let local env =
               rt_err (Printf.sprintf "%s destination is a symlink" label)
           | _ -> Ok ())
 
-    let spawn ~cwd ~stdin_file ~stdout_file ~stderr_file ~argv =
+    let spawn cwd { stdin_file; stdout_file; stderr_file } argv =
       if argv = [] then rt_err "empty argv"
       else
         match

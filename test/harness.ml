@@ -1,5 +1,6 @@
-(** Shared construction for argv properties. Tests name the binding and the
-    expected tokens; this file owns the CommandLineTool record. *)
+(** Shared construction for argv properties and fixture paths. Tests name the
+    binding and expected tokens; this file owns the CommandLineTool record. Does
+    not spawn. *)
 
 let mk_tool ?(base_command = [ "echo" ]) ?(arguments = []) inputs =
   {
@@ -43,8 +44,8 @@ let strings xs = Cwl.Type.Varray (List.map (fun s -> Cwl.Type.Vstring s) xs)
 let argv ?(base_command = [ "echo" ]) inputs job =
   Cwl.Bind.argv
     (module Cwl.Expr.Param_ref)
-    ~tool:(mk_tool ~base_command inputs)
-    ~inputs:job ~runtime:Cwl.Expr.default_runtime
+    (mk_tool ~base_command inputs)
+    job Cwl.Expr.default_runtime
 
 let argv_ok ?base_command inputs job expected =
   match argv ?base_command inputs job with
@@ -57,7 +58,7 @@ let has_feature feature diags =
 let fixture name = Filename.concat "fixtures" name
 
 let command_line tool job =
-  match Cwl.command_line ~tool_path:(fixture tool) ~job_path:(fixture job) with
+  match Cwl.command_line (fixture tool) (fixture job) with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann -> ann
 

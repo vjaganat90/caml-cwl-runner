@@ -1,9 +1,10 @@
-(** YAML/JSON documents as our tree. Does not leak [Yaml.value]. *)
+(** YAML/JSON documents as our tree. The only document reader. Does not leak
+    [Yaml.value]. Default [FILE] is [In_channel]; Runtime is Eio. *)
 
 include module type of Data.Doc
 
 val of_yaml_string : ?path:string -> string -> (value, Error.t) result
-val load : (module FILE) -> path:string -> (value, Error.t) result
+val load : (module FILE) -> string -> (value, Error.t) result
 val load_file : string -> (value, Error.t) result
 val load_string : ?path:string -> string -> (value, Error.t) result
 val assoc : string -> value -> value option
