@@ -1,5 +1,6 @@
-(** ADTs defined once. Public modules [include] their part ([Error], [Doc],
-    [Type], [Schema], [Expr]). This file has no I/O and no functions. *)
+(** ADTs defined once. Public modules [include] their part ([Error],
+    [Untyped_tree], [Type], [Schema], [Command_line_tool], [Workflow],
+    [Document], [Expr]). This file has no I/O and no functions. *)
 
 module Error = struct
   type t =
@@ -21,7 +22,7 @@ module Error = struct
   type 'a annotated = { value : 'a; diagnostics : diagnostic list }
 end
 
-module Doc = struct
+module Untyped_tree = struct
   type value =
     | Null
     | Bool of bool
@@ -100,8 +101,6 @@ module Schema = struct
     unimplemented : Error.diagnostic list;
   }
 
-  type argument = Literal of string | Binding of binding
-
   type requirement =
     | Resource of { cores_min : float option }
     | Unimplemented of { class_ : string; in_requirements : bool }
@@ -120,21 +119,44 @@ module Schema = struct
     stream : stream;
     unimplemented : Error.diagnostic list;
   }
+end
+
+module Command_line_tool = struct
+  type argument = Literal of string | Binding of Schema.binding
 
   type command_line_tool = {
     cwl_version : string;
     class_ : string;
     base_command : string list;
     arguments : argument list;
-    inputs : input list;
-    outputs : output list;
+    inputs : Schema.input list;
+    outputs : Schema.output list;
     stdout : string option;
     stdin : string option;
     stderr : string option;
     success_codes : int list;
-    requirements : requirement list;
-    hints : requirement list;
+    requirements : Schema.requirement list;
+    hints : Schema.requirement list;
   }
+
+  type t = command_line_tool
+end
+
+module Workflow = struct
+  type workflow = {
+    cwl_version : string;
+    class_ : string;
+    inputs : Schema.input list;
+    outputs : Schema.output list;
+    requirements : Schema.requirement list;
+    hints : Schema.requirement list;
+  }
+
+  type t = workflow
+end
+
+module Document = struct
+  type t = Command_line_tool of Command_line_tool.t | Workflow of Workflow.t
 end
 
 module Expr = struct

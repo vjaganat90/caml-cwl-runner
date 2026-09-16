@@ -1,10 +1,13 @@
 (** Sealed public surface: [command_line] builds argv; [run] executes a local
-    CommandLineTool. Submodules are the engine. Workflow and a JavaScript
-    [ENGINE] are not here yet. *)
+    CommandLineTool. Submodules are the engine. Workflow execution and a
+    JavaScript [ENGINE] are not here yet. *)
 
 module Error : module type of Error
-module Doc : module type of Doc
+module Untyped_tree : module type of Untyped_tree
 module Schema : module type of Schema
+module Command_line_tool : module type of Command_line_tool
+module Workflow : module type of Workflow
+module Document : module type of Document
 module Type : module type of Ty
 module Expr : module type of Expr
 module Bind : module type of Bind
