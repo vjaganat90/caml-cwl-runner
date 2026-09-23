@@ -69,7 +69,8 @@ let resolve ~job_dir loc =
   let loc = strip_file_uri loc in
   if Filename.is_relative loc then Filename.concat job_dir loc else loc
 
-let stage_leaf (module R : Runtime.RUNTIME) ~outdir ~job_dir used = function
+let stage_leaf (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used =
+  function
   | Ty.Vfile f ->
       let src = Option.map (resolve ~job_dir) (Ty.file_loc f) in
       let* src =
@@ -84,13 +85,22 @@ let stage_leaf (module R : Runtime.RUNTIME) ~outdir ~job_dir used = function
       else
         let dst = Filename.concat outdir base in
         let* () = R.copy_file src dst in
+        let seen =
+          let n = String.length container in
+          let container =
+            if n > 1 && container.[n - 1] = '/' then
+              String.sub container 0 (n - 1)
+            else container
+          in
+          container ^ "/" ^ base
+        in
         Ok
           ( Ty.Vfile
               {
                 f with
                 path = Some base;
                 basename = Some base;
-                location = Some dst;
+                location = Some seen;
               },
             base :: used )
   | Ty.Vdir d ->
@@ -103,15 +113,18 @@ let stage_leaf (module R : Runtime.RUNTIME) ~outdir ~job_dir used = function
       Ok (Ty.Vdir { location = Some src; path = Some src }, used)
   | v -> Ok (v, used)
 
-let stage (module R : Runtime.RUNTIME) ~outdir ~job_dir used v =
-  Ty.fold_map (stage_leaf (module R : Runtime.RUNTIME) ~outdir ~job_dir) used v
+let stage (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used v =
+  Ty.fold_map
+    (stage_leaf (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir)
+    used v
 
-let stage_inputs (module R : Runtime.RUNTIME) ~outdir ~job_dir inputs =
+let stage_inputs (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir inputs
+    =
   let rec go used acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
         let* v, used =
-          stage (module R : Runtime.RUNTIME) ~outdir ~job_dir used v
+          stage (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used v
         in
         go used ((k, v) :: acc) rest
   in
@@ -232,8 +245,42 @@ let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
               let* nested = Error.map_list (eval_glob_pattern ctx) glob in
               Ok (List.concat nested)))
 
-let collect_output (module R : Runtime.RUNTIME) outdir roots ctx stdout_name
-    stderr_name (o : Schema.output) =
+let trim_slash s =
+  let n = String.length s in
+  if n > 1 && s.[n - 1] = '/' then String.sub s 0 (n - 1) else s
+
+let normalize_abs path =
+  let segs = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
+  let rec go acc = function
+    | [] -> Some (List.rev acc)
+    | "." :: rest -> go acc rest
+    | ".." :: _ -> None
+    | seg :: rest -> go (seg :: acc) rest
+  in
+  match go [] segs with
+  | None -> None
+  | Some [] -> Some "/"
+  | Some segs -> Some ("/" ^ String.concat "/" segs)
+
+let relocate ~container ~host path =
+  if container = host || not (String.starts_with ~prefix:"/" path) then path
+  else
+    match normalize_abs path with
+    | None -> path
+    | Some normalized ->
+        let container = trim_slash container in
+        let host = trim_slash host in
+        if normalized = container then host
+        else
+          let prefix = container ^ "/" in
+          if String.starts_with ~prefix normalized then
+            host
+            ^ String.sub normalized (String.length container)
+                (String.length normalized - String.length container)
+          else path
+
+let collect_output (module R : Runtime.RUNTIME) ~container outdir roots ctx
+    stdout_name stderr_name (o : Schema.output) =
   let* pats = glob_patterns ctx stdout_name stderr_name o in
   if pats = [] then
     if Ty.is_optional o.ty then Ok (o.id, Ty.Vnull)
@@ -242,15 +289,21 @@ let collect_output (module R : Runtime.RUNTIME) outdir roots ctx stdout_name
       | Ty.Array _ -> Ok (o.id, Ty.Varray [])
       | _ -> rt_err (Printf.sprintf "output '%s' has no glob" o.id)
   else
+    let pats =
+      List.map
+        (fun pat -> relocate ~container ~host:outdir (String.trim pat))
+        pats
+    in
     let* groups = Error.map_list (Glob.glob (module R) ~roots outdir) pats in
     let hits = List.concat groups |> List.sort_uniq String.compare in
     let* _ = Error.map_list (R.confined roots) hits in
     let* v = pack_hits (module R : Runtime.RUNTIME) o.id o.ty hits in
     Ok (o.id, v)
 
-let resolve_output_paths outdir v =
+let resolve_output_paths ~container outdir v =
   let abs p =
     let p = strip_file_uri p in
+    let p = relocate ~container ~host:outdir p in
     if Filename.is_relative p then Filename.concat outdir p else p
   in
   Ty.map
@@ -355,8 +408,14 @@ let first_unimplemented_requirement (tool : Command_line_tool.t) =
 
 let docker_image (tool : Command_line_tool.t) =
   List.find_map
-    (function Schema.Docker image -> Some image | _ -> None)
+    (function Schema.Docker docker -> Some docker | _ -> None)
     tool.requirements
+
+let designated_outdir (tool : Command_line_tool.t) host =
+  match docker_image tool with
+  | Some { output_directory = Some path; _ } ->
+      Schema.Container_outdir.to_string path
+  | _ -> host
 
 let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
   let* tool, diagnostics = load_command_line_tool tool_path in
@@ -388,11 +447,14 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
           (Command_line_tool.input_specs tool)
           job_raw
       in
-      let* inputs =
-        stage_inputs (module R : Runtime.RUNTIME) ~outdir ~job_dir inputs
-      in
       let cores = Option.value (Command_line_tool.cores_min tool) ~default:1. in
-      let runtime = Expr.runtime_with ~outdir ~tmpdir ~cores in
+      let container = designated_outdir tool outdir in
+      let* inputs =
+        stage_inputs
+          (module R : Runtime.RUNTIME)
+          ~container ~outdir ~job_dir inputs
+      in
+      let runtime = Expr.runtime_with ~outdir:container ~tmpdir ~cores in
       let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
       let* argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
       let stream_filename named stream default =
@@ -442,7 +504,9 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
             let* tree = Untyped_tree.load_string ~path:json_path s in
             let* obj = Type.object_of_tree tree in
             let obj =
-              List.map (fun (k, v) -> (k, resolve_output_paths outdir v)) obj
+              List.map
+                (fun (k, v) -> (k, resolve_output_paths ~container outdir v))
+                obj
             in
             let* obj = check_json_outputs tool.outputs obj in
             Error.map_list
@@ -456,7 +520,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
             Error.map_list
               (collect_output
                  (module R : Runtime.RUNTIME)
-                 outdir glob_roots ctx stdout_name stderr_name)
+                 ~container outdir glob_roots ctx stdout_name stderr_name)
               tool.outputs
         in
         Ok { Error.value = outputs; diagnostics }

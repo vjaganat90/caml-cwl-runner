@@ -182,9 +182,18 @@ one of `dockerPull`, `dockerImageId`, `dockerLoad`, `dockerImport`, or
 others are a single source, and `dockerImageId` names the imported or
 built image when it accompanies them. No image, a non-string field, or
 more than one acquisition field is a schema error. `dockerOutputDirectory`
-is an unimplemented requirement (exit 33). The host outdir is bind-mounted
-as the workdir and the CWL argv is the exec form. The same class in hints
-is a diagnostic and the run stays on `Runtime.local`.
+is optional. When set it is a canonical absolute container path other than
+`/`: no empty segment, no `.` or `..` segment, no `:` (that would be a
+`docker -v` option), and no control character. `runtime.outdir` and the
+container workdir are that path, and the host outdir is bind-mounted
+there. The volume source is `realpath` of the host outdir. A repeated
+`DockerRequirement` is a schema error. A staged file's `location` is the
+container path; `path` stays the basename. Globs and `cwl.output.json`
+paths under the container directory are read on the host; a `..` segment
+is not rewritten. When the field is absent the mount target is the host
+path, so `runtime.outdir` is that path. The CWL argv is the exec form.
+The same class in hints is a diagnostic and the run stays on
+`Runtime.local`.
 
 ### Confinement
 

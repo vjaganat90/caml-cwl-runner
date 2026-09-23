@@ -295,7 +295,7 @@ let parse_requirement ~json_path ~in_requirements v :
       match List.assoc_opt "class" kvs with
       | Some (Untyped_tree.String "ResourceRequirement") ->
           Ok (parse_resource ~json_path ~in_requirements kvs)
-      | Some (Untyped_tree.String "DockerRequirement") -> (
+      | Some (Untyped_tree.String "DockerRequirement") ->
           let take name =
             match List.assoc_opt name kvs with
             | None -> Ok None
@@ -307,72 +307,78 @@ let parse_requirement ~json_path ~in_requirements v :
                 schema_err json_path
                   ("DockerRequirement " ^ name ^ " must be a string")
           in
-          if List.mem_assoc "dockerOutputDirectory" kvs then
-            let feature = "DockerRequirement.dockerOutputDirectory" in
-            let d = diag ~in_requirements feature json_path in
-            Ok (Unimplemented { class_ = feature; in_requirements }, [ d ])
+          let* output_directory =
+            match List.assoc_opt "dockerOutputDirectory" kvs with
+            | None -> Ok None
+            | Some (Untyped_tree.String s) -> (
+                match Container_outdir.of_string s with
+                | Ok path -> Ok (Some path)
+                | Error message ->
+                    schema_err json_path
+                      ("DockerRequirement dockerOutputDirectory " ^ message))
+            | Some _ ->
+                schema_err json_path
+                  "DockerRequirement dockerOutputDirectory must be a string"
+          in
+          let* pull = take "dockerPull" in
+          let* load = take "dockerLoad" in
+          let* file = take "dockerFile" in
+          let* import_src = take "dockerImport" in
+          let* image_id = take "dockerImageId" in
+          let sources =
+            List.filter_map
+              (fun (name, value) -> Option.map (fun s -> (name, s)) value)
+              [
+                ("dockerPull", pull);
+                ("dockerImport", import_src);
+                ("dockerLoad", load);
+                ("dockerFile", file);
+              ]
+          in
+          let unknown =
+            List.filter_map
+              (fun (k, _) ->
+                if
+                  List.mem k
+                    [
+                      "class";
+                      "dockerPull";
+                      "dockerLoad";
+                      "dockerFile";
+                      "dockerImport";
+                      "dockerImageId";
+                      "dockerOutputDirectory";
+                    ]
+                then None
+                else
+                  Some
+                    (diag ~in_requirements:false
+                       ("DockerRequirement.unknown field " ^ k)
+                       (child json_path k)))
+              kvs
+          in
+          let image =
+            match sources with
+            | [ ("dockerPull", s) ] -> Ok (Pull s)
+            | [ ("dockerImport", s) ] ->
+                Ok (Import { source = s; name = image_id })
+            | [ ("dockerLoad", s) ] -> Ok (Load { source = s; name = image_id })
+            | [ ("dockerFile", s) ] ->
+                Ok (Dockerfile { contents = s; tag = image_id })
+            | [] -> (
+                match image_id with
+                | Some s -> Ok (Image_id s)
+                | None -> schema_err json_path "DockerRequirement has no image")
+            | _ ->
+                schema_err json_path
+                  "DockerRequirement has more than one image source"
+          in
+          let* image = image in
+          let docker = { image; output_directory } in
+          if in_requirements then Ok (Docker docker, unknown)
           else
-            let* pull = take "dockerPull" in
-            let* load = take "dockerLoad" in
-            let* file = take "dockerFile" in
-            let* import_src = take "dockerImport" in
-            let* image_id = take "dockerImageId" in
-            let sources =
-              List.filter_map
-                (fun (name, value) -> Option.map (fun s -> (name, s)) value)
-                [
-                  ("dockerPull", pull);
-                  ("dockerImport", import_src);
-                  ("dockerLoad", load);
-                  ("dockerFile", file);
-                ]
-            in
-            let unknown =
-              List.filter_map
-                (fun (k, _) ->
-                  if
-                    List.mem k
-                      [
-                        "class";
-                        "dockerPull";
-                        "dockerLoad";
-                        "dockerFile";
-                        "dockerImport";
-                        "dockerImageId";
-                        "dockerOutputDirectory";
-                      ]
-                  then None
-                  else
-                    Some
-                      (diag ~in_requirements:false
-                         ("DockerRequirement.unknown field " ^ k)
-                         (child json_path k)))
-                kvs
-            in
-            let image =
-              match sources with
-              | [ ("dockerPull", s) ] -> Ok (Pull s)
-              | [ ("dockerImport", s) ] ->
-                  Ok (Import { source = s; name = image_id })
-              | [ ("dockerLoad", s) ] -> Ok (Load { source = s; name = image_id })
-              | [ ("dockerFile", s) ] ->
-                  Ok (Dockerfile { contents = s; tag = image_id })
-              | [] -> (
-                  match image_id with
-                  | Some s -> Ok (Image_id s)
-                  | None ->
-                      schema_err json_path "DockerRequirement has no image")
-              | _ ->
-                  schema_err json_path
-                    "DockerRequirement has more than one image source"
-            in
-            let* image = image in
-            if in_requirements then Ok (Docker image, unknown)
-            else
-              let d =
-                diag ~in_requirements:false "DockerRequirement" json_path
-              in
-              Ok (Docker image, d :: unknown))
+            let d = diag ~in_requirements:false "DockerRequirement" json_path in
+            Ok (Docker docker, d :: unknown)
       | Some (Untyped_tree.String class_) ->
           let diag = diag ~in_requirements class_ json_path in
           Ok (Unimplemented { class_; in_requirements }, [ diag ])
@@ -382,30 +388,45 @@ let parse_requirement ~json_path ~in_requirements v :
         (Format.asprintf "expected requirement object, got %a" Untyped_tree.pp
            other)
 
+let one_docker json_path (reqs, diags) =
+  let n =
+    List.length (List.filter (function Docker _ -> true | _ -> false) reqs)
+  in
+  if n > 1 then
+    schema_err json_path
+      "DockerRequirement is repeated; the mount target would be ambiguous"
+  else Ok (reqs, diags)
+
 let parse_req_list ~json_path ~in_requirements v :
     (requirement list * Error.diagnostic list, Error.t) result =
   match v with
   | Untyped_tree.Null -> Ok ([], [])
   | Untyped_tree.Array xs ->
-      map_i
-        (fun i x ->
-          parse_requirement ~json_path:(nth json_path i) ~in_requirements x)
-        xs
+      let* parsed =
+        map_i
+          (fun i x ->
+            parse_requirement ~json_path:(nth json_path i) ~in_requirements x)
+          xs
+      in
+      one_docker json_path parsed
   | Untyped_tree.Object kvs ->
-      map_assoc
-        (fun class_ body ->
-          let path = child json_path class_ in
-          let body =
-            match body with
-            | Untyped_tree.Object fields ->
-                Untyped_tree.Object
-                  (("class", Untyped_tree.String class_) :: fields)
-            | Untyped_tree.Null ->
-                Untyped_tree.Object [ ("class", Untyped_tree.String class_) ]
-            | other -> other
-          in
-          parse_requirement ~json_path:path ~in_requirements body)
-        kvs
+      let* parsed =
+        map_assoc
+          (fun class_ body ->
+            let path = child json_path class_ in
+            let body =
+              match body with
+              | Untyped_tree.Object fields ->
+                  Untyped_tree.Object
+                    (("class", Untyped_tree.String class_) :: fields)
+              | Untyped_tree.Null ->
+                  Untyped_tree.Object [ ("class", Untyped_tree.String class_) ]
+              | other -> other
+            in
+            parse_requirement ~json_path:path ~in_requirements body)
+          kvs
+      in
+      one_docker json_path parsed
   | other ->
       schema_err json_path
         (Format.asprintf "expected requirements/hints list or map, got %a"

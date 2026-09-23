@@ -1,6 +1,7 @@
 (** ADTs defined once. Public modules [include] their part ([Error],
     [Untyped_tree], [Type], [Schema], [Command_line_tool], [Workflow],
-    [Document], [Expr]). This file has no I/O and no functions. *)
+    [Document], [Expr]). No I/O. [Container_outdir.of_string] is the only
+    function: a path docker would mount somewhere else is not a [t]. *)
 
 module Error = struct
   type t =
@@ -108,9 +109,46 @@ module Schema = struct
     | Import of { source : string; name : string option }
     | Dockerfile of { contents : string; tag : string option }
 
+  module Container_outdir : sig
+    type t = private string
+
+    val of_string : string -> (t, string) result
+    val to_string : t -> string
+  end = struct
+    type t = string
+
+    let to_string s = s
+    let control c = c < ' ' || c = '\127'
+
+    let of_string path =
+      let bad message = Error message in
+      if path = "" then bad "must be a non-empty string"
+      else if not (String.starts_with ~prefix:"/" path) then
+        bad "must be an absolute path"
+      else if String.contains path ':' then bad "must not contain ':'"
+      else if String.exists control path then
+        bad "must not contain control characters"
+      else
+        let segs =
+          String.split_on_char '/' path |> List.filter (fun s -> s <> "")
+        in
+        let canonical = "/" ^ String.concat "/" segs in
+        if segs = [] then bad "must not be /"
+        else if path <> canonical then
+          bad "must not contain an empty path segment"
+        else if List.exists (fun s -> s = "." || s = "..") segs then
+          bad "must not contain . or .."
+        else Ok path
+  end
+
+  type docker = {
+    image : docker_image;
+    output_directory : Container_outdir.t option;
+  }
+
   type requirement =
     | Resource of { cores_min : float option }
-    | Docker of docker_image
+    | Docker of docker
     | Unimplemented of { class_ : string; in_requirements : bool }
 
   type output_binding = {
