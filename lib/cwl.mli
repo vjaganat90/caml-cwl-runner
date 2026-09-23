@@ -19,6 +19,7 @@ val command_line :
 
 val run :
   (module Runtime.RUNTIME) ->
+  ?docker:(Schema.docker_image -> (module Runtime.RUNTIME)) ->
   ?outdir:string ->
   string ->
   string ->

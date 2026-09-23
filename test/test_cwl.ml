@@ -127,6 +127,26 @@ let prop_integral_yaml =
       | Ok (Cwl.Untyped_tree.Int m) -> Int64.to_int m = n
       | _ -> false)
 
+let prop_docker_argv_suffix =
+  Test.make ~name:"docker run keeps the CWL argv as a suffix" ~count:40
+    Gen.(list_size (int_range 1 6) (string_size ~gen:char (int_range 1 8)))
+    (fun raw ->
+      let argv = List.map (fun s -> "c" ^ s) raw in
+      let spec =
+        {
+          Cwl.Runtime.bin = "/bin/docker";
+          user = "1:1";
+          cwd = "/out";
+          image = "alpine";
+        }
+      in
+      let got = Cwl.Runtime.docker_run_argv spec argv in
+      let n = List.length argv in
+      let pre_len = List.length got - n in
+      pre_len > 0
+      && List.drop pre_len got = argv
+      && List.nth got (pre_len - 1) = spec.image)
+
 let prop_docker_diagnosed =
   Test.make ~name:"unimplemented keys are diagnosed" ~count:1 Gen.unit
     (fun () ->
@@ -164,6 +184,7 @@ let prop_tests =
     prop_position_order;
     prop_param_ref_cores;
     prop_integral_yaml;
+    prop_docker_argv_suffix;
     prop_docker_diagnosed;
   ]
 
@@ -217,12 +238,19 @@ type outcome =
   | Expect_ok_or_error of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
   | Expect_runtime
   | Expect_type
+  | Expect_schema
   | Expect_unsupported of string
 
-type edge = { name : string; tool : string; job : string; outcome : outcome }
+type edge = {
+  name : string;
+  tool : string;
+  job : string;
+  outcome : outcome;
+  docker : bool;
+}
 
-let edge ?(job = "empty-job.json") name tool outcome =
-  { name; tool; job; outcome }
+let edge ?(job = "empty-job.json") ?(docker = false) name tool outcome =
+  { name; tool; job; outcome; docker }
 
 let lookup_null id ann =
   match Cwl.Type.lookup id ann.Cwl.Error.value with
@@ -305,8 +333,16 @@ let execute_edges =
          (fun ann -> Alcotest.(check int) "empty" 0 (List.length ann.value)));
     edge "success_codes" "success-codes.cwl" (Expect_ok (fun _ -> ()));
     edge "json_output" "json-output.cwl" (Expect_ok (lookup_int "n" 1L));
-    edge "docker_requirement_fatal" "docker-req.cwl"
-      (Expect_unsupported "DockerRequirement");
+    edge "docker_missing_pull" "docker-no-pull.cwl" Expect_schema;
+    edge "docker_pull_not_string" "docker-pull-int.cwl" Expect_schema;
+    edge "docker_output_directory" "docker-output-dir.cwl"
+      (Expect_unsupported "DockerRequirement.dockerOutputDirectory");
+    edge ~docker:true "docker_echo" "docker-req.cwl" (Expect_ok (fun _ -> ()));
+    edge ~docker:true "docker_image_id" "docker-image-id.cwl"
+      (Expect_ok (fun _ -> ()));
+    edge ~docker:true "docker_file" "docker-file.cwl" (Expect_ok (fun _ -> ()));
+    edge ~docker:true "docker_json_escape" "docker-json-escape.cwl"
+      Expect_runtime;
     edge "output_eval_no_json" "output-eval.cwl"
       (Expect_unsupported "outputEval");
     edge "json_ignores_output_eval" "json-and-eval.cwl"
@@ -438,22 +474,50 @@ let execute_edges =
              paths));
   ]
 
+let docker_ready () =
+  let bin = Filename.quote (Cwl.Runtime.docker_executable ()) in
+  match Unix.system (bin ^ " info >/dev/null 2>&1") with
+  | Unix.WEXITED 0 -> true
+  | _ -> false
+
+let require_docker () =
+  if not (docker_ready ()) then (
+    Printf.eprintf "docker is not available\n";
+    Alcotest.skip ())
+
 let run_edge (e : edge) () =
-  match run_tool e.tool e.job with
+  if e.docker then require_docker ();
+  let result =
+    if not e.docker then run_tool e.tool e.job
+    else
+      Eio_main.run @@ fun env ->
+      let local = Cwl.Runtime.local env in
+      let docker image = Cwl.Runtime.docker env image in
+      Cwl.run local ~docker (fixture e.tool) (fixture e.job)
+  in
+  match result with
   | Ok ann -> (
       match e.outcome with
       | Expect_ok f | Expect_ok_or_error f -> f ann
       | Expect_runtime -> Alcotest.fail "expected Runtime error"
       | Expect_type -> Alcotest.fail "expected Type error"
+      | Expect_schema -> Alcotest.fail "expected Schema error"
       | Expect_unsupported _ -> Alcotest.fail "expected Unsupported")
-  | Error (Cwl.Error.Runtime _) -> (
+  | Error (Cwl.Error.Runtime _ as err) -> (
       match e.outcome with
       | Expect_runtime | Expect_ok_or_error _ -> ()
-      | _ -> Alcotest.fail "unexpected Runtime error")
+      | _ ->
+          Alcotest.fail
+            ("unexpected Runtime error: " ^ Cwl.Error.to_string err))
   | Error (Cwl.Error.Type _) -> (
       match e.outcome with
       | Expect_type | Expect_ok_or_error _ -> ()
       | _ -> Alcotest.fail "unexpected Type error")
+  | Error (Cwl.Error.Schema _) -> (
+      match e.outcome with
+      | Expect_schema -> ()
+      | Expect_ok_or_error _ -> ()
+      | _ -> Alcotest.fail "unexpected Schema error")
   | Error (Cwl.Error.Unsupported { feature }) -> (
       match e.outcome with
       | Expect_unsupported want ->
@@ -465,7 +529,99 @@ let run_edge (e : edge) () =
       | Expect_ok_or_error _ -> ()
       | _ -> Alcotest.fail (Cwl.Error.to_string err))
 
-let edge_cases = List.map (fun e -> (e.name, `Quick, run_edge e)) execute_edges
+let write_tool dir body =
+  let path = Filename.concat dir "tool.cwl" in
+  Out_channel.with_open_text path (fun oc -> output_string oc body);
+  path
+
+let docker_load_saved =
+  ( "docker_load_saved",
+    `Slow,
+    fun () ->
+      require_docker ();
+      let dir = Filename.temp_dir "ccr-load-" "" in
+      let tar = Filename.concat dir "alpine.tar" in
+      let bin = Cwl.Runtime.docker_executable () in
+      let path_prefix =
+        if Filename.is_relative bin then ""
+        else "PATH=" ^ Filename.quote (Filename.dirname bin) ^ ":$PATH "
+      in
+      let q = Filename.quote bin in
+      let code =
+        Sys.command
+          (Printf.sprintf
+             "%s%s pull alpine >/dev/null && %s%s save alpine -o %s" path_prefix
+             q path_prefix q (Filename.quote tar))
+      in
+      if code <> 0 then Alcotest.fail "docker save failed";
+      let tool =
+        write_tool dir
+          (Printf.sprintf
+             "cwlVersion: v1.2\nclass: CommandLineTool\nrequirements:\n  \
+              DockerRequirement:\n    dockerLoad: %s\nbaseCommand: [echo, \
+              loaded]\ninputs: []\noutputs: []\n"
+             tar)
+      in
+      let job = Filename.concat dir "job.json" in
+      Out_channel.with_open_text job (fun oc -> output_string oc "{}\n");
+      Eio_main.run @@ fun env ->
+      let local = Cwl.Runtime.local env in
+      let docker image = Cwl.Runtime.docker env image in
+      match Cwl.run local ~docker tool job with
+      | Ok _ -> ()
+      | Error e -> Alcotest.fail (Cwl.Error.to_string e) )
+
+let docker_import_saved =
+  ( "docker_import_saved",
+    `Slow,
+    fun () ->
+      require_docker ();
+      let dir = Filename.temp_dir "ccr-import-" "" in
+      let tar = Filename.concat dir "rootfs.tar" in
+      let bin = Cwl.Runtime.docker_executable () in
+      let path_prefix =
+        if Filename.is_relative bin then ""
+        else "PATH=" ^ Filename.quote (Filename.dirname bin) ^ ":$PATH "
+      in
+      let q = Filename.quote bin in
+      let code =
+        Sys.command
+          (Printf.sprintf
+             "%s%s rm -f ccr-export >/dev/null 2>&1; %s%s create --name \
+              ccr-export alpine true >/dev/null && %s%s export ccr-export -o %s \
+              && %s%s rm ccr-export >/dev/null"
+             path_prefix q path_prefix q path_prefix q (Filename.quote tar)
+             path_prefix q)
+      in
+      if code <> 0 then Alcotest.fail "docker export failed";
+      let gz = tar ^ ".gz" in
+      if Sys.command (Printf.sprintf "gzip -c %s > %s" (Filename.quote tar) (Filename.quote gz)) <> 0
+      then Alcotest.fail "gzip failed";
+      let tool =
+        write_tool dir
+          (Printf.sprintf
+             "cwlVersion: v1.2\nclass: CommandLineTool\nrequirements:\n  \
+              DockerRequirement:\n    dockerImport: %s\n    dockerImageId: \
+              ccr-import-test\nbaseCommand: [echo, imported]\ninputs: []\noutputs: \
+              []\n"
+             gz)
+      in
+      let job = Filename.concat dir "job.json" in
+      Out_channel.with_open_text job (fun oc -> output_string oc "{}\n");
+      Eio_main.run @@ fun env ->
+      let local = Cwl.Runtime.local env in
+      let docker image = Cwl.Runtime.docker env image in
+      match Cwl.run local ~docker tool job with
+      | Ok _ -> ()
+      | Error e -> Alcotest.fail (Cwl.Error.to_string e) )
+
+let edge_cases =
+  List.map
+    (fun e ->
+      let speed = if e.docker then `Slow else `Quick in
+      (e.name, speed, run_edge e))
+    execute_edges
+
 let with_runtime f = Eio_main.run @@ fun env -> f (Cwl.Runtime.local env)
 
 let expect_ok = function
@@ -619,5 +775,11 @@ let () =
       ("runtime", runtime_cases);
       ( "execute",
         edge_cases
-        @ [ stdout_symlink_dest; stdin_symlink_out; output_under_outdir ] );
+        @ [
+            stdout_symlink_dest;
+            stdin_symlink_out;
+            output_under_outdir;
+            docker_load_saved;
+            docker_import_saved;
+          ] );
     ]

@@ -175,8 +175,16 @@ Emitted Files include `location` (`file://…`), `path`, `basename`,
 are `{}`. JSON is hand-written from `Type.value`.
 
 Eio is the Runtime body because `Unix.create_process` cannot set child
-cwd and a process-global `chdir` races with future Workflow fibers. A
-Docker Runtime is another `(module RUNTIME)`, not a fork of Bind.
+cwd and a process-global `chdir` races with future Workflow fibers.
+`DockerRequirement` in requirements selects `Runtime.docker`. The image is
+one of `dockerPull`, `dockerImageId`, `dockerLoad`, `dockerImport`, or
+`dockerFile` (Dockerfile contents). `dockerPull` wins when it is set; the
+others are a single source, and `dockerImageId` names the imported or
+built image when it accompanies them. No image, a non-string field, or
+more than one acquisition field is a schema error. `dockerOutputDirectory`
+is an unimplemented requirement (exit 33). The host outdir is bind-mounted
+as the workdir and the CWL argv is the exec form. The same class in hints
+is a diagnostic and the run stays on `Runtime.local`.
 
 ### Confinement
 

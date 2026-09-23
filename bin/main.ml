@@ -14,7 +14,9 @@ let run outdir quiet processfile jobfile =
           exit 2
       | Some job_path -> (
           Eio_main.run @@ fun env ->
-          match Cwl.run (Cwl.Runtime.local env) ?outdir tool_path job_path with
+          let local = Cwl.Runtime.local env in
+          let docker image = Cwl.Runtime.docker env image in
+          match Cwl.run local ~docker ?outdir tool_path job_path with
           | Error (Cwl.Error.Unsupported { feature }) ->
               Printf.eprintf "ccr: unsupported feature: %s\n" feature;
               exit 33
