@@ -353,11 +353,24 @@ let first_unimplemented_requirement (tool : Command_line_tool.t) =
       | _ -> None)
     tool.requirements
 
-let run (module R : Runtime.RUNTIME) ?outdir tool_path job_path =
+let docker_image (tool : Command_line_tool.t) =
+  List.find_map
+    (function Schema.Docker image -> Some image | _ -> None)
+    tool.requirements
+
+let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
   let* tool, diagnostics = load_command_line_tool tool_path in
   match first_unimplemented_requirement tool with
   | Some feature -> Error (Error.Unsupported { feature })
   | None ->
+      let* (module R : Runtime.RUNTIME) =
+        match docker_image tool with
+        | None -> Ok (module Local : Runtime.RUNTIME)
+        | Some image -> (
+            match docker with
+            | None -> rt_err "DockerRequirement requires a docker runtime"
+            | Some mk -> Ok (mk image))
+      in
       let* outdir =
         match outdir with
         | Some d ->

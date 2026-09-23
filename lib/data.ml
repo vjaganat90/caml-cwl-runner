@@ -101,8 +101,16 @@ module Schema = struct
     unimplemented : Error.diagnostic list;
   }
 
+  type docker_image =
+    | Pull of string
+    | Image_id of string
+    | Load of { source : string; name : string option }
+    | Import of { source : string; name : string option }
+    | Dockerfile of { contents : string; tag : string option }
+
   type requirement =
     | Resource of { cores_min : float option }
+    | Docker of docker_image
     | Unimplemented of { class_ : string; in_requirements : bool }
 
   type output_binding = {

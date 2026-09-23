@@ -3,6 +3,12 @@
 
 type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
 
+type stdio = {
+  stdin_file : string option;
+  stdout_file : string option;
+  stderr_file : string option;
+}
+
 module type RUNTIME = sig
   include Glob.FS
 
@@ -17,14 +23,19 @@ module type RUNTIME = sig
   val stat : string -> node
   val realpath : string -> (string, Error.t) result
   val confined : string list -> string -> (unit, Error.t) result
-
-  type stdio = {
-    stdin_file : string option;
-    stdout_file : string option;
-    stderr_file : string option;
-  }
-
   val spawn : string -> stdio -> string list -> (int, Error.t) result
 end
 
 val local : Eio_unix.Stdenv.base -> (module RUNTIME)
+val docker_executable : unit -> string
+
+type docker_spec = { bin : string; user : string; cwd : string; image : string }
+
+val docker_run_argv : docker_spec -> string list -> string list
+(** [docker run] argv. [argv] is the suffix: the CWL command in exec form. *)
+
+val docker : Eio_unix.Stdenv.base -> Schema.docker_image -> (module RUNTIME)
+(** Same filesystem as [local]. [spawn] acquires the image ([docker pull], an
+    existing id, [docker load], [docker import], or [docker build]) then [docker
+    run]. The host outdir is bind-mounted as the workdir. The CWL argv is the
+    exec form, not a shell string. *)

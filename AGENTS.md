@@ -30,7 +30,11 @@ implemented; `Document.Workflow` is `Unsupported`.
 
 I/O is only in `Untyped_tree` (load) and `Runtime` (filesystem and spawn).
 Eio is the Runtime body and the CLI scheduler (`Eio_main.run`). No Lwt.
-`Glob` is pure given `(module FS)`.
+`Glob` is pure given `(module FS)`. A runnable `DockerRequirement` is one
+image source (`dockerPull`, `dockerImageId`, `dockerLoad`, `dockerImport`,
+or `dockerFile`) and selects `Runtime.docker`. `dockerOutputDirectory` is
+an unimplemented requirement. In hints the class is a diagnostic and
+execution stays local.
 
 An unimplemented CWL construct is a `diagnostic`. In requirements it is
 fatal at execute (exit 33). In hints it is reported and execution
