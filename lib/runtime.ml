@@ -196,7 +196,27 @@ let docker_executable () =
     | Some path -> path
     | None -> "docker"
 
-type docker_spec = { bin : string; user : string; cwd : string; image : string }
+type docker_spec = {
+  bin : string;
+  user : string;
+  cwd : string;
+  workdir : string;
+  image : string;
+}
+
+let mount_target s =
+  match Schema.Container_outdir.of_string s with
+  | Ok path -> Ok (Schema.Container_outdir.to_string path)
+  | Error message -> rt_err ("docker mount path " ^ message)
+
+let docker_mount ~host ~workdir =
+  let ( let* ) = Error.( let* ) in
+  let* source =
+    try Ok (Unix.realpath host) with exn -> rt_err (Printexc.to_string exn)
+  in
+  let* source = mount_target source in
+  let* workdir = mount_target workdir in
+  Ok (source, workdir)
 
 let docker_run_argv spec argv =
   [
@@ -206,9 +226,9 @@ let docker_run_argv spec argv =
     "--user";
     spec.user;
     "-v";
-    spec.cwd ^ ":" ^ spec.cwd;
+    spec.cwd ^ ":" ^ spec.workdir;
     "-w";
-    spec.cwd;
+    spec.workdir;
     spec.image;
   ]
   @ argv
@@ -230,7 +250,8 @@ let run_docker env argv =
   else Ok text
 
 let is_http s =
-  String.starts_with ~prefix:"http://" s || String.starts_with ~prefix:"https://" s
+  String.starts_with ~prefix:"http://" s
+  || String.starts_with ~prefix:"https://" s
 
 let fetch env source =
   let ( let* ) = Error.( let* ) in
@@ -242,10 +263,8 @@ let fetch env source =
   else rt_err (Printf.sprintf "docker image source not found: %s" source)
 
 let gunzip_if_needed path =
-  if
-    String.ends_with ~suffix:".gz" path
-    || String.ends_with ~suffix:".tgz" path
-  then (
+  if String.ends_with ~suffix:".gz" path || String.ends_with ~suffix:".tgz" path
+  then
     let dest = Filename.temp_file "ccr-docker-" ".tar" in
     let code =
       Sys.command
@@ -253,13 +272,13 @@ let gunzip_if_needed path =
            (Filename.quote dest))
     in
     if code <> 0 then rt_err (Printf.sprintf "gunzip failed (%d)" code)
-    else Ok dest)
+    else Ok dest
   else Ok path
 
 let loaded_name text =
   let rec find = function
     | [] -> None
-    | line :: rest ->
+    | line :: rest -> (
         let line = String.trim line in
         let take prefix =
           let n = String.length prefix in
@@ -272,7 +291,7 @@ let loaded_name text =
         | None -> (
             match take "Loaded image ID: " with
             | Some _ as n -> n
-            | None -> find rest)
+            | None -> find rest))
   in
   find (String.split_on_char '\n' text)
 
@@ -289,10 +308,10 @@ let prepare_image env image =
       let* _ = run_docker env [ bin; "pull"; name ] in
       Ok name
   | Schema.Image_id id -> Ok id
-  | Schema.Load { source; name } ->
+  | Schema.Load { source; name } -> (
       let* path = fetch env source in
       let* text = run_docker env [ bin; "load"; "-i"; path ] in
-      (match name with
+      match name with
       | Some tag -> Ok tag
       | None -> (
           match loaded_name text with
@@ -317,14 +336,23 @@ let prepare_image env image =
       let* _ = run_docker env [ bin; "build"; "-t"; tag; dir ] in
       Ok tag
 
-let docker env image =
+let docker env (req : Schema.docker) =
   let ( let* ) = Error.( let* ) in
   filesystem env ~launch:(fun cwd argv ->
-      let* tag = prepare_image env image in
+      let* tag = prepare_image env req.image in
       let user = Printf.sprintf "%d:%d" (Unix.getuid ()) (Unix.getgid ()) in
       let bin = docker_executable () in
+      let workdir =
+        match req.output_directory with
+        | None -> cwd
+        | Some path -> Schema.Container_outdir.to_string path
+      in
+      let* source, workdir = docker_mount ~host:cwd ~workdir in
       Ok
         {
           cwd = "/";
-          argv = docker_run_argv { bin; user; cwd; image = tag } argv;
+          argv =
+            docker_run_argv
+              { bin; user; cwd = source; workdir; image = tag }
+              argv;
         })
