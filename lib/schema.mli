@@ -5,6 +5,10 @@
 include module type of Data.Schema
 
 val schema_err : string -> string -> ('a, Error.t) result
+
+val parse_cwl_version :
+  (string * Untyped_tree.value) list -> (string, Error.t) result
+
 val diag : ?in_requirements:bool -> string -> string -> Error.diagnostic
 val nth : string -> int -> string
 

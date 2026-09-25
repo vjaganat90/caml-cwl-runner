@@ -7,6 +7,16 @@ include Data.Schema
 let ( let* ) = Error.( let* )
 let schema_err path message = Error (Error.Schema { path; message })
 
+let parse_cwl_version kvs =
+  match List.assoc_opt "cwlVersion" kvs with
+  | None -> Ok "v1.2"
+  | Some (Untyped_tree.String (("v1.0" | "v1.1" | "v1.2") as v)) -> Ok v
+  | Some (Untyped_tree.String s) ->
+      schema_err "cwlVersion" ("unsupported cwlVersion " ^ s)
+  | Some other ->
+      schema_err "cwlVersion"
+        (Format.asprintf "expected string, got %a" Untyped_tree.pp other)
+
 let diag ?(in_requirements = false) feature path =
   Error.unimplemented ~in_requirements feature path
 

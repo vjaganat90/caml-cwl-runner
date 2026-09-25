@@ -8,11 +8,7 @@ let ( let* ) = Error.( let* )
 let of_tree tree =
   match tree with
   | Untyped_tree.Object kvs ->
-      let cwl_version =
-        Option.value
-          (Untyped_tree.string_field kvs "cwlVersion")
-          ~default:"v1.2"
-      in
+      let* cwl_version = Schema.parse_cwl_version kvs in
       let* inputs, in_diags =
         Schema.parse_opt Schema.parse_inputs "inputs" kvs
       in

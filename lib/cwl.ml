@@ -16,9 +16,18 @@ module Runtime = Runtime
 
 let ( let* ) = Error.( let* )
 
+let split_fragment path =
+  match String.rindex_opt path '#' with
+  | None -> (path, None)
+  | Some i ->
+      let file = String.sub path 0 i in
+      let frag = String.sub path (i + 1) (String.length path - i - 1) in
+      if file = "" || frag = "" then (path, None) else (file, Some frag)
+
 let load_command_line_tool tool_path =
-  let* tree = Untyped_tree.load_file tool_path in
-  let* doc = Document.of_tree tree in
+  let path, fragment = split_fragment tool_path in
+  let* tree = Untyped_tree.load_file path in
+  let* doc = Document.of_tree ?fragment tree in
   match doc.value with
   | Document.Command_line_tool tool -> Ok (tool, doc.diagnostics)
   | Document.Workflow _ -> Error (Error.Unsupported { feature = "Workflow" })
