@@ -22,22 +22,15 @@ let implemented_tool_keys =
     "stderr";
     "requirements";
     "hints";
-    "$graph";
-    "$import";
-    "$include";
     "successCodes";
+    "$namespaces";
+    "$schemas";
+    "$base";
   ]
 
 let known_tool_keys =
   implemented_tool_keys
-  @ [
-      "intent";
-      "temporaryFailCodes";
-      "permanentFailCodes";
-      "$namespaces";
-      "$schemas";
-      "$base";
-    ]
+  @ [ "intent"; "temporaryFailCodes"; "permanentFailCodes" ]
 
 let parse_arguments ~json_path v :
     (argument list * Error.diagnostic list, Error.t) result =
@@ -112,10 +105,16 @@ let of_tree doc =
       let class_ =
         Option.value (Untyped_tree.string_field kvs "class") ~default:""
       in
-      let cwl_version =
-        Option.value
-          (Untyped_tree.string_field kvs "cwlVersion")
-          ~default:"v1.2"
+      let* cwl_version = Schema.parse_cwl_version kvs in
+      let* () =
+        let forbidden k =
+          match List.assoc_opt k kvs with
+          | None -> Ok ()
+          | Some _ -> Schema.schema_err k ("unresolved " ^ k)
+        in
+        let* () = forbidden "$import" in
+        let* () = forbidden "$include" in
+        forbidden "$graph"
       in
       let top_diags =
         Schema.diagnostics_for_keys ~implemented:implemented_tool_keys
@@ -157,13 +156,6 @@ let of_tree doc =
         | None -> Ok [ 0 ]
         | Some v -> parse_success_codes v
       in
-      let present k =
-        match List.assoc_opt k kvs with
-        | Some _ -> [ Schema.diag k k ]
-        | None -> []
-      in
-      let graph_diag = present "$graph" in
-      let import_diag = present "$import" @ present "$include" in
       let tool =
         {
           cwl_version;
@@ -182,7 +174,7 @@ let of_tree doc =
       in
       let diagnostics =
         top_diags @ class_diag @ arg_diags @ in_diags @ out_diags @ req_diags
-        @ hint_diags @ graph_diag @ import_diag
+        @ hint_diags
       in
       Ok { Error.value = tool; diagnostics }
   | other ->

@@ -3,4 +3,5 @@
 
 include module type of Data.Document
 
-val of_tree : Untyped_tree.value -> (t Error.annotated, Error.t) result
+val of_tree :
+  ?fragment:string -> Untyped_tree.value -> (t Error.annotated, Error.t) result

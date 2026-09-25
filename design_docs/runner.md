@@ -259,8 +259,9 @@ deleted.
   `cwl-v1.2` tree is a git submodule used to run that suite, added when
   that entrypoint exists.
 
-`$import` / `$include` / `$graph`: diagnostic, and `Unsupported` if a
-process cannot be chosen without them.
+`$import` and `$include` load local paths and `file://` URIs. An `http`
+target is `Unsupported`. `$graph` selects the fragment on the tool path,
+otherwise the entry `main`. `cwlVersion` is `v1.0`, `v1.1`, or `v1.2`.
 
 ---
 
