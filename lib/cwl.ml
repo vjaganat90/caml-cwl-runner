@@ -486,7 +486,11 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
       let stdout_file = Option.map (Filename.concat outdir) stdout_name in
       let stderr_file = Option.map (Filename.concat outdir) stderr_name in
       let* code =
-        R.spawn outdir { stdin_file; stdout_file; stderr_file } argv
+        R.spawn
+          ~env:(Runtime.tool_env ~outdir ~tmpdir)
+          outdir
+          { stdin_file; stdout_file; stderr_file }
+          argv
       in
       if not (List.mem code tool.success_codes) then
         rt_err (Printf.sprintf "command failed with exit code %d" code)
