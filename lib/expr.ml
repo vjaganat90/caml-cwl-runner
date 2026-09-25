@@ -1,6 +1,6 @@
-(** Parameter references ([$(inputs…)], [$(self…)], [$(runtime…)]). Inline
-    JavaScript is a separate [ENGINE] of the same signature. Pure: no
-    filesystem. *)
+(** Parameter references ([$(inputs…)], [$(self…)], [$(runtime…)]) and string
+    interpolation. A sole reference keeps its type. Inline JavaScript is a
+    separate [ENGINE] of the same signature. Pure: no filesystem. *)
 
 include Data.Expr
 
@@ -173,21 +173,69 @@ let eval_path ctx root segs =
   in
   match start with Error _ as e -> e | Ok current -> step current segs
 
-let looks_like_js s =
-  let t = String.trim s in
-  String.starts_with ~prefix:"${" t
-  || (String.starts_with ~prefix:"$(" t && parse_param_ref t = None)
+let text_of = function Ty.Vstring s -> s | v -> Ty.to_json_sorted v
+
+let rec close_at s i depth open_c close_c quote =
+  if i >= String.length s then None
+  else
+    let c = s.[i] in
+    match quote with
+    | Some _ when c = '\\' && i + 1 < String.length s ->
+        close_at s (i + 2) depth open_c close_c quote
+    | Some q when c = q -> close_at s (i + 1) depth open_c close_c None
+    | Some _ -> close_at s (i + 1) depth open_c close_c quote
+    | None when c = '\'' || c = '"' ->
+        close_at s (i + 1) depth open_c close_c (Some c)
+    | None when c = open_c -> close_at s (i + 1) (depth + 1) open_c close_c None
+    | None when c = close_c ->
+        if depth = 0 then Some i
+        else close_at s (i + 1) (depth - 1) open_c close_c None
+    | None -> close_at s (i + 1) depth open_c close_c None
+
+let rec scan ctx s i buf =
+  let n = String.length s in
+  if i >= n then Ok (Buffer.contents buf)
+  else if i + 1 < n && s.[i] = '\\' && s.[i + 1] = '\\' then (
+    Buffer.add_char buf '\\';
+    scan ctx s (i + 2) buf)
+  else if
+    i + 2 < n
+    && s.[i] = '\\'
+    && s.[i + 1] = '$'
+    && (s.[i + 2] = '(' || s.[i + 2] = '{')
+  then (
+    Buffer.add_char buf '$';
+    Buffer.add_char buf s.[i + 2];
+    scan ctx s (i + 3) buf)
+  else if i + 1 < n && s.[i] = '$' && (s.[i + 1] = '(' || s.[i + 1] = '{') then
+    let open_c = s.[i + 1] in
+    let close_c = if open_c = '(' then ')' else '}' in
+    match close_at s (i + 2) 0 open_c close_c None with
+    | None -> expr_err "unclosed parameter reference"
+    | Some _ when open_c = '{' -> unsupported "InlineJavascriptRequirement"
+    | Some j -> (
+        let raw = String.sub s i (j + 1 - i) in
+        match parse_param_ref raw with
+        | None -> unsupported "InlineJavascriptRequirement"
+        | Some (root, segs) -> (
+            match eval_path ctx root segs with
+            | Error _ as e -> e
+            | Ok v ->
+                Buffer.add_string buf (text_of v);
+                scan ctx s (j + 1) buf))
+  else (
+    Buffer.add_char buf s.[i];
+    scan ctx s (i + 1) buf)
 
 module Param_ref : ENGINE = struct
   let eval ctx expr =
     let t = String.trim expr in
-    if looks_like_js t then unsupported "InlineJavascriptRequirement"
-    else
-      match parse_param_ref t with
-      | Some (root, segs) -> eval_path ctx root segs
-      | None ->
-          if String.contains t '$' then
-            if looks_like_js t then unsupported "InlineJavascriptRequirement"
-            else unsupported "string interpolation"
-          else Ok (Ty.Vstring expr)
+    match parse_param_ref t with
+    | Some (root, segs) -> eval_path ctx root segs
+    | None ->
+        if String.exists (fun c -> c = '$' || c = '\\') expr then
+          match scan ctx expr 0 (Buffer.create (String.length expr)) with
+          | Error _ as e -> e
+          | Ok text -> Ok (Ty.Vstring text)
+        else Ok (Ty.Vstring expr)
 end

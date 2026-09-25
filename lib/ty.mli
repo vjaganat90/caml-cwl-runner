@@ -37,4 +37,5 @@ val apply_defaults_and_check :
 
 val string_of_value : value -> string
 val to_json : value -> string
+val to_json_sorted : value -> string
 val object_to_json : object_ -> string

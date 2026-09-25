@@ -228,6 +228,52 @@ let prop_container_outdir =
           && Cwl.Schema.Container_outdir.to_string p = path
       | Error _ -> not (canonical_container path))
 
+let prop_interpolate =
+  let lit =
+    Gen.map
+      (fun s -> `Lit s)
+      Gen.(string_size ~gen:(char_range 'a' 'z') (int_range 0 8))
+  in
+  let atom =
+    Gen.oneof
+      [
+        lit;
+        Gen.return `Bs;
+        Gen.return `Paren;
+        Gen.return `Brace;
+        Gen.return `Msg;
+      ]
+  in
+  let encode = function
+    | `Lit s -> s
+    | `Bs -> "\\\\"
+    | `Paren -> "\\$("
+    | `Brace -> "\\${"
+    | `Msg -> "$(inputs.msg)"
+  in
+  let decoded = function
+    | `Lit s -> s
+    | `Bs -> "\\"
+    | `Paren -> "$("
+    | `Brace -> "${"
+    | `Msg -> "hi"
+  in
+  Test.make ~name:"interpolation round-trips escapes and references" ~count:80
+    Gen.(list_size (int_range 0 12) atom)
+    (fun atoms ->
+      let src = "p" ^ String.concat "" (List.map encode atoms) ^ "s" in
+      let expect = "p" ^ String.concat "" (List.map decoded atoms) ^ "s" in
+      let ctx =
+        {
+          Cwl.Expr.inputs = [ ("msg", Cwl.Type.Vstring "hi") ];
+          self = Cwl.Type.Vnull;
+          runtime = Cwl.Expr.default_runtime;
+        }
+      in
+      match Cwl.Expr.Param_ref.eval ctx src with
+      | Ok (Cwl.Type.Vstring got) -> got = expect
+      | _ -> false)
+
 let prop_tests =
   [
     prop_boolean_flag;
@@ -241,7 +287,46 @@ let prop_tests =
     prop_docker_argv_suffix;
     prop_docker_diagnosed;
     prop_container_outdir;
+    prop_interpolate;
   ]
+
+let interp_ctx inputs =
+  { Cwl.Expr.inputs; self = Cwl.Type.Vnull; runtime = Cwl.Expr.default_runtime }
+
+let show_eval = function
+  | Ok v -> Cwl.Type.string_of_value v
+  | Error e -> Cwl.Error.to_string e
+
+let interpolation_table () =
+  let eval inputs expr = Cwl.Expr.Param_ref.eval (interp_ctx inputs) expr in
+  let msg = [ ("msg", Cwl.Type.Vstring "hi") ] in
+  let n = [ ("n", Cwl.Type.Vint 3L) ] in
+  let obj =
+    [
+      ( "o",
+        Cwl.Type.Vrecord [ ("b", Cwl.Type.Vint 1L); ("a", Cwl.Type.Vint 2L) ] );
+    ]
+  in
+  (match eval n "  $(inputs.n)  " with
+  | Ok (Cwl.Type.Vint 3L) -> ()
+  | other -> Alcotest.failf "lone reference: %s" (show_eval other));
+  (match eval msg "$(inputs.msg) tail" with
+  | Ok (Cwl.Type.Vstring "hi tail") -> ()
+  | other -> Alcotest.failf "trailing text: %s" (show_eval other));
+  (match eval obj "pre$(inputs.o)" with
+  | Ok (Cwl.Type.Vstring got) ->
+      Alcotest.(check string) "sorted keys" "pre{\"a\":2,\"b\":1}" got
+  | other -> Alcotest.failf "object: %s" (show_eval other));
+  (match eval msg "\\$(inputs.msg)" with
+  | Ok (Cwl.Type.Vstring "$(inputs.msg)") -> ()
+  | other -> Alcotest.failf "escape: %s" (show_eval other));
+  (match eval [] "${return 1}" with
+  | Error (Cwl.Error.Unsupported { feature = "InlineJavascriptRequirement" }) ->
+      ()
+  | other -> Alcotest.failf "javascript: %s" (show_eval other));
+  match eval msg "$(inputs.msg" with
+  | Error (Cwl.Error.Expr _) -> ()
+  | other -> Alcotest.failf "unclosed: %s" (show_eval other)
 
 let glob_root = "/out"
 
@@ -1249,6 +1334,7 @@ let () =
       ( "bind_properties",
         List.map (QCheck_alcotest.to_alcotest ~speed_level:`Quick) prop_tests );
       ("glob", glob_cases);
+      ("interpolation", [ ("table", `Quick, interpolation_table) ]);
       ( "docker_outdir",
         [
           ("paths", `Quick, container_outdir_table);
