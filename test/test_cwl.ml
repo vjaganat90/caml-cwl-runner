@@ -1108,7 +1108,7 @@ let designated_outdir_table () =
         let module R = struct
           include Local
 
-          let spawn cwd _stdio argv =
+          let spawn ~env:_ cwd _stdio argv =
             (argv_ok :=
                match case with
                | Host_outdir -> List.mem cwd argv
@@ -1280,11 +1280,77 @@ let confined_rejects_dotdot () =
   let via_dotdot = Filename.concat root (Filename.concat ".." "other/a.txt") in
   expect_runtime (R.confined [ root ] via_dotdot)
 
+let process_env_table () =
+  let dir = Filename.temp_dir "ccr-env-" "" in
+  let tool =
+    write_tool dir
+      {|
+cwlVersion: v1.2
+class: CommandLineTool
+baseCommand: ["true"]
+inputs: []
+outputs: []
+|}
+  in
+  let job = Filename.concat dir "job.json" in
+  Out_channel.with_open_text job (fun oc -> output_string oc "{}\n");
+  let seen = ref [] in
+  let cwd_seen = ref "" in
+  let result =
+    Eio_main.run @@ fun env ->
+    let (module Local : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+    let module R = struct
+      include Local
+
+      let spawn ~env cwd _stdio _argv =
+        seen := env;
+        cwd_seen := cwd;
+        Ok 0
+    end in
+    Cwl.run (module R) tool job
+  in
+  (match result with
+  | Ok _ -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e));
+  let names =
+    List.map
+      (fun e ->
+        match String.index_opt e '=' with
+        | None -> e
+        | Some i -> String.sub e 0 i)
+      !seen
+  in
+  let path = Sys.getenv_opt "PATH" in
+  let expect_names =
+    match path with
+    | None -> [ "HOME"; "TMPDIR" ]
+    | Some _ -> [ "HOME"; "TMPDIR"; "PATH" ]
+  in
+  Alcotest.(check (list string)) "names" expect_names names;
+  Alcotest.(check bool)
+    "HOME is cwd" true
+    (List.mem ("HOME=" ^ !cwd_seen) !seen);
+  Alcotest.(check bool)
+    "TMPDIR differs" true
+    (not (List.mem ("TMPDIR=" ^ !cwd_seen) !seen));
+  (match path with
+  | None -> ()
+  | Some p ->
+      Alcotest.(check bool) "PATH copied" true (List.mem ("PATH=" ^ p) !seen));
+  match Sys.getenv_opt "HOME" with
+  | None -> ()
+  | Some home when home = !cwd_seen -> ()
+  | Some home ->
+      Alcotest.(check bool)
+        "parent HOME absent" false
+        (List.mem ("HOME=" ^ home) !seen)
+
 let runtime_cases =
   [
     ("confined_inside", `Quick, confined_inside);
     ("confined_rejects_sibling", `Quick, confined_rejects_sibling);
     ("confined_rejects_dotdot", `Quick, confined_rejects_dotdot);
+    ("process_env", `Quick, process_env_table);
   ]
 
 let glob_cases =

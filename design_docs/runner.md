@@ -177,7 +177,10 @@ Emitted Files include `location` (`file://…`), `path`, `basename`,
 are `{}`. JSON is hand-written from `Type.value`.
 
 Eio is the Runtime body because `Unix.create_process` cannot set child
-cwd and a process-global `chdir` races with future Workflow fibers.
+cwd and a process-global `chdir` races with future Workflow fibers. The
+tool process receives `HOME` (the outdir), `TMPDIR`, and `PATH` copied
+from the parent. The docker client keeps the invoking environment, and
+prepends its own directory to `PATH` when the binary is absolute.
 `DockerRequirement` in requirements selects `Runtime.docker`. The image is
 one of `dockerPull`, `dockerImageId`, `dockerLoad`, `dockerImport`, or
 `dockerFile` (Dockerfile contents). `dockerPull` wins when it is set; the

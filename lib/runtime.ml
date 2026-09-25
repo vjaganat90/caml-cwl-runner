@@ -23,7 +23,9 @@ module type RUNTIME = sig
   val stat : string -> node
   val realpath : string -> (string, Error.t) result
   val confined : string list -> string -> (unit, Error.t) result
-  val spawn : string -> stdio -> string list -> (int, Error.t) result
+
+  val spawn :
+    env:string list -> string -> stdio -> string list -> (int, Error.t) result
 end
 
 let rt_err message = Error (Error.Runtime { message })
@@ -116,7 +118,7 @@ let filesystem env ~launch =
               rt_err (Printf.sprintf "%s destination is a symlink" label)
           | _ -> Ok ())
 
-    let spawn cwd ({ stdin_file; stdout_file; stderr_file } : stdio) argv =
+    let spawn ~env cwd ({ stdin_file; stdout_file; stderr_file } : stdio) argv =
       if argv = [] then rt_err "empty argv"
       else
         match
@@ -165,7 +167,7 @@ let filesystem env ~launch =
                               not (String.starts_with ~prefix:"PATH=" e))
                           |> List.cons ("PATH=" ^ path)
                           |> Array.of_list
-                      | _ -> Unix.environment ()
+                      | _ -> Array.of_list env
                     in
                     let proc =
                       Eio.Process.spawn ~sw proc_mgr ~cwd:(p launched.cwd) ~env
@@ -179,6 +181,12 @@ let filesystem env ~launch =
                         failwith
                           (Printf.sprintf "process killed by signal %d" s)))
   end : RUNTIME)
+
+let tool_env ~outdir ~tmpdir =
+  let env = [ "HOME=" ^ outdir; "TMPDIR=" ^ tmpdir ] in
+  match Sys.getenv_opt "PATH" with
+  | None -> env
+  | Some path -> env @ [ "PATH=" ^ path ]
 
 let local env = filesystem env ~launch:(fun cwd argv -> Ok { cwd; argv })
 
@@ -238,7 +246,9 @@ let run_docker env argv =
   let (module Host : RUNTIME) = local env in
   let out = Filename.temp_file "ccr-docker-" ".txt" in
   let* code =
-    Host.spawn "/"
+    Host.spawn
+      ~env:(Unix.environment () |> Array.to_list)
+      "/"
       { stdin_file = None; stdout_file = Some out; stderr_file = None }
       argv
   in
