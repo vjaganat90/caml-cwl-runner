@@ -164,6 +164,8 @@ Then either:
   `File[]` may be empty. Directory vs File is `Error.Type`.
   `secondaryFiles` is a diagnostic; the glob hit is still the File.
 
+A string that mixes text and parameter references is interpolated.
+`\$(`, `\${`, and `\\` are escapes. A sole `$(…)` keeps its type.
 `${…}` or a `$(…)` that is not a parameter reference is
 `Unsupported { feature = "InlineJavascriptRequirement" }`.
 `runtime.cores` comes from `ResourceRequirement.coresMin` (requirements,
@@ -245,11 +247,8 @@ deleted.
   pass it instead of `Param_ref` when `InlineJavascriptRequirement` is
   required or a non-param expression is evaluated. `outputEval` uses
   `self` = glob result (glob → loadContents → outputEval → secondaryFiles).
-- **Docker / InitialWorkDir** — another `RUNTIME`. `spawn` runs the argv
-  in a container; host `outdir` bind-mounted. `DockerRequirement` in
-  **requirements** is `Unsupported` today; in **hints** it is a diagnostic
-  and execution is local. Literal IWD listing is Runtime work before
-  spawn; listing expressions wait for JS.
+- **InitialWorkDir** — literal listing is Runtime work before spawn;
+  listing expressions wait for JS.
 - **Workflow** — a graph of steps on the same Eio scheduler. Each step
   gets its own `outdir` and `Cwl.run`. ExpressionTool is `ENGINE.eval`,
   no spawn.

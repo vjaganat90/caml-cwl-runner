@@ -382,3 +382,30 @@ let rec to_json = function
   | Vrecord kvs -> json_object (List.map (fun (k, v) -> (k, to_json v)) kvs)
 
 let object_to_json obj = to_json (Vrecord obj)
+
+let rec to_json_sorted = function
+  | Varray xs -> "[" ^ String.concat "," (List.map to_json_sorted xs) ^ "]"
+  | Vrecord kvs ->
+      let kvs = List.sort (fun (a, _) (b, _) -> String.compare a b) kvs in
+      json_object (List.map (fun (k, v) -> (k, to_json_sorted v)) kvs)
+  | Vfile f ->
+      let fields =
+        [ ("class", json_string "File") ]
+        |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
+        |> add_opt "path" json_string f.path
+        |> add_opt "basename" json_string f.basename
+        |> add_opt "nameroot" json_string f.nameroot
+        |> add_opt "nameext" json_string f.nameext
+        |> add_opt "size" Int64.to_string f.size
+      in
+      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
+      json_object fields
+  | Vdir d ->
+      let fields =
+        [ ("class", json_string "Directory") ]
+        |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
+        |> add_opt "path" json_string d.path
+      in
+      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
+      json_object fields
+  | v -> to_json v
