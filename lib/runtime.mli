@@ -23,8 +23,14 @@ module type RUNTIME = sig
   val stat : string -> node
   val realpath : string -> (string, Error.t) result
   val confined : string list -> string -> (unit, Error.t) result
-  val spawn : string -> stdio -> string list -> (int, Error.t) result
+
+  val spawn :
+    env:string list -> string -> stdio -> string list -> (int, Error.t) result
 end
+
+val tool_env : outdir:string -> tmpdir:string -> string list
+(** [HOME] is [outdir], [TMPDIR] is [tmpdir], and [PATH] is copied from the
+    parent when it is set. No other variable is included. *)
 
 val local : Eio_unix.Stdenv.base -> (module RUNTIME)
 val docker_executable : unit -> string
