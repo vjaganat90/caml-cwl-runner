@@ -11,6 +11,11 @@ end
 
 open Syntax
 
+let runtime message = Error (Runtime { message })
+let schema path message = Error (Schema { path; message })
+let expr message = Error (Expr { message })
+let unsupported feature = Error (Unsupported { feature })
+
 let rec map_list f = function
   | [] -> Ok []
   | x :: xs ->

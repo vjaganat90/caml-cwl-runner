@@ -32,6 +32,6 @@ let of_tree tree =
             @ in_diags @ out_diags @ req_diags @ hint_diags;
         }
   | other ->
-      Schema.schema_err "/"
+      Error.schema "/"
         (Format.asprintf "expected a CWL document object, got %a"
            Untyped_tree.pp other)
