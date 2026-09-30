@@ -170,7 +170,6 @@ module Command_line_tool = struct
 
   type command_line_tool = {
     cwl_version : string;
-    class_ : string;
     base_command : string list;
     arguments : argument list;
     inputs : Schema.input list;
@@ -189,7 +188,6 @@ end
 module Workflow = struct
   type workflow = {
     cwl_version : string;
-    class_ : string;
     inputs : Schema.input list;
     outputs : Schema.output list;
     requirements : Schema.requirement list;

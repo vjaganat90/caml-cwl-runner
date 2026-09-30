@@ -26,15 +26,7 @@ let of_tree tree =
       in
       Ok
         {
-          Error.value =
-            {
-              cwl_version;
-              class_ = "Workflow";
-              inputs;
-              outputs;
-              requirements;
-              hints;
-            };
+          Error.value = { cwl_version; inputs; outputs; requirements; hints };
           diagnostics =
             [ Error.unimplemented "Workflow" "class" ]
             @ in_diags @ out_diags @ req_diags @ hint_diags;
