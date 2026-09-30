@@ -27,7 +27,7 @@ dune fmt
 ## Conformance
 
 ```bash
-pip install cwltest cwltool
+pip install -r scripts/requirements.txt   # pinned cwltest and cwltool
 scripts/conformance.py                 # v1.2 suite, ratcheted in conformance/
 scripts/conformance.py --suite oracle  # cwltool-verified probes in test/oracle
 ```

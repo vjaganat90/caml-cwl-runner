@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install cwltest
+      - run: pip install -c scripts/requirements.txt cwltest
       - name: v1.2 conformance ratchet
         run: opam exec -- python scripts/conformance.py --suite v1.2
       - name: cwltool oracle ratchet

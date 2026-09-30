@@ -22,7 +22,26 @@ import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(ROOT, "test/oracle/tests.yaml")
-HEADER = "# Expected outputs are written by scripts/oracle.py from cwltool. Do not edit them by hand.\n"
+REQUIREMENTS = os.path.join(ROOT, "scripts/requirements.txt")
+
+
+def pinned(package):
+    with open(REQUIREMENTS) as f:
+        for line in f:
+            name, _, version = line.strip().partition("==")
+            if name == package:
+                return version
+    sys.exit(f"{package} is not pinned in {REQUIREMENTS}")
+
+
+def installed(tool):
+    out = subprocess.run([tool, "--version"], capture_output=True, text=True).stdout
+    return out.split()[-1] if out.split() else "unknown"
+
+
+def header(version):
+    return (f"# Expected outputs are written by scripts/oracle.py from cwltool {version}\n"
+            "# (pinned in scripts/requirements.txt). Do not edit them by hand.\n")
 
 
 def normalize(v):
@@ -61,6 +80,11 @@ def main():
     ap.add_argument("ids", nargs="*", help="entries to record (default: all)")
     args = ap.parse_args()
 
+    want, have = pinned("cwltool"), installed("cwltool")
+    if want != have:
+        sys.exit(f"cwltool {have} is installed but {want} is pinned; "
+                 "run `pip install -r scripts/requirements.txt`")
+
     with open(TESTS) as f:
         tests = yaml.safe_load(f)
     base = os.path.dirname(TESTS)
@@ -71,7 +95,7 @@ def main():
         if not args.ids or entry["id"] in args.ids:
             print(f"{entry['id']}: {record(entry, base)}")
     with open(TESTS, "w") as f:
-        f.write(HEADER)
+        f.write(header(want))
         yaml.safe_dump(tests, f, sort_keys=False, width=100)
     return 0
 

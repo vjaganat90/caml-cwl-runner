@@ -1,0 +1,7 @@
+# Python tools for scripts/conformance.py and scripts/oracle.py.
+# Exact pins: a new cwltest can change how outputs are compared, and a new
+# cwltool can change the expected outputs oracle.py records. To bump one,
+# change it here, rerun both scripts, and commit the passing-list and
+# test/oracle diffs in the same PR.
+cwltest==2.7.20260814150058
+cwltool==3.2.20260413085819
