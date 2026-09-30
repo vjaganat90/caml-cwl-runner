@@ -19,6 +19,10 @@ module type RUNTIME = sig
   val read_file : string -> (string, Error.t) result
   val write_file : string -> string -> (unit, Error.t) result
   val file_size : string -> (int64, Error.t) result
+
+  val sha1 : string -> (string, Error.t) result
+  (** Lowercase hex SHA-1 of the file contents, read in chunks. *)
+
   val lstat : string -> node
   val stat : string -> node
   val realpath : string -> (string, Error.t) result

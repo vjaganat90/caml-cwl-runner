@@ -371,6 +371,7 @@ let rec to_json = function
       |> add_opt "basename" json_string f.basename
       |> add_opt "nameroot" json_string f.nameroot
       |> add_opt "nameext" json_string f.nameext
+      |> add_opt "checksum" json_string f.checksum
       |> add_opt "size" Int64.to_string f.size
       |> json_object
   | Vdir d ->
@@ -396,6 +397,7 @@ let rec to_json_sorted = function
         |> add_opt "basename" json_string f.basename
         |> add_opt "nameroot" json_string f.nameroot
         |> add_opt "nameext" json_string f.nameext
+        |> add_opt "checksum" json_string f.checksum
         |> add_opt "size" Int64.to_string f.size
       in
       let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in

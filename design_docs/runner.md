@@ -175,7 +175,7 @@ else hints, else `1.`).
 
 Emitted Files include `location` (`file://…`), `path`, `basename`,
 `nameroot` / `nameext` (from `basename`; no dot → `nameext` `""`), and
-`size`. No checksum until SHA-1 exists (`Digest` is MD5). Empty outputs
+`size`, and `checksum` (`sha1$…`, from `R.sha1`), on every output File. Empty outputs
 are `{}`. JSON is hand-written from `Type.value`.
 
 Eio is the Runtime body because `Unix.create_process` cannot set child
@@ -282,9 +282,8 @@ over those files.
 
 Current default in parentheses.
 
-1. Checksum on File objects — omit until SHA-1 exists.
-2. `--rm-tmpdir` — leave dirs, or delete temp outdirs on success.
-3. Directory input staging — resolved source path, no copy, or recursive
+1. `--rm-tmpdir` — leave dirs, or delete temp outdirs on success.
+2. Directory input staging — resolved source path, no copy, or recursive
    copy with InitialWorkDir.
 
 ---
