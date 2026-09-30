@@ -1,7 +1,8 @@
-(** ADTs defined once. Public modules [include] their part ([Error],
-    [Untyped_tree], [Type], [Schema], [Command_line_tool], [Workflow],
-    [Document], [Expr]). No I/O. [Container_outdir.of_string] is the only
-    function: a path docker would mount somewhere else is not a [t]. *)
+(** ADTs and module signatures defined once. Public modules [include] their part
+    ([Error], [Untyped_tree], [Type], [Schema], [Command_line_tool], [Workflow],
+    [Document], [Expr], [Glob], [Runtime]). No I/O. [Container_outdir.of_string]
+    is the only function: a path docker would mount somewhere else is not a [t].
+*)
 
 module Error = struct
   type t =
@@ -213,5 +214,55 @@ module Expr = struct
 
   module type ENGINE = sig
     val eval : context -> string -> (Type.value, Error.t) result
+  end
+end
+
+module Glob = struct
+  module type FS = sig
+    val exists : string -> bool
+    val is_dir : string -> bool
+    val read_dir : string -> (string list, Error.t) result
+    val realpath : string -> (string, Error.t) result
+  end
+end
+
+module Runtime = struct
+  type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
+
+  type stdio = {
+    stdin_file : string option;
+    stdout_file : string option;
+    stderr_file : string option;
+  }
+
+  type tool_env = { home : string; tmpdir : string; path : string option }
+  (** The environment CWL gives the tool: [HOME] is the designated outdir,
+      [TMPDIR] the designated tmpdir, and [PATH] the parent's when set. Paths
+      are as the tool sees them (container paths under Docker). *)
+
+  module type RUNTIME = sig
+    include Glob.FS
+
+    val mkdir_p : string -> (unit, Error.t) result
+    val abspath : string -> (string, Error.t) result
+    val mkdtemp : string -> (string, Error.t) result
+    val copy_file : string -> string -> (unit, Error.t) result
+    val read_file : string -> (string, Error.t) result
+    val write_file : string -> string -> (unit, Error.t) result
+    val file_size : string -> (int64, Error.t) result
+
+    val sha1 : string -> (string, Error.t) result
+    (** Lowercase hex SHA-1 of the file contents, read in chunks. *)
+
+    val remove_tree : string -> (unit, Error.t) result
+    (** Delete a file or directory tree. Symlinks are unlinked, never followed.
+        A missing path is [Ok ()]. *)
+
+    val lstat : string -> node
+    val stat : string -> node
+    val confined : string list -> string -> (unit, Error.t) result
+
+    val spawn :
+      tool_env -> string -> stdio -> string list -> (int, Error.t) result
   end
 end

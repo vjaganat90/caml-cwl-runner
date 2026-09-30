@@ -1,44 +1,7 @@
 (** Stage files and spawn processes. The local body is Eio; tests pack a fake.
     Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
 
-type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
-
-type stdio = {
-  stdin_file : string option;
-  stdout_file : string option;
-  stderr_file : string option;
-}
-
-type tool_env = { home : string; tmpdir : string; path : string option }
-(** The environment CWL gives the tool: [HOME] is the designated outdir,
-    [TMPDIR] the designated tmpdir, and [PATH] the parent's when set. Paths are
-    as the tool sees them (container paths under Docker). *)
-
-module type RUNTIME = sig
-  include Glob.FS
-
-  val mkdir_p : string -> (unit, Error.t) result
-  val abspath : string -> (string, Error.t) result
-  val mkdtemp : string -> (string, Error.t) result
-  val copy_file : string -> string -> (unit, Error.t) result
-  val read_file : string -> (string, Error.t) result
-  val write_file : string -> string -> (unit, Error.t) result
-  val file_size : string -> (int64, Error.t) result
-
-  val sha1 : string -> (string, Error.t) result
-  (** Lowercase hex SHA-1 of the file contents, read in chunks. *)
-
-  val remove_tree : string -> (unit, Error.t) result
-  (** Delete a file or directory tree. Symlinks are unlinked, never followed. A
-      missing path is [Ok ()]. *)
-
-  val lstat : string -> node
-  val stat : string -> node
-  val confined : string list -> string -> (unit, Error.t) result
-
-  val spawn :
-    tool_env -> string -> stdio -> string list -> (int, Error.t) result
-end
+include module type of Data.Runtime
 
 val tool_env : outdir:string -> tmpdir:string -> tool_env
 (** [PATH] is copied from the parent when it is set. *)
