@@ -129,7 +129,7 @@ let execute_edges =
     edge "glob_runtime_outdir" "glob-outdir.cwl"
       (Expect_ok
          (fun ann ->
-           match Cwl.Type.lookup "d" ann.value with
+           match List.assoc_opt "d" ann.value with
            | Some v -> (
                match dir_path v with
                | Some p ->
@@ -180,7 +180,7 @@ let execute_edges =
     edge "directory_input_argv" "dir-in.cwl" ~job:"dir-in-job.json"
       (Expect_ok
          (fun ann ->
-           match Cwl.Type.lookup "out" ann.value with
+           match List.assoc_opt "out" ann.value with
            | Some v ->
                let p = String.trim (file_bytes v) in
                Alcotest.(check bool) "is dir" true (Sys.is_directory p)
