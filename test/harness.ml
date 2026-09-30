@@ -126,7 +126,7 @@ let file_bytes = function
   | _ -> Alcotest.fail "expected File with path"
 
 let lookup_file id ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some (Cwl.Type.Vfile f) -> f
   | _ -> Alcotest.fail ("expected File " ^ id)
 
@@ -137,27 +137,27 @@ let lookup_file_basename id expected ann =
 let lookup_file_path id ann = (lookup_file id ann).Cwl.Type.path
 
 let lookup_bytes id expected ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some v -> Alcotest.(check string) "bytes" expected (file_bytes v)
   | None -> Alcotest.fail ("missing " ^ id)
 
 let lookup_int id expected ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some (Cwl.Type.Vint n) -> Alcotest.(check int64) id expected n
   | _ -> Alcotest.fail ("expected " ^ id ^ " int")
 
 let lookup_null id ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some Cwl.Type.Vnull -> ()
   | _ -> Alcotest.fail "expected null"
 
 let lookup_empty_array id ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some (Cwl.Type.Varray []) -> ()
   | _ -> Alcotest.fail "expected empty array"
 
 let lookup_basenames id expected ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some (Cwl.Type.Varray xs) ->
       let names =
         List.filter_map file_basename xs |> List.sort String.compare
@@ -166,7 +166,7 @@ let lookup_basenames id expected ann =
   | _ -> Alcotest.fail "expected File array"
 
 let lookup_dir id ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some v -> (
       match dir_path v with
       | Some p ->
