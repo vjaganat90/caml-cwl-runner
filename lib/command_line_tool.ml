@@ -47,7 +47,7 @@ let parse_arguments ~json_path v :
               Ok (Binding b, d))
         xs
   | other ->
-      Schema.schema_err json_path
+      Error.schema json_path
         (Format.asprintf "expected arguments array, got %a" Untyped_tree.pp
            other)
 
@@ -59,13 +59,13 @@ let parse_base_command v =
         | [] -> Ok (List.rev acc)
         | Untyped_tree.String s :: xs -> go (s :: acc) xs
         | other :: _ ->
-            Schema.schema_err "baseCommand"
+            Error.schema "baseCommand"
               (Format.asprintf "expected string, got %a" Untyped_tree.pp other)
       in
       go [] xs
   | Untyped_tree.Null -> Ok []
   | other ->
-      Schema.schema_err "baseCommand"
+      Error.schema "baseCommand"
         (Format.asprintf "expected string or array, got %a" Untyped_tree.pp
            other)
 
@@ -75,7 +75,7 @@ let parse_success_codes v =
     | Untyped_tree.Int n -> Ok (Int64.to_int n)
     | Untyped_tree.Float f when Float.is_integer f -> Ok (int_of_float f)
     | other ->
-        Schema.schema_err path
+        Error.schema path
           (Format.asprintf "expected int, got %a" Untyped_tree.pp other)
   in
   match v with
@@ -92,14 +92,14 @@ let parse_success_codes v =
       in
       go 0 [] xs
   | other ->
-      Schema.schema_err "successCodes"
+      Error.schema "successCodes"
         (Format.asprintf "expected int or array of int, got %a" Untyped_tree.pp
            other)
 
 let of_tree doc =
   match doc with
   | Untyped_tree.Array _ ->
-      Schema.schema_err "/" "$graph / packed documents are not implemented"
+      Error.schema "/" "$graph / packed documents are not implemented"
   | Untyped_tree.Object kvs ->
       let class_ =
         Option.value (Untyped_tree.string_field kvs "class") ~default:""
@@ -109,7 +109,7 @@ let of_tree doc =
         let forbidden k =
           match List.assoc_opt k kvs with
           | None -> Ok ()
-          | Some _ -> Schema.schema_err k ("unresolved " ^ k)
+          | Some _ -> Error.schema k ("unresolved " ^ k)
         in
         let* () = forbidden "$import" in
         let* () = forbidden "$include" in
@@ -176,7 +176,7 @@ let of_tree doc =
       in
       Ok { Error.value = tool; diagnostics }
   | other ->
-      Schema.schema_err "/"
+      Error.schema "/"
         (Format.asprintf "expected a CWL document object, got %a"
            Untyped_tree.pp other)
 

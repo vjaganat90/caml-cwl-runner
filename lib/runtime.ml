@@ -33,18 +33,18 @@ module type RUNTIME = sig
     tool_env -> string -> stdio -> string list -> (int, Error.t) result
 end
 
-let rt_err message = Error (Error.Runtime { message })
-let wrap f = try Ok (f ()) with exn -> rt_err (Printexc.to_string exn)
+let wrap f = try Ok (f ()) with exn -> Error.runtime (Printexc.to_string exn)
 
 let confined_using realpath roots path =
-  if roots = [] then rt_err "confined: no roots"
+  if roots = [] then Error.runtime "confined: no roots"
   else
     match realpath path with
     | Error _ as e -> e
     | Ok resolved ->
         let rec go = function
           | [] ->
-              rt_err (Printf.sprintf "path %S is not under a legal root" path)
+              Error.runtime
+                (Printf.sprintf "path %S is not under a legal root" path)
           | root :: rest -> (
               match realpath root with
               | Ok r when Glob.under r resolved -> Ok ()
@@ -161,8 +161,11 @@ let filesystem eio (console : console) launch =
               Eio.Path.with_open_in (p src) @@ fun inn ->
               Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (p dst)
               @@ fun out -> Eio.Flow.copy inn out)
-      | `Not_found -> rt_err (Printf.sprintf "copy source not found: %s" src)
-      | _ -> rt_err (Printf.sprintf "copy source is not a regular file: %s" src)
+      | `Not_found ->
+          Error.runtime (Printf.sprintf "copy source not found: %s" src)
+      | _ ->
+          Error.runtime
+            (Printf.sprintf "copy source is not a regular file: %s" src)
 
     let realpath s = wrap (fun () -> Unix.realpath (native s))
     let confined roots path = confined_using realpath roots path
@@ -172,11 +175,11 @@ let filesystem eio (console : console) launch =
       | Some f -> (
           match lstat f with
           | `Symlink ->
-              rt_err (Printf.sprintf "%s destination is a symlink" label)
+              Error.runtime (Printf.sprintf "%s destination is a symlink" label)
           | _ -> Ok ())
 
     let spawn env cwd (stdio : stdio) argv =
-      if argv = [] then rt_err "empty argv"
+      if argv = [] then Error.runtime "empty argv"
       else
         let* () = reject_stdio_symlink "stdin" stdio.stdin_file in
         let* () = reject_stdio_symlink "stdout" stdio.stdout_file in
@@ -217,11 +220,12 @@ type docker_spec = {
 let mount_target s =
   match Schema.Container_outdir.of_string s with
   | Ok path -> Ok (path :> string)
-  | Error message -> rt_err ("docker mount path " ^ message)
+  | Error message -> Error.runtime ("docker mount path " ^ message)
 
 let docker_mount ~host ~workdir =
   let* source =
-    try Ok (Unix.realpath host) with exn -> rt_err (Printexc.to_string exn)
+    try Ok (Unix.realpath host)
+    with exn -> Error.runtime (Printexc.to_string exn)
   in
   let* source = mount_target source in
   let+ workdir = mount_target workdir in
@@ -268,7 +272,7 @@ let run_docker eio console argv =
   let text = In_channel.with_open_bin out In_channel.input_all in
   Sys.remove out;
   if code <> 0 then
-    rt_err
+    Error.runtime
       (Printf.sprintf "docker command failed (%d): %s" code (String.trim text))
   else Ok text
 
@@ -282,7 +286,7 @@ let fetch env console source =
     let+ _ = run_docker env console [ "curl"; "-fsSL"; "-o"; dest; source ] in
     dest
   else if Sys.file_exists source then Ok source
-  else rt_err (Printf.sprintf "docker image source not found: %s" source)
+  else Error.runtime (Printf.sprintf "docker image source not found: %s" source)
 
 let gunzip_if_needed path =
   if String.ends_with ~suffix:".gz" path || String.ends_with ~suffix:".tgz" path
@@ -293,7 +297,7 @@ let gunzip_if_needed path =
         (Printf.sprintf "gzip -dc %s > %s" (Filename.quote path)
            (Filename.quote dest))
     in
-    if code <> 0 then rt_err (Printf.sprintf "gunzip failed (%d)" code)
+    if code <> 0 then Error.runtime (Printf.sprintf "gunzip failed (%d)" code)
     else Ok dest
   else Ok path
 
@@ -338,7 +342,7 @@ let prepare_image env console image =
           match loaded_name text with
           | Some tag -> Ok tag
           | None ->
-              rt_err
+              Error.runtime
                 (Printf.sprintf "docker load did not name an image: %s"
                    (String.trim text))))
   | Schema.Import { source; name } ->

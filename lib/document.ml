@@ -4,8 +4,6 @@
 include Data.Document
 open Error.Syntax
 
-let schema_err message = Error (Error.Schema { path = "/"; message })
-
 let norm_id id =
   match String.rindex_opt id '#' with
   | None -> id
@@ -33,8 +31,8 @@ let pick ~want version entries =
   in
   match hits with
   | [ one ] -> Ok (with_version version one)
-  | [] -> schema_err (Printf.sprintf "no entry %s" want)
-  | _ -> schema_err (Printf.sprintf "multiple entries named %s" want)
+  | [] -> Error.schema "/" (Printf.sprintf "no entry %s" want)
+  | _ -> Error.schema "/" (Printf.sprintf "multiple entries named %s" want)
 
 let select ?fragment tree =
   let graph version entries =
@@ -48,13 +46,14 @@ let select ?fragment tree =
       | None -> Ok tree
       | Some (Untyped_tree.Array entries) ->
           graph (Untyped_tree.string_field kvs "cwlVersion") entries
-      | Some _ -> schema_err "$graph must be an array")
+      | Some _ -> Error.schema "/" "$graph must be an array")
   | other -> Ok other
 
 let of_tree ?fragment tree =
   let* tree = select ?fragment tree in
   match tree with
-  | Untyped_tree.Array _ -> schema_err "$graph must be an array of processes"
+  | Untyped_tree.Array _ ->
+      Error.schema "/" "$graph must be an array of processes"
   | Untyped_tree.Object kvs -> (
       match
         Option.value (Untyped_tree.string_field kvs "class") ~default:""
@@ -73,8 +72,8 @@ let of_tree ?fragment tree =
               Error.value = Command_line_tool clt.Error.value;
               diagnostics = clt.diagnostics;
             }
-      | class_ -> Error (Error.Unsupported { feature = class_ }))
+      | class_ -> Error.unsupported class_)
   | other ->
-      schema_err
+      Error.schema "/"
         (Format.asprintf "expected a CWL document object, got %a"
            Untyped_tree.pp other)

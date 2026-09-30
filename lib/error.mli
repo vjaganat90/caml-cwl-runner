@@ -15,6 +15,13 @@ module Syntax : sig
   (** Last step: transform the value; the transform cannot fail. *)
 end
 
+val runtime : string -> ('a, t) result
+
+val schema : string -> string -> ('a, t) result
+(** [schema json_path message]. *)
+
+val expr : string -> ('a, t) result
+val unsupported : string -> ('a, t) result
 val map_list : ('a -> ('b, t) result) -> 'a list -> ('b list, t) result
 val pp : Format.formatter -> t -> unit
 val to_string : t -> string
