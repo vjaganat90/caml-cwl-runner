@@ -4,7 +4,6 @@
 let mk_tool ?(base_command = [ "echo" ]) ?(arguments = []) inputs =
   {
     Cwl.Command_line_tool.cwl_version = "v1.2";
-    class_ = "CommandLineTool";
     base_command;
     arguments;
     inputs;
