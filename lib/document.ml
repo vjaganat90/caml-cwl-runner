@@ -2,8 +2,8 @@
     builds one or the other. Not a job input object. *)
 
 include Data.Document
+open Error.Syntax
 
-let ( let* ) = Error.( let* )
 let schema_err message = Error (Error.Schema { path = "/"; message })
 
 let norm_id id =

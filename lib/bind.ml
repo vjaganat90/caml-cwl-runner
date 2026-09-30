@@ -1,7 +1,7 @@
 (** [inputBinding] → argv. Pure: does not open files or spawn. Expression
     evaluation is a module argument ([ENGINE]). *)
 
-let ( let* ) = Error.( let* )
+open Error.Syntax
 
 type key_atom = I of int | S of string
 type sort_key = key_atom list
@@ -91,8 +91,8 @@ let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
               match binding_opt with
               | None -> Ok lead
               | Some b ->
-                  let* p = resolve_position ctx b.Ty.position in
-                  Ok (append_pos lead p)
+                  let+ p = resolve_position ctx b.Ty.position in
+                  append_pos lead p
             in
             let parent_key = append_name parent_key name in
             let acc =
