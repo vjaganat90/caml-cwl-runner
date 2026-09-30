@@ -4,6 +4,7 @@
     and not [Type.value]. *)
 
 include Data.Untyped_tree
+open Error.Syntax
 
 let rec of_yaml : Yaml.value -> value = function
   | `Null -> Null
@@ -148,7 +149,6 @@ let rec resolve (module F : FILE) ~base ~stack = function
   | other -> Ok other
 
 and resolve_object (module F : FILE) ~base ~stack kvs =
-  let ( let* ) = Result.bind in
   let* base =
     match List.assoc_opt "$base" kvs with
     | None -> Ok base
@@ -183,7 +183,6 @@ and resolve_object (module F : FILE) ~base ~stack kvs =
       go [] kvs
 
 and splice (module F : FILE) ~base ~stack ~feature uri =
-  let ( let* ) = Result.bind in
   let* path = locate ~feature ~base uri in
   if List.mem path stack then schema path ("import cycle involving " ^ path)
   else
@@ -198,7 +197,6 @@ and splice (module F : FILE) ~base ~stack ~feature uri =
               ~base:(`File path) ~stack:(path :: stack) tree)
 
 let load (module F : FILE) path =
-  let ( let* ) = Result.bind in
   let* text = F.read path in
   let* tree = of_yaml_string ~path text in
   let path = normalize path in

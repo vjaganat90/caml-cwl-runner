@@ -9,7 +9,7 @@ module type FS = sig
   val realpath : string -> (string, Error.t) result
 end
 
-let ( let* ) = Error.( let* )
+open Error.Syntax
 
 let join a b =
   if a = "" || a = "." then b
@@ -180,5 +180,5 @@ let glob (module FS : FS) ?roots root pattern =
   if List.exists (fun p -> p = "..") parts then
     Error (Error.Runtime { message = "glob pattern must not contain '..'" })
   else
-    let* hits = collect (module FS : FS) ~roots ~depth:0 root parts in
-    Ok (sort_unique hits)
+    let+ hits = collect (module FS : FS) ~roots ~depth:0 root parts in
+    sort_unique hits

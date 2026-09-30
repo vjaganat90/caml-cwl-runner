@@ -31,7 +31,8 @@ Each `lib/*.mli` is the module’s contract. `lib/cwl.ml` is CommandLineTool
 execute. `bin/main.ml` is flags plus `Eio_main.run` — no CWL logic.
 
 `(module R)` on `Cwl.run` is a capability (filesystem + spawn) passed in,
-not a global. `let*` is `Result.bind`. Tests pack a fake `RUNTIME` or
+not a global. `open Error.Syntax` gives `let*` (bind) and `let+` (map) over
+`(_, Error.t) result`. Tests pack a fake `RUNTIME` or
 `Glob.FS`; spawn tests wrap `Eio_main.run`.
 
 Effectful holes are module arguments: `(module Expr.ENGINE)`,

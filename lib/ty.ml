@@ -4,8 +4,7 @@
     documents or spawn. *)
 
 include Data.Type
-
-let ( let* ) = Error.( let* )
+open Error.Syntax
 
 let default_binding =
   {
@@ -58,16 +57,14 @@ let rec map f = function
 
 let rec map_result f = function
   | Varray xs ->
-      let ( let* ) = Error.( let* ) in
-      let* xs = Error.map_list (map_result f) xs in
-      Ok (Varray xs)
+      let+ xs = Error.map_list (map_result f) xs in
+      Varray xs
   | Vrecord kvs ->
-      let ( let* ) = Error.( let* ) in
       let* kvs =
         Error.map_list
           (fun (k, v) ->
-            let* v = map_result f v in
-            Ok (k, v))
+            let+ v = map_result f v in
+            (k, v))
           kvs
       in
       Ok (Vrecord kvs)
@@ -80,7 +77,6 @@ let rec fold f acc = function
 
 let rec fold_map f acc = function
   | Varray xs ->
-      let ( let* ) = Error.( let* ) in
       let rec go acc acc_xs = function
         | [] -> Ok (Varray (List.rev acc_xs), acc)
         | x :: xs ->
@@ -89,7 +85,6 @@ let rec fold_map f acc = function
       in
       go acc [] xs
   | Vrecord kvs ->
-      let ( let* ) = Error.( let* ) in
       let rec go acc acc_kvs = function
         | [] -> Ok (Vrecord (List.rev acc_kvs), acc)
         | (k, v) :: rest ->
@@ -223,8 +218,8 @@ and value_of_tree param ty doc =
   | File, Untyped_tree.Object kvs -> parse_file_object param kvs
   | Directory, Untyped_tree.Object kvs -> parse_directory_object param kvs
   | Array { items; _ }, Untyped_tree.Array xs ->
-      let* xs = Error.map_list (value_of_tree param items) xs in
-      Ok (Varray xs)
+      let+ xs = Error.map_list (value_of_tree param items) xs in
+      Varray xs
   | _, Untyped_tree.Null ->
       if is_optional ty then Ok Vnull else fail (type_name ty)
   | _ -> fail (type_name ty)
