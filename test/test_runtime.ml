@@ -50,7 +50,7 @@ let process_env_table () =
       include Local
 
       let spawn ~env cwd _stdio _argv =
-        seen := env;
+        seen := Cwl.Runtime.env_list env;
         cwd_seen := cwd;
         Ok 0
     end in

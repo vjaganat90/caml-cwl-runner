@@ -1,2 +1,3 @@
 # Passing ids for test/oracle/tests.yaml. Written by scripts/conformance.py --update.
+docker_home_tmpdir
 stdout_capture_control
