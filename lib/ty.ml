@@ -348,6 +348,21 @@ let add_opt name conv v fields =
 let file_uri loc =
   if String.starts_with ~prefix:"file:" loc then loc else "file://" ^ loc
 
+let file_fields (f : file) =
+  [ ("class", json_string "File") ]
+  |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
+  |> add_opt "path" json_string f.path
+  |> add_opt "basename" json_string f.basename
+  |> add_opt "nameroot" json_string f.nameroot
+  |> add_opt "nameext" json_string f.nameext
+  |> add_opt "checksum" json_string f.checksum
+  |> add_opt "size" Int64.to_string f.size
+
+let dir_fields (d : directory) =
+  [ ("class", json_string "Directory") ]
+  |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
+  |> add_opt "path" json_string d.path
+
 let rec to_json = function
   | Vnull -> "null"
   | Vbool true -> "true"
@@ -357,50 +372,18 @@ let rec to_json = function
       if Float.is_integer f && Float.abs f < 1e15 then Printf.sprintf "%.0f" f
       else string_of_float f
   | Vstring s -> json_string s
-  | Vfile f ->
-      [ ("class", json_string "File") ]
-      |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
-      |> add_opt "path" json_string f.path
-      |> add_opt "basename" json_string f.basename
-      |> add_opt "nameroot" json_string f.nameroot
-      |> add_opt "nameext" json_string f.nameext
-      |> add_opt "checksum" json_string f.checksum
-      |> add_opt "size" Int64.to_string f.size
-      |> json_object
-  | Vdir d ->
-      [ ("class", json_string "Directory") ]
-      |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
-      |> add_opt "path" json_string d.path
-      |> json_object
+  | Vfile f -> json_object (file_fields f)
+  | Vdir d -> json_object (dir_fields d)
   | Varray xs -> "[" ^ String.concat "," (List.map to_json xs) ^ "]"
   | Vrecord kvs -> json_object (List.map (fun (k, v) -> (k, to_json v)) kvs)
 
 let object_to_json obj = to_json (Vrecord obj)
+let by_key fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields
 
 let rec to_json_sorted = function
   | Varray xs -> "[" ^ String.concat "," (List.map to_json_sorted xs) ^ "]"
   | Vrecord kvs ->
-      let kvs = List.sort (fun (a, _) (b, _) -> String.compare a b) kvs in
-      json_object (List.map (fun (k, v) -> (k, to_json_sorted v)) kvs)
-  | Vfile f ->
-      let fields =
-        [ ("class", json_string "File") ]
-        |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
-        |> add_opt "path" json_string f.path
-        |> add_opt "basename" json_string f.basename
-        |> add_opt "nameroot" json_string f.nameroot
-        |> add_opt "nameext" json_string f.nameext
-        |> add_opt "checksum" json_string f.checksum
-        |> add_opt "size" Int64.to_string f.size
-      in
-      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-      json_object fields
-  | Vdir d ->
-      let fields =
-        [ ("class", json_string "Directory") ]
-        |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
-        |> add_opt "path" json_string d.path
-      in
-      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-      json_object fields
+      json_object (List.map (fun (k, v) -> (k, to_json_sorted v)) (by_key kvs))
+  | Vfile f -> json_object (by_key (file_fields f))
+  | Vdir d -> json_object (by_key (dir_fields d))
   | v -> to_json v
