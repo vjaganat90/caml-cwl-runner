@@ -215,7 +215,7 @@ type docker_spec = {
 
 let mount_target s =
   match Schema.Container_outdir.of_string s with
-  | Ok path -> Ok (Schema.Container_outdir.to_string path)
+  | Ok path -> Ok (path :> string)
   | Error message -> rt_err ("docker mount path " ^ message)
 
 let docker_mount ~host ~workdir =
@@ -365,7 +365,7 @@ let docker ?console env (req : Schema.docker) =
       let workdir =
         match req.output_directory with
         | None -> cwd
-        | Some path -> Schema.Container_outdir.to_string path
+        | Some path -> (path :> string)
       in
       let* source, workdir = docker_mount ~host:cwd ~workdir in
       let* tmp = docker_mount ~host:tool.tmpdir ~workdir:tool.tmpdir in
