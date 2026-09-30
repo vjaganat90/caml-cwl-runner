@@ -106,11 +106,13 @@ other `Error.t` → 1.
 
 ## CommandLineTool execute
 
-`ccr [--outdir DIR] [--quiet] [--version] PROCESS [JOB]`. No JOB means an
+`ccr [--outdir DIR] [--quiet] [--rm-tmpdir | --leave-tmpdir] [--version] PROCESS [JOB]`. No JOB means an
 empty input object. JSON owns stdout. Tool stdout/stderr named by the tool
 are files in `outdir`; uncaptured streams go to `ccr`'s stderr. Usage errors
-are exit 1. `--outdir` omitted → `mkdtemp`,
-left on disk. `--quiet` hides diagnostics, not errors.
+are exit 1. `--outdir` omitted → `mkdtemp`, left on disk because it holds
+the outputs. The tool's `TMPDIR` is deleted when the run ends, success or
+failure, unless `--leave-tmpdir` (cwltool's default and flags). `--quiet`
+hides diagnostics, not errors.
 
 ```mermaid
 sequenceDiagram
@@ -295,8 +297,7 @@ over those files.
 
 Current default in parentheses.
 
-1. `--rm-tmpdir` — leave dirs, or delete temp outdirs on success.
-2. Directory input staging — resolved source path, no copy, or recursive
+1. Directory input staging — resolved source path, no copy, or recursive
    copy with InitialWorkDir.
 
 ---
