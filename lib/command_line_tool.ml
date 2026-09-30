@@ -3,8 +3,7 @@
     spawn. *)
 
 include Data.Command_line_tool
-
-let ( let* ) = Error.( let* )
+open Error.Syntax
 
 let implemented_tool_keys =
   [
@@ -82,8 +81,8 @@ let parse_success_codes v =
   match v with
   | Untyped_tree.Null -> Ok [ 0 ]
   | Untyped_tree.Int _ | Untyped_tree.Float _ ->
-      let* n = one "successCodes" v in
-      Ok [ n ]
+      let+ n = one "successCodes" v in
+      [ n ]
   | Untyped_tree.Array xs ->
       let rec go i acc = function
         | [] -> Ok (List.rev acc)

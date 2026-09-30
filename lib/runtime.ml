@@ -1,6 +1,8 @@
 (** Stage files and spawn processes. The local body is Eio; tests pack a fake.
     Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
 
+open Error.Syntax
+
 type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
 
 type stdio = {
@@ -173,7 +175,6 @@ let filesystem eio (console : console) launch =
           | _ -> Ok ())
 
     let spawn env cwd (stdio : stdio) argv =
-      let ( let* ) = Result.bind in
       if argv = [] then rt_err "empty argv"
       else
         let* () = reject_stdio_symlink "stdin" stdio.stdin_file in
@@ -218,13 +219,12 @@ let mount_target s =
   | Error message -> rt_err ("docker mount path " ^ message)
 
 let docker_mount ~host ~workdir =
-  let ( let* ) = Error.( let* ) in
   let* source =
     try Ok (Unix.realpath host) with exn -> rt_err (Printexc.to_string exn)
   in
   let* source = mount_target source in
-  let* workdir = mount_target workdir in
-  Ok (source, workdir)
+  let+ workdir = mount_target workdir in
+  (source, workdir)
 
 let docker_run_argv spec argv =
   [
@@ -257,7 +257,6 @@ let client_env bin =
     :: List.filter (fun e -> not (String.starts_with ~prefix:"PATH=" e)) host
 
 let run_docker eio console argv =
-  let ( let* ) = Error.( let* ) in
   let out = Filename.temp_file "ccr-docker-" ".txt" in
   let bin = match argv with b :: _ -> b | [] -> "" in
   let* code =
@@ -277,11 +276,10 @@ let is_http s =
   || String.starts_with ~prefix:"https://" s
 
 let fetch env console source =
-  let ( let* ) = Error.( let* ) in
   if is_http source then
     let dest = Filename.temp_file "ccr-docker-" ".img" in
-    let* _ = run_docker env console [ "curl"; "-fsSL"; "-o"; dest; source ] in
-    Ok dest
+    let+ _ = run_docker env console [ "curl"; "-fsSL"; "-o"; dest; source ] in
+    dest
   else if Sys.file_exists source then Ok source
   else rt_err (Printf.sprintf "docker image source not found: %s" source)
 
@@ -324,12 +322,11 @@ let tag_of name contents =
   | None -> Printf.sprintf "ccr:%x" (Hashtbl.hash contents)
 
 let prepare_image env console image =
-  let ( let* ) = Error.( let* ) in
   let bin = docker_executable () in
   match image with
   | Schema.Pull name ->
-      let* _ = run_docker env console [ bin; "pull"; name ] in
-      Ok name
+      let+ _ = run_docker env console [ bin; "pull"; name ] in
+      name
   | Schema.Image_id id -> Ok id
   | Schema.Load { source; name } -> (
       let* path = fetch env console source in
@@ -347,8 +344,8 @@ let prepare_image env console image =
       let* path = fetch env console source in
       let* tar = gunzip_if_needed path in
       let tag = tag_of name source in
-      let* _ = run_docker env console [ bin; "import"; tar; tag ] in
-      Ok tag
+      let+ _ = run_docker env console [ bin; "import"; tar; tag ] in
+      tag
   | Schema.Dockerfile { contents; tag } ->
       let dir = Filename.temp_dir "ccr-docker-" "" in
       let dockerfile = Filename.concat dir "Dockerfile" in
@@ -356,11 +353,10 @@ let prepare_image env console image =
       Out_channel.output_string oc contents;
       Out_channel.close oc;
       let tag = tag_of tag contents in
-      let* _ = run_docker env console [ bin; "build"; "-t"; tag; dir ] in
-      Ok tag
+      let+ _ = run_docker env console [ bin; "build"; "-t"; tag; dir ] in
+      tag
 
 let docker ?console env (req : Schema.docker) =
-  let ( let* ) = Error.( let* ) in
   let console = Option.value console ~default:(default_console env) in
   filesystem env console (fun (tool : tool_env) cwd argv ->
       let* tag = prepare_image env console req.image in

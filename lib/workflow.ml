@@ -2,8 +2,7 @@
     [of_tree] accepts [class: Workflow] and reports it unimplemented. *)
 
 include Data.Workflow
-
-let ( let* ) = Error.( let* )
+open Error.Syntax
 
 let of_tree tree =
   match tree with
