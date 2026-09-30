@@ -1,0 +1,273 @@
+# Expected outputs are written by scripts/oracle.py from cwltool 3.2.20260413085819
+# (pinned in scripts/requirements.txt). Do not edit them by hand.
+- id: stdout_capture_control
+  doc: Control case ccr already passes, so a harness break shows up as a regression.
+  tool: stdout-capture.cwl
+  job: stdout-capture.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$f572d396fae9206628714fb2ce00f72e94f2258f
+      size: 6
+      location: out.txt
+- id: array_no_binding
+  doc: An array input with no inputBinding contributes nothing to argv.
+  tool: array-no-binding.cwl
+  job: xs-ab.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$adc83b19e793491b1c6ea0fd8b46cd9f32e592fc
+      size: 1
+      location: out.txt
+- id: array_value_from
+  doc: valueFrom on an array binding replaces the items.
+  tool: array-value-from.cwl
+  job: xs-ab.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$7448d8798a4380162d4b56f9b452e2f6f9e24e7a
+      size: 2
+      location: out.txt
+- id: array_empty_prefix
+  doc: An empty array with a prefix emits nothing, not a bare prefix.
+  tool: array-empty-prefix.cwl
+  job: xs-empty.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$adc83b19e793491b1c6ea0fd8b46cd9f32e592fc
+      size: 1
+      location: out.txt
+- id: default_location_tool_relative
+  doc: A relative location in a default resolves against the tool document.
+  tool: default-location/tool.cwl
+  job: empty.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$3a2b541e724c8e42677a307afa959f495834cd7f
+      size: 20
+      location: out.txt
+- id: stage_not_globbed
+  doc: Staged inputs are not outputs; the glob sees only what the tool wrote.
+  tool: stage-not-globbed.cwl
+  job: a-txt.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    outs:
+    - basename: b.txt
+      class: File
+      checksum: sha1$da39a3ee5e6b4b0d3255bfef95601890afd80709
+      size: 0
+      location: b.txt
+- id: same_basename_inputs
+  doc: Two inputs with the same basename from different directories are valid.
+  tool: same-basename.cwl
+  job: same-basename.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$c708d7ef841f7e1748436b8ef5670d0b2de1a227
+      size: 8
+      location: out.txt
+- id: percent_encoded_location
+  doc: location is a URI; percent escapes decode (%61 is a).
+  tool: percent-location.cwl
+  job: percent-location.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$3620f0704e803d65098e5f2b836633b166e25474
+      size: 6
+      location: out.txt
+- id: yaml12_plain_no_is_string
+  doc: CWL documents are YAML 1.2, where a plain `no` is a string.
+  tool: yaml12-string.cwl
+  job: yaml12-string.yml
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$49dddb3b048c671676b4519855d137e37cf71fdc
+      size: 3
+      location: out.txt
+- id: long_above_2_53
+  doc: A long above 2^53 keeps every digit.
+  tool: long-exact.cwl
+  job: long-exact.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$f10103406584fa8f92a041ef5be0dba5af06226e
+      size: 17
+      location: out.txt
+- id: arguments_expression
+  doc: A string in arguments containing $(...) is an expression.
+  tool: arguments-expression.cwl
+  job: a-txt.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$4745372841d407b1e13cfbf4a055380a60032614
+      size: 6
+      location: out.txt
+- id: staged_path_absolute
+  doc: A staged File's path is absolute.
+  tool: path-absolute.cwl
+  job: a-txt.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$cddf460aea579224cfc280f82f19d5a605d8c9a3
+      size: 9
+      location: out.txt
+- id: staged_location_uri
+  doc: A staged File's location is a file URI.
+  tool: location-uri.cwl
+  job: a-txt.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$96daf2385f8504a74253bd661b8d7b804045697a
+      size: 4
+      location: out.txt
+- id: map_form_union
+  doc: In the map form of inputs, a list value is a union type.
+  tool: map-union.cwl
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$adc83b19e793491b1c6ea0fd8b46cd9f32e592fc
+      size: 1
+      location: out.txt
+- id: directory_relative_location
+  doc: A Directory with a relative location is usable from the tool's cwd.
+  tool: dir-relative.cwl
+  job: dir-relative.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$70cbb989f1e9a2d6fb7b811a4f35047c1148d7b7
+      size: 11
+      location: out.txt
+- id: docker_home_tmpdir
+  doc: In a container, HOME is the outdir and the working directory, and TMPDIR is a writable directory.
+  tool: docker-home-tmpdir.cwl
+  tags:
+  - command_line_tool
+  - oracle
+  - docker
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$e60bdfaba2da51fbdca4a229608860cfef435370
+      size: 15
+      location: out.txt
+- id: docker_home_tmpdir_directory
+  doc: In a container, HOME is the outdir, TMPDIR exists, and Directory inputs are visible.
+  tool: docker-env.cwl
+  job: dir-relative.json
+  tags:
+  - command_line_tool
+  - oracle
+  - docker
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$58e2f7f3e33f61f41b6b5080a6242a6e00509891
+      size: 26
+      location: out.txt
+- id: record_input_binding
+  doc: Record fields bind like inputs.
+  tool: record-input.cwl
+  job: record-input.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$6fcf9dfbd479ed82697fee719b9f8c610a11ff2a
+      size: 2
+      location: out.txt
+- id: output_secondary_files
+  doc: Output secondaryFiles are collected next to the primary.
+  tool: secondary-output.cwl
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    f:
+      basename: a.txt
+      class: File
+      checksum: sha1$da39a3ee5e6b4b0d3255bfef95601890afd80709
+      size: 0
+      secondaryFiles:
+      - basename: a.txt.idx
+        class: File
+        size: 0
+        checksum: sha1$da39a3ee5e6b4b0d3255bfef95601890afd80709
+        location: a.txt.idx
+      location: a.txt

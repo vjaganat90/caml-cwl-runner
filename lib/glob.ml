@@ -2,14 +2,8 @@
     ([**], reject [..], roots) live here. Runtime only implements [FS]; this
     module does not spawn or touch Eio. *)
 
-module type FS = sig
-  val exists : string -> bool
-  val is_dir : string -> bool
-  val read_dir : string -> (string list, Error.t) result
-  val realpath : string -> (string, Error.t) result
-end
-
-let ( let* ) = Error.( let* )
+include Data.Glob
+open Error.Syntax
 
 let join a b =
   if a = "" || a = "." then b
@@ -111,13 +105,11 @@ let may_list (module FS : FS) ~roots dir =
   | Ok rp -> Ok (in_roots ~roots rp)
 
 let rec collect (module FS : FS) ~roots ~depth dir parts =
-  if depth > max_glob_depth then
-    Error (Error.Runtime { message = "glob exceeded directory depth" })
+  if depth > max_glob_depth then Error.runtime "glob exceeded directory depth"
   else
     match parts with
     | [] -> if FS.exists dir then Ok [ dir ] else Ok []
-    | ".." :: _ ->
-        Error (Error.Runtime { message = "glob pattern must not contain '..'" })
+    | ".." :: _ -> Error.runtime "glob pattern must not contain '..'"
     | "**" :: rest ->
         let* zero = collect (module FS : FS) ~roots ~depth dir rest in
         if not (FS.is_dir dir) then Ok zero
@@ -178,7 +170,7 @@ let glob (module FS : FS) ?roots root pattern =
   in
   let* parts = relativize ~root pattern in
   if List.exists (fun p -> p = "..") parts then
-    Error (Error.Runtime { message = "glob pattern must not contain '..'" })
+    Error.runtime "glob pattern must not contain '..'"
   else
-    let* hits = collect (module FS : FS) ~roots ~depth:0 root parts in
-    Ok (sort_unique hits)
+    let+ hits = collect (module FS : FS) ~roots ~depth:0 root parts in
+    sort_unique hits
