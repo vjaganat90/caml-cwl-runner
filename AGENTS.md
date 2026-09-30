@@ -2,8 +2,11 @@
 
 CWL v1.2.1 runner in OCaml 5.5. Binary: `ccr`.
 
-Spec, then the v1.2 conformance tests, then cwltool only for a disputed
-corner. Not a cwltool port.
+Source of truth, in order: the CWL v1.2 spec (CommandLineTool, Workflow,
+Process, `invocation.md`) and the Schema Salad spec, then the v1.2
+conformance tests in `vendor/cwl-v1.2`. cwltool decides only what the spec
+leaves open. Not a cwltool port: match its behavior where the spec is
+silent, don't copy its code.
 
 CLI: `ccr [tool] [job]`. On success, print the output object as JSON on
 stdout. Exit 33 means an unimplemented feature was required. Any other
@@ -44,8 +47,7 @@ An unimplemented CWL construct is a `diagnostic`. In requirements it is
 fatal at execute (exit 33). In hints it is reported and execution
 continues. It is never omitted.
 
-A JavaScript engine and a vendored `cwl-v1.2` tree are added in the module
-that uses them, not before.
+A JavaScript engine is added in the module that uses it, not before.
 
 ## Tests
 
@@ -53,11 +55,39 @@ Alcotest only. Invariants in types and signatures first. Example fixtures
 and QCheck2 properties via `qcheck-alcotest`. No ppx generators.
 `execute_edges` is one runner over fixture files.
 
+Conformance is measured, not asserted:
+
+- `scripts/conformance.py` runs cwltest on `vendor/cwl-v1.2`, and
+  `--suite oracle` runs `test/oracle`. With `--baseline REF` it also runs
+  the suite against ccr built at REF and fails if a test passing there no
+  longer passes. CI uses the PR's base branch.
+- A PR that makes ids pass names them, with the spec section it
+  implements, in the PR body.
+- An expected CWL output comes from the conformance suite or from a
+  `test/oracle` case, never from memory. An oracle case quotes the spec
+  sentences that pin its output (`ccr:spec`, `ccr:quote`), or says what the
+  spec leaves open (`ccr:unspecified`) and takes cwltool's output, recorded
+  by `scripts/oracle.py`. New CWL-behavior cases go in `test/oracle`.
+  Alcotest fixtures cover internal contracts.
+- When cwltool or a v1.2 test contradicts the spec, the spec wins: the
+  oracle case keeps the quoted output, the v1.2 test stays failing, and the
+  PR quotes the spec. Don't bend ccr to match.
+- Done means `dune runtest` passes and both suites pass
+  `--baseline origin/main`.
+- Reading budget: `_build/conformance/<suite>.status` lists every id with
+  its status. Read one failing test's tool and job and the one spec section
+  it needs, not a whole spec file.
+
 ## Commands
 
 ```
+git submodule update --init
 opam switch create . ocaml-base-compiler.5.5.0 --no-install
 dune build && dune runtest
 dune exec -- ccr --version
 dune fmt
+pip install cwltest cwltool                   # conformance and oracle only
+scripts/conformance.py [--baseline REF]       # v1.2 suite
+scripts/conformance.py --suite oracle         # spec-quoted probes
+scripts/oracle.py [--check] [ID ...]          # check authorities, consult cwltool
 ```
