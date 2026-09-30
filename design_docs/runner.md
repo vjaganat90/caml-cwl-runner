@@ -103,8 +103,10 @@ other `Error.t` → 1.
 
 ## CommandLineTool execute
 
-`ccr [--outdir DIR] [--quiet] [--version] PROCESS JOB`. JSON owns stdout.
-Tool stdout/stderr are files in `outdir`. `--outdir` omitted → `mkdtemp`,
+`ccr [--outdir DIR] [--quiet] [--version] PROCESS [JOB]`. No JOB means an
+empty input object. JSON owns stdout. Tool stdout/stderr named by the tool
+are files in `outdir`; uncaptured streams go to `ccr`'s stderr. Usage errors
+are exit 1. `--outdir` omitted → `mkdtemp`,
 left on disk. `--quiet` hides diagnostics, not errors.
 
 ```mermaid
@@ -282,8 +284,7 @@ Current default in parentheses.
 
 1. Checksum on File objects — omit until SHA-1 exists.
 2. `--rm-tmpdir` — leave dirs, or delete temp outdirs on success.
-3. Unspecified tool stderr — `/dev/null`, or inherit `ccr` stderr.
-4. Directory input staging — resolved source path, no copy, or recursive
+3. Directory input staging — resolved source path, no copy, or recursive
    copy with InitialWorkDir.
 
 ---
