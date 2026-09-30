@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5"
+      - run: opam install . --deps-only --with-test -y
+      - run: opam install ocamlformat.0.29.0 -y
+      - run: opam exec -- dune build
+      - run: opam exec -- dune build @fmt
+      - run: opam exec -- dune runtest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install cwltest
+      - name: v1.2 conformance ratchet
+        run: opam exec -- python scripts/conformance.py --suite v1.2
+      - name: cwltool oracle ratchet
+        run: opam exec -- python scripts/conformance.py --suite oracle
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance
+          path: _build/conformance/
