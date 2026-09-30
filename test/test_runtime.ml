@@ -54,7 +54,7 @@ let process_env_table () =
         cwd_seen := cwd;
         Ok 0
     end in
-    Cwl.run (module R) tool job
+    Cwl.run (module R) ~job tool
   in
   (match result with
   | Ok _ -> ()
@@ -92,6 +92,36 @@ let process_env_table () =
         "parent HOME absent" false
         (List.mem ("HOME=" ^ home) !seen)
 
+let no_job_uses_defaults () =
+  match
+    Eio_main.run @@ fun env ->
+    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl")
+  with
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok ann -> lookup_bytes "out" "from-default\n" ann
+
+let contains ~sub s =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
+let uncaptured_output_reaches_console () =
+  let buf = Buffer.create 64 in
+  let result =
+    Eio_main.run @@ fun env ->
+    let console = (Eio.Flow.buffer_sink buf :> Cwl.Runtime.console) in
+    Cwl.run (Cwl.Runtime.local ~console env) (fixture "console.cwl")
+  in
+  (match result with
+  | Error (Cwl.Error.Runtime _) -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok _ -> Alcotest.fail "exit 3 is not a success code");
+  let seen = Buffer.contents buf in
+  Alcotest.(check bool) "stdout" true (contains ~sub:"to-out" seen);
+  Alcotest.(check bool) "stderr" true (contains ~sub:"to-err" seen)
+
 let tests =
   [
     ( "runtime",
@@ -100,5 +130,7 @@ let tests =
         ("confined_rejects_sibling", `Quick, confined_rejects_sibling);
         ("confined_rejects_dotdot", `Quick, confined_rejects_dotdot);
         ("process_env", `Quick, process_env_table);
+        ("no_job_uses_defaults", `Quick, no_job_uses_defaults);
+        ("uncaptured_output", `Quick, uncaptured_output_reaches_console);
       ] );
   ]

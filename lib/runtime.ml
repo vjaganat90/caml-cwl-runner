@@ -55,8 +55,11 @@ let node_of = function
   | `Unknown | `Fifo | `Character_special | `Block_device | `Socket -> `Other
 
 type launch = { cwd : string; argv : string list }
+type console = Eio.Flow.sink_ty Eio.Resource.t
 
-let filesystem env ~launch =
+let default_console env = (Eio.Stdenv.stderr env :> console)
+
+let filesystem env ~(console : console) ~launch =
   let fs = Eio.Stdenv.fs env in
   let cwd_path = Eio.Stdenv.cwd env in
   let proc_mgr = Eio.Stdenv.process_mgr env in
@@ -143,13 +146,11 @@ let filesystem env ~launch =
                           (Eio.Path.open_in ~sw (p f) :> _ Eio.Flow.source)
                     in
                     let open_out = function
-                      | None ->
-                          (Eio.Path.open_out ~sw ~create:`Never (p "/dev/null")
-                            :> _ Eio.Flow.sink)
+                      | None -> console
                       | Some f ->
                           (Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644)
                              (p f)
-                            :> _ Eio.Flow.sink)
+                            :> console)
                     in
                     let env =
                       match launched.argv with
@@ -188,7 +189,9 @@ let tool_env ~outdir ~tmpdir =
   | None -> env
   | Some path -> env @ [ "PATH=" ^ path ]
 
-let local env = filesystem env ~launch:(fun cwd argv -> Ok { cwd; argv })
+let local ?console env =
+  let console = Option.value console ~default:(default_console env) in
+  filesystem env ~console ~launch:(fun cwd argv -> Ok { cwd; argv })
 
 let docker_executable () =
   let candidates =
@@ -346,9 +349,10 @@ let prepare_image env image =
       let* _ = run_docker env [ bin; "build"; "-t"; tag; dir ] in
       Ok tag
 
-let docker env (req : Schema.docker) =
+let docker ?console env (req : Schema.docker) =
   let ( let* ) = Error.( let* ) in
-  filesystem env ~launch:(fun cwd argv ->
+  let console = Option.value console ~default:(default_console env) in
+  filesystem env ~console ~launch:(fun cwd argv ->
       let* tag = prepare_image env req.image in
       let user = Printf.sprintf "%d:%d" (Unix.getuid ()) (Unix.getgid ()) in
       let bin = docker_executable () in
