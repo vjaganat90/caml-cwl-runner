@@ -14,7 +14,8 @@ failure is exit 1.
 
 ## Modules
 
-`.mli` is the contract. ADTs are defined once in private `Data` and
+`.mli` is the contract. ADTs and module signatures (`FS`, `RUNTIME`, `ENGINE`, `FILE`) are defined
+once in private `Data` and
 `include`d into the public modules. Effectful holes are module arguments
 `(module E : ENGINE)`, `(module FS)`, `(module RUNTIME)`,
 `(module FILE)`. Stdlib and `Result.t`. No objects, `Obj`, refs, or
