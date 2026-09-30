@@ -451,7 +451,8 @@ let designated_outdir (tool : Command_line_tool.t) host =
       Schema.Container_outdir.to_string path
   | _ -> host
 
-let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?job tool_path =
+let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?job
+    ?(rm_tmpdir = true) tool_path =
   let* tool, diagnostics = load_command_line_tool tool_path in
   match first_unimplemented_requirement tool with
   | Some feature -> Error (Error.Unsupported { feature })
@@ -473,6 +474,10 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?job tool_path =
       in
       let* tmpdir = R.mkdtemp "ccr-tmp-" in
       let* tmpdir = R.abspath tmpdir in
+      Fun.protect ~finally:(fun () ->
+          if rm_tmpdir then
+            ignore (R.remove_tree tmpdir : (unit, Error.t) result))
+      @@ fun () ->
       let* job_dir, job_raw =
         match job with
         | None -> Ok (Filename.dirname (fst (split_fragment tool_path)), [])

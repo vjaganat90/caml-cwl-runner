@@ -154,6 +154,50 @@ let output_file_checksum () =
            ~sub:(Printf.sprintf "\"checksum\":%S" sum)
            (Cwl.Type.object_to_json ann.value))
 
+(* Runs tmpdir-report.cwl in a fresh outdir. Returns the run result, the
+   tool's TMPDIR, and the outdir. *)
+let tmpdir_run ?rm_tmpdir job =
+  let outdir = Filename.temp_dir "ccr-rm-" "" in
+  let result =
+    Eio_main.run @@ fun env ->
+    Cwl.run (Cwl.Runtime.local env) ~outdir ?rm_tmpdir ~job:(fixture job)
+      (fixture "tmpdir-report.cwl")
+  in
+  let tmpdir =
+    In_channel.with_open_text
+      (Filename.concat outdir "tmpdir.txt")
+      In_channel.input_all
+  in
+  (result, tmpdir, outdir)
+
+let rm_tmpdir_on_success () =
+  let result, tmpdir, outdir = tmpdir_run "tmpdir-ok.json" in
+  (match result with
+  | Ok _ -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e));
+  Alcotest.(check bool) "tmpdir removed" false (Sys.file_exists tmpdir);
+  Alcotest.(check bool)
+    "symlink target kept" true
+    (Sys.file_exists (Filename.concat outdir "tmpdir.txt"))
+
+let rm_tmpdir_on_failure () =
+  let result, tmpdir, _ = tmpdir_run "tmpdir-fail.json" in
+  (match result with
+  | Error (Cwl.Error.Runtime _) -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok _ -> Alcotest.fail "exit 3 is not a success code");
+  Alcotest.(check bool) "tmpdir removed" false (Sys.file_exists tmpdir)
+
+let leave_tmpdir () =
+  let result, tmpdir, _ = tmpdir_run ~rm_tmpdir:false "tmpdir-ok.json" in
+  (match result with
+  | Ok _ -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e));
+  Alcotest.(check bool)
+    "tmpdir kept" true
+    (Sys.file_exists (Filename.concat tmpdir "scratch"));
+  ignore (Sys.command ("rm -rf " ^ Filename.quote tmpdir) : int)
+
 let tests =
   [
     ( "runtime",
@@ -166,5 +210,8 @@ let tests =
         ("uncaptured_output", `Quick, uncaptured_output_reaches_console);
         ("sha1_vectors", `Quick, sha1_vectors);
         ("output_file_checksum", `Quick, output_file_checksum);
+        ("rm_tmpdir_on_success", `Quick, rm_tmpdir_on_success);
+        ("rm_tmpdir_on_failure", `Quick, rm_tmpdir_on_failure);
+        ("leave_tmpdir", `Quick, leave_tmpdir);
       ] );
   ]
