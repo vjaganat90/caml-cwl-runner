@@ -17,9 +17,10 @@ map forms, type DSL, link resolution) → v1.2 conformance tests
 (`vendor/cwl-v1.2`). cwltool decides only what the spec leaves open; where
 it or a conformance test contradicts the spec, the spec wins.
 
-Contracts live in `lib/*.mli`. Private ADTs live once in `lib/data.ml`
-and are `include`d into `Cwl.Error`, `Cwl.Untyped_tree`, `Cwl.Type`,
-`Cwl.Command_line_tool`, `Cwl.Workflow`, `Cwl.Document`, `Cwl.Expr`. If
+Contracts live in `lib/*.mli`. Private ADTs and module signatures live
+once in `lib/data.ml` and are `include`d into `Cwl.Error`,
+`Cwl.Untyped_tree`, `Cwl.Type`, `Cwl.Command_line_tool`, `Cwl.Workflow`,
+`Cwl.Document`, `Cwl.Expr`, `Cwl.Glob`, `Cwl.Runtime`. If
 this file and an `.mli` disagree, the `.mli` wins.
 
 ---
