@@ -451,8 +451,8 @@ let designated_outdir (tool : Command_line_tool.t) host =
       Schema.Container_outdir.to_string path
   | _ -> host
 
-let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?job
-    ?(rm_tmpdir = true) tool_path =
+let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
+    tool_path job =
   let* tool, diagnostics = load_command_line_tool tool_path in
   match first_unimplemented_requirement tool with
   | Some feature -> Error (Error.Unsupported { feature })
@@ -531,7 +531,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?job
       let stderr_file = Option.map (Filename.concat outdir) stderr_name in
       let* code =
         R.spawn
-          ~env:(Runtime.tool_env ~outdir:container ~tmpdir)
+          (Runtime.tool_env ~outdir:container ~tmpdir)
           outdir
           { stdin_file; stdout_file; stderr_file }
           argv

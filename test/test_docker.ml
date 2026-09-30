@@ -324,7 +324,7 @@ let designated_outdir_table () =
         let module R = struct
           include Local
 
-          let spawn ~env:_ cwd _stdio argv =
+          let spawn _env cwd _stdio argv =
             (argv_ok :=
                match case with
                | Host_outdir -> List.mem cwd argv
@@ -360,7 +360,7 @@ let designated_outdir_table () =
         Cwl.run
           (module Local)
           ~docker:(fun _req -> (module R : Cwl.Runtime.RUNTIME))
-          ~job tool
+          tool (Some job)
       in
       if not !argv_ok then
         Alcotest.failf "%s: $(runtime.outdir) was not the designated directory"
@@ -412,7 +412,7 @@ let run_archive_tool ~dir ~fixture_name ~archive () =
   Eio_main.run @@ fun env ->
   let local = Cwl.Runtime.local env in
   let docker image = Cwl.Runtime.docker env image in
-  match Cwl.run local ~docker ~job tool with
+  match Cwl.run local ~docker tool (Some job) with
   | Ok _ -> ()
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
 

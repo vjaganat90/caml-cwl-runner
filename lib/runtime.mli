@@ -38,7 +38,7 @@ module type RUNTIME = sig
   val confined : string list -> string -> (unit, Error.t) result
 
   val spawn :
-    env:tool_env -> string -> stdio -> string list -> (int, Error.t) result
+    tool_env -> string -> stdio -> string list -> (int, Error.t) result
 end
 
 val tool_env : outdir:string -> tmpdir:string -> tool_env
