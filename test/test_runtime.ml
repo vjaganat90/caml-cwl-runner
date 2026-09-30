@@ -122,6 +122,38 @@ let uncaptured_output_reaches_console () =
   Alcotest.(check bool) "stdout" true (contains ~sub:"to-out" seen);
   Alcotest.(check bool) "stderr" true (contains ~sub:"to-err" seen)
 
+let sha1_vectors () =
+  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  let dir = expect_ok (R.mkdtemp "ccr-sha1-") in
+  List.iter
+    (fun (name, body, hex) ->
+      let file = Filename.concat dir name in
+      expect_ok (R.write_file file body);
+      Alcotest.(check string) name hex (expect_ok (R.sha1 file)))
+    [
+      ("empty", "", "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+      ("abc", "abc", "a9993e364706816aba3e25717850c26c9cd0d89d");
+      ( "million-a",
+        String.make 1_000_000 'a',
+        "34aa973cd4c4daa4f61eeb2bdbad27316534016f" );
+    ]
+
+let output_file_checksum () =
+  match
+    Eio_main.run @@ fun env ->
+    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl")
+  with
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok ann ->
+      let f = lookup_file "out" ann in
+      let sum = "sha1$e2fcc2f00a193284d3bcd74d7dfc209f05899362" in
+      Alcotest.(check (option string)) "checksum" (Some sum) f.checksum;
+      Alcotest.(check bool)
+        "in JSON" true
+        (contains
+           ~sub:(Printf.sprintf "\"checksum\":%S" sum)
+           (Cwl.Type.object_to_json ann.value))
+
 let tests =
   [
     ( "runtime",
@@ -132,5 +164,7 @@ let tests =
         ("process_env", `Quick, process_env_table);
         ("no_job_uses_defaults", `Quick, no_job_uses_defaults);
         ("uncaptured_output", `Quick, uncaptured_output_reaches_console);
+        ("sha1_vectors", `Quick, sha1_vectors);
+        ("output_file_checksum", `Quick, output_file_checksum);
       ] );
   ]
