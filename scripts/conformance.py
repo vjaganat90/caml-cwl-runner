@@ -31,6 +31,15 @@ def read_list(path):
         return {line.strip() for line in f if line.strip() and not line.startswith("#")}
 
 
+def read_pin(package):
+    with open(os.path.join(ROOT, "scripts/requirements.txt")) as f:
+        for line in f:
+            name, _, version = line.strip().partition("==")
+            if name == package:
+                return version
+    return None
+
+
 def statuses(junit):
     """Map test id to (status, tags) from cwltest's JUnit report."""
     out = {}
@@ -64,6 +73,12 @@ def main():
     if tool is None:
         subprocess.run(["dune", "build", "./bin/main.exe"], check=True)
         tool = os.path.join(ROOT, "_build/default/bin/main.exe")
+
+    pin = read_pin("cwltest")
+    have = subprocess.run(["cwltest", "--version"], capture_output=True, text=True).stdout.split()
+    if pin and have and have[-1] != pin:
+        print(f"warning: cwltest {have[-1]} is installed but {pin} is pinned; "
+              "results may differ from CI", file=sys.stderr)
 
     work = os.path.join(ROOT, "_build/conformance")
     os.makedirs(work, exist_ok=True)

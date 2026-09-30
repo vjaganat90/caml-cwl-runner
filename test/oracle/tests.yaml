@@ -1,4 +1,5 @@
-# Expected outputs are written by scripts/oracle.py from cwltool. Do not edit them by hand.
+# Expected outputs are written by scripts/oracle.py from cwltool 3.2.20260413085819
+# (pinned in scripts/requirements.txt). Do not edit them by hand.
 - id: stdout_capture_control
   doc: Control case ccr already passes, so a harness break shows up as a regression.
   tool: stdout-capture.cwl
