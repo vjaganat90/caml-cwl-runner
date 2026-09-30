@@ -28,7 +28,6 @@ val fold_map :
   (value * 'a, Error.t) result
 
 val fill_file_paths : value -> value
-val lookup : string -> object_ -> value option
 val value_of_tree : string -> t -> Untyped_tree.value -> (value, Error.t) result
 val object_of_tree : Untyped_tree.value -> (object_, Error.t) result
 

@@ -172,7 +172,9 @@ let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
     | [] -> Ok acc
     | (inp : Schema.input) :: rest ->
         let value =
-          match Ty.lookup inp.id inputs with Some v -> v | None -> Ty.Vnull
+          match List.assoc_opt inp.id inputs with
+          | Some v -> v
+          | None -> Ty.Vnull
         in
         let ctx = { ctx with Expr.self = value } in
         let* acc =
