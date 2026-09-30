@@ -446,8 +446,7 @@ let docker_image (tool : Command_line_tool.t) =
 
 let designated_outdir (tool : Command_line_tool.t) host =
   match docker_image tool with
-  | Some { output_directory = Some path; _ } ->
-      Schema.Container_outdir.to_string path
+  | Some { output_directory = Some path; _ } -> (path :> string)
   | _ -> host
 
 let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
