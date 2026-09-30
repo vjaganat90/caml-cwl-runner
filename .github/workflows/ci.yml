@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5"
+      - run: opam install . --deps-only --with-test -y
+      - run: opam install ocamlformat.0.29.0 -y
+      - run: opam exec -- dune build
+      - run: opam exec -- dune build @fmt
+      - run: opam exec -- dune runtest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install cwltest
+      # On a PR, compare against ccr built from the base branch: a test that
+      # passes there must still pass. On a push to main, just report.
+      - if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --depth=1 origin +refs/heads/$BASE:refs/remotes/origin/$BASE
+        env:
+          BASE: ${{ github.base_ref }}
+      - name: v1.2 conformance
+        run: opam exec -- python scripts/conformance.py --suite v1.2 ${BASE:+--baseline origin/$BASE}
+        env:
+          BASE: ${{ github.base_ref }}
+      - name: oracle authorities
+        run: python scripts/oracle.py --check
+      - name: oracle suite
+        run: opam exec -- python scripts/conformance.py --suite oracle ${BASE:+--baseline origin/$BASE}
+        env:
+          BASE: ${{ github.base_ref }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance
+          path: _build/conformance/
