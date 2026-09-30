@@ -1,7 +1,8 @@
 # Each case names the authority for its expected output. A ccr:spec case
 # quotes the vendored spec sentences that pin it; scripts/oracle.py checks
 # cwltool against it and never rewrites it. A ccr:unspecified case covers
-# behavior the spec leaves open; its output is recorded from cwltool.
+# behavior the spec leaves open; its output is recorded from the cwltool
+# pinned in scripts/requirements.txt.
 $namespaces:
   ccr: https://github.com/vjaganat90/caml-cwl-runner#
 $graph:
