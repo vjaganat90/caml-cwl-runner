@@ -9,7 +9,7 @@
 (generate_opam_files true)
 
 (source
- (github portmac/caml-cwl-runner))
+ (github vjaganat90/caml-cwl-runner))
 
 (authors "caml-cwl-runner contributors")
 
