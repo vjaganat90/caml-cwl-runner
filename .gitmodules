@@ -1,0 +1,3 @@
+[submodule "vendor/cwl-v1.2"]
+	path = vendor/cwl-v1.2
+	url = https://github.com/common-workflow-language/cwl-v1.2
