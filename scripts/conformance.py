@@ -56,6 +56,23 @@ def build_at(ref):
     return build(baseline_worktree())
 
 
+def read_pin(package):
+    with open(os.path.join(ROOT, "scripts/requirements.txt")) as f:
+        for line in f:
+            name, _, version = line.strip().partition("==")
+            if name == package:
+                return version
+    return None
+
+
+def warn_if_unpinned():
+    pin = read_pin("cwltest")
+    have = subprocess.run(["cwltest", "--version"], capture_output=True, text=True).stdout.split()
+    if pin and have and have[-1] != pin:
+        print(f"warning: cwltest {have[-1]} is installed but {pin} is pinned; "
+              "results may differ from CI", file=sys.stderr)
+
+
 def statuses(junit):
     """Map test id to (status, tags) from cwltest's JUnit report."""
     out = {}
@@ -117,6 +134,7 @@ def main():
                     help="also test ccr built at REF; fail if a test passing there does not pass now")
     args = ap.parse_args()
 
+    warn_if_unpinned()
     os.makedirs(WORK, exist_ok=True)
     now = run_suite(args, args.tool or build(ROOT), args.suite)
     summary(args.suite, now)

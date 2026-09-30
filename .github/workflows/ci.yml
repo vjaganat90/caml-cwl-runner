@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install cwltest
+      - run: pip install -c scripts/requirements.txt cwltest
       # On a PR, compare against ccr built from the base branch: a test that
       # passes there must still pass. On a push to main, just report.
       - if: github.event_name == 'pull_request'
