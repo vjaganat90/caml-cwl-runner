@@ -37,20 +37,6 @@ module Sys_file : FILE = struct
 end
 
 let load_string ?path s = of_yaml_string ?path s
-let assoc key = function Object kvs -> List.assoc_opt key kvs | _ -> None
-let object_fields = function Object kvs -> Some kvs | _ -> None
-let as_string = function String s -> Some s | _ -> None
-let as_bool = function Bool b -> Some b | _ -> None
-let as_int = function Int n -> Some n | _ -> None
-
-let as_float = function
-  | Float f -> Some f
-  | Int n -> Some (Int64.to_float n)
-  | _ -> None
-
-let as_list = function Array xs -> Some xs | _ -> None
-let is_null = function Null -> true | _ -> false
-
 let string_field kvs key =
   match List.assoc_opt key kvs with Some (String s) -> Some s | _ -> None
 
