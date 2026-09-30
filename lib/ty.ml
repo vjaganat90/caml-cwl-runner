@@ -127,8 +127,6 @@ let fill_file_paths =
         Vdir { d with path = or_else d.path (file_basename_of d.location) }
     | v -> v)
 
-let lookup key obj = List.assoc_opt key obj
-
 let rec matches ty value =
   match (ty, value) with
   | Null, Vnull -> true
@@ -264,7 +262,7 @@ let apply_defaults_and_check inputs job =
   let rec go acc = function
     | [] -> Ok (List.rev acc)
     | spec :: rest -> (
-        let provided = lookup spec.id job in
+        let provided = List.assoc_opt spec.id job in
         let raw =
           match provided with
           | Some Vnull | None -> (

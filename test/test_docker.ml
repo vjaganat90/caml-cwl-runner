@@ -366,7 +366,7 @@ let designated_outdir_table () =
             match case with
             | Input_container | Input_host -> ()
             | Glob_dir _ -> (
-                match Cwl.Type.lookup "d" ann.value with
+                match List.assoc_opt "d" ann.value with
                 | Some (Cwl.Type.Vdir d) -> (
                     match Cwl.Type.dir_path d with
                     | Some p ->
