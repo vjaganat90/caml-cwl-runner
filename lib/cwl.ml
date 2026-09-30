@@ -13,8 +13,7 @@ module Expr = Expr
 module Bind = Bind
 module Glob = Glob
 module Runtime = Runtime
-
-let ( let* ) = Error.( let* )
+open Error.Syntax
 
 let split_fragment path =
   match String.rindex_opt path '#' with
@@ -41,8 +40,8 @@ let command_line tool_path job_path =
   in
   let cores = Option.value (Command_line_tool.cores_min tool) ~default:1. in
   let runtime = Expr.runtime_with_cores cores in
-  let* argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
-  Ok { Error.value = argv; diagnostics }
+  let+ argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
+  { Error.value = argv; diagnostics }
 
 let rt_err message = Error (Error.Runtime { message })
 
@@ -251,8 +250,8 @@ let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
           with
           | Some d -> Error (Error.Unsupported { feature = d.Error.feature })
           | None ->
-              let* nested = Error.map_list (eval_glob_pattern ctx) glob in
-              Ok (List.concat nested)))
+              let+ nested = Error.map_list (eval_glob_pattern ctx) glob in
+              List.concat nested))
 
 let trim_slash s =
   let n = String.length s in
@@ -306,8 +305,8 @@ let collect_output (module R : Runtime.RUNTIME) ~container outdir roots ctx
     let* groups = Error.map_list (Glob.glob (module R) ~roots outdir) pats in
     let hits = List.concat groups |> List.sort_uniq String.compare in
     let* _ = Error.map_list (R.confined roots) hits in
-    let* v = pack_hits (module R : Runtime.RUNTIME) o.id o.ty hits in
-    Ok (o.id, v)
+    let+ v = pack_hits (module R : Runtime.RUNTIME) o.id o.ty hits in
+    (o.id, v)
 
 let resolve_output_paths ~container outdir v =
   let abs p =
@@ -368,8 +367,33 @@ let confine_value (module R : Runtime.RUNTIME) roots v =
                (Ty.Vfile { f with path = Some path; location = Some path }))
       | Ty.Vdir d ->
           let* path = confine_path (Option.value (Ty.dir_path d) ~default:"") in
-          let* () = node_matches path `Directory (R.stat path) in
-          Ok (Ty.Vdir { path = Some path; location = Some path })
+          let+ () = node_matches path `Directory (R.stat path) in
+          Ty.Vdir { path = Some path; location = Some path }
+      | v -> Ok v)
+    v
+
+let with_checksum (module R : Runtime.RUNTIME) v =
+  Ty.map_result
+    (function
+      | Ty.Vfile f -> (
+          match Ty.file_path f with
+          | None -> Ok (Ty.Vfile f)
+          | Some path ->
+              let* checksum =
+                match f.checksum with
+                | Some _ as c -> Ok c
+                | None ->
+                    let+ hex = R.sha1 path in
+                    Some ("sha1$" ^ hex)
+              in
+              let* size =
+                match f.size with
+                | Some _ as n -> Ok n
+                | None ->
+                    let+ n = R.file_size path in
+                    Some n
+              in
+              Ok (Ty.Vfile { f with checksum; size }))
       | v -> Ok v)
     v
 
@@ -422,11 +446,11 @@ let docker_image (tool : Command_line_tool.t) =
 
 let designated_outdir (tool : Command_line_tool.t) host =
   match docker_image tool with
-  | Some { output_directory = Some path; _ } ->
-      Schema.Container_outdir.to_string path
+  | Some { output_directory = Some path; _ } -> (path :> string)
   | _ -> host
 
-let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
+let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
+    tool_path job =
   let* tool, diagnostics = load_command_line_tool tool_path in
   match first_unimplemented_requirement tool with
   | Some feature -> Error (Error.Unsupported { feature })
@@ -447,10 +471,19 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
         | None -> R.mkdtemp "ccr-"
       in
       let* tmpdir = R.mkdtemp "ccr-tmp-" in
-      let* tmpdir = R.abspath tmpdir in
-      let job_dir = Filename.dirname job_path in
-      let* job_tree = Untyped_tree.load_file job_path in
-      let* job_raw = Type.object_of_tree job_tree in
+      let* tmpdir = R.realpath tmpdir in
+      Fun.protect ~finally:(fun () ->
+          if rm_tmpdir then
+            ignore (R.remove_tree tmpdir : (unit, Error.t) result))
+      @@ fun () ->
+      let* job_dir, job_raw =
+        match job with
+        | None -> Ok (Filename.dirname (fst (split_fragment tool_path)), [])
+        | Some job_path ->
+            let* job_tree = Untyped_tree.load_file job_path in
+            let+ job_raw = Type.object_of_tree job_tree in
+            (Filename.dirname job_path, job_raw)
+      in
       let* inputs =
         Type.apply_defaults_and_check
           (Command_line_tool.input_specs tool)
@@ -469,8 +502,8 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
       let stream_filename named stream default =
         match named with
         | Some s ->
-            let* n = eval_filename ctx s in
-            Ok (Some n)
+            let+ n = eval_filename ctx s in
+            Some n
         | None ->
             if
               List.exists
@@ -489,14 +522,14 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
         match tool.stdin with
         | None -> Ok None
         | Some s ->
-            let* n = eval_filename ctx s in
-            Ok (Some (Filename.concat outdir n))
+            let+ n = eval_filename ctx s in
+            Some (Filename.concat outdir n)
       in
       let stdout_file = Option.map (Filename.concat outdir) stdout_name in
       let stderr_file = Option.map (Filename.concat outdir) stderr_name in
       let* code =
         R.spawn
-          ~env:(Runtime.tool_env ~outdir ~tmpdir)
+          (Runtime.tool_env ~outdir:container ~tmpdir)
           outdir
           { stdin_file; stdout_file; stderr_file }
           argv
@@ -535,5 +568,12 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
                  (module R : Runtime.RUNTIME)
                  ~container outdir glob_roots ctx stdout_name stderr_name)
               tool.outputs
+        in
+        let* outputs =
+          Error.map_list
+            (fun (k, v) ->
+              let+ v = with_checksum (module R : Runtime.RUNTIME) v in
+              (k, v))
+            outputs
         in
         Ok { Error.value = outputs; diagnostics }

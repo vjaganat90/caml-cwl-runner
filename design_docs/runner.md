@@ -12,7 +12,10 @@ Source of truth, in order: CWL v1.2.1 spec
 ([CommandLineTool](https://www.commonwl.org/v1.2/CommandLineTool.html),
 [Workflow](https://www.commonwl.org/v1.2/Workflow.html),
 [invocation.md](https://github.com/common-workflow-language/cwl-v1.2/blob/main/invocation.md))
-→ v1.2 conformance tests → cwltool only for a disputed corner.
+and [Schema Salad](https://www.commonwl.org/v1.2/SchemaSalad.html) (ids,
+map forms, type DSL, link resolution) → v1.2 conformance tests
+(`vendor/cwl-v1.2`) → cwltool, which is the oracle for any expected value
+the suite does not pin.
 
 Contracts live in `lib/*.mli`. Private ADTs live once in `lib/data.ml`
 and are `include`d into `Cwl.Error`, `Cwl.Untyped_tree`, `Cwl.Type`,
@@ -28,7 +31,8 @@ Each `lib/*.mli` is the module’s contract. `lib/cwl.ml` is CommandLineTool
 execute. `bin/main.ml` is flags plus `Eio_main.run` — no CWL logic.
 
 `(module R)` on `Cwl.run` is a capability (filesystem + spawn) passed in,
-not a global. `let*` is `Result.bind`. Tests pack a fake `RUNTIME` or
+not a global. `open Error.Syntax` gives `let*` (bind) and `let+` (map) over
+`(_, Error.t) result`. Tests pack a fake `RUNTIME` or
 `Glob.FS`; spawn tests wrap `Eio_main.run`.
 
 Effectful holes are module arguments: `(module Expr.ENGINE)`,
@@ -103,9 +107,13 @@ other `Error.t` → 1.
 
 ## CommandLineTool execute
 
-`ccr [--outdir DIR] [--quiet] [--version] PROCESS JOB`. JSON owns stdout.
-Tool stdout/stderr are files in `outdir`. `--outdir` omitted → `mkdtemp`,
-left on disk. `--quiet` hides diagnostics, not errors.
+`ccr [--outdir DIR] [--quiet] [--rm-tmpdir | --leave-tmpdir] [--version] PROCESS [JOB]`. No JOB means an
+empty input object. JSON owns stdout. Tool stdout/stderr named by the tool
+are files in `outdir`; uncaptured streams go to `ccr`'s stderr. Usage errors
+are exit 1. `--outdir` omitted → `mkdtemp`, left on disk because it holds
+the outputs. The tool's `TMPDIR` is deleted when the run ends, success or
+failure, unless `--leave-tmpdir` (cwltool's default and flags). `--quiet`
+hides diagnostics, not errors.
 
 ```mermaid
 sequenceDiagram
@@ -173,14 +181,20 @@ else hints, else `1.`).
 
 Emitted Files include `location` (`file://…`), `path`, `basename`,
 `nameroot` / `nameext` (from `basename`; no dot → `nameext` `""`), and
-`size`. No checksum until SHA-1 exists (`Digest` is MD5). Empty outputs
+`size`, and `checksum` (`sha1$…`, from `R.sha1`), on every output File. Empty outputs
 are `{}`. JSON is hand-written from `Type.value`.
 
 Eio is the Runtime body because `Unix.create_process` cannot set child
 cwd and a process-global `chdir` races with future Workflow fibers. The
 tool process receives `HOME` (the outdir), `TMPDIR`, and `PATH` copied
-from the parent. The docker client keeps the invoking environment, and
-prepends its own directory to `PATH` when the binary is absolute.
+from the parent. Each launcher sets the environment of the process it
+starts: locally that is exactly those three variables; under Docker the
+*client* keeps the invoking environment (its config and contexts live under
+the user's `HOME`, and its own directory goes first on `PATH` when the
+binary is absolute), while the *container* gets `--env HOME=<container
+outdir>` and `--env TMPDIR=<tmpdir>`. The tmpdir is the `realpath` of a
+fresh directory and is bind-mounted at that same path. Directory inputs are
+not mounted yet.
 `DockerRequirement` in requirements selects `Runtime.docker`. The image is
 one of `dockerPull`, `dockerImageId`, `dockerLoad`, `dockerImport`, or
 `dockerFile` (Dockerfile contents). `dockerPull` wins when it is set; the
@@ -255,9 +269,6 @@ deleted.
 - **Workflow** — a graph of steps on the same Eio scheduler. Each step
   gets its own `outdir` and `Cwl.run`. ExpressionTool is `ENGINE.eval`,
   no spawn.
-- **`cwl-runner`** — second public name of `ccr` for `cwltest`. The
-  `cwl-v1.2` tree is a git submodule used to run that suite, added when
-  that entrypoint exists.
 
 `$import` and `$include` load local paths and `file://` URIs. An `http`
 target is `Unsupported`. `$graph` selects the fragment on the tool path,
@@ -266,6 +277,15 @@ otherwise the entry `main`. `cwlVersion` is `v1.0`, `v1.1`, or `v1.2`.
 ---
 
 ## Tests
+
+Conformance is a ratchet, not a claim. `scripts/conformance.py` runs
+cwltest over `vendor/cwl-v1.2` and keeps `conformance/v1.2.passing`;
+`--suite oracle` runs `test/oracle`, whose expected outputs
+`scripts/oracle.py` records from cwltool. The oracle ids that do not pass
+are the known deviations from the spec; `conformance/oracle.passing` shows
+which are fixed. Parts of this document describe behavior those cases
+contradict (staging into `outdir`, basename collisions, `location` as a
+path); the cases win.
 
 Alcotest only. QCheck2 via `qcheck-alcotest`. No ppx generators.
 Invariants in types and signatures first (no Yaml past `Untyped_tree`; Bind cannot
@@ -280,10 +300,7 @@ over those files.
 
 Current default in parentheses.
 
-1. Checksum on File objects — omit until SHA-1 exists.
-2. `--rm-tmpdir` — leave dirs, or delete temp outdirs on success.
-3. Unspecified tool stderr — `/dev/null`, or inherit `ccr` stderr.
-4. Directory input staging — resolved source path, no copy, or recursive
+1. Directory input staging — resolved source path, no copy, or recursive
    copy with InitialWorkDir.
 
 ---

@@ -30,6 +30,7 @@
   re
   eio
   eio_main
+  digestif
   (alcotest :with-test)
   (qcheck-core :with-test)
   (qcheck-alcotest :with-test)))

@@ -3,8 +3,8 @@
     CommandLineTool or Workflow and does not spawn. *)
 
 include Data.Schema
+open Error.Syntax
 
-let ( let* ) = Error.( let* )
 let schema_err path message = Error (Error.Schema { path; message })
 
 let parse_cwl_version kvs =
@@ -142,12 +142,12 @@ and parse_cwl_type ~json_path v :
 and parse_type_dsl ~json_path s =
   if String.ends_with ~suffix:"[]" s then
     let inner = String.sub s 0 (String.length s - 2) in
-    let* t, diags = parse_type_dsl ~json_path inner in
-    Ok (Ty.Array { items = t; item_binding = None }, diags)
+    let+ t, diags = parse_type_dsl ~json_path inner in
+    (Ty.Array { items = t; item_binding = None }, diags)
   else if String.ends_with ~suffix:"?" s then
     let inner = String.sub s 0 (String.length s - 1) in
-    let* t, diags = parse_type_dsl ~json_path inner in
-    Ok (Ty.Union [ t; Ty.Null ], diags)
+    let+ t, diags = parse_type_dsl ~json_path inner in
+    (Ty.Union [ t; Ty.Null ], diags)
   else
     match s with
     | "null" -> Ok (Ty.Null, [])
@@ -237,8 +237,8 @@ let parse_input ~json_path ~id_opt v :
         match List.assoc_opt "default" kvs with
         | None -> Ok None
         | Some d ->
-            let* v = parse_default ~param:id ~ty d in
-            Ok (Some v)
+            let+ v = parse_default ~param:id ~ty d in
+            Some v
       in
       let* input_binding, bind_diags =
         match List.assoc_opt "inputBinding" kvs with
@@ -486,8 +486,8 @@ let parse_output_type ~json_path v =
   | Untyped_tree.String "stdout" -> Ok (Ty.File, Stdout, [])
   | Untyped_tree.String "stderr" -> Ok (Ty.File, Stderr, [])
   | _ ->
-      let* t, d = parse_cwl_type ~json_path v in
-      Ok (t, No_stream, d)
+      let+ t, d = parse_cwl_type ~json_path v in
+      (t, No_stream, d)
 
 let parse_output ~json_path ~id_opt v :
     (output * Error.diagnostic list, Error.t) result =

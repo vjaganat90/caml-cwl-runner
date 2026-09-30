@@ -2,8 +2,11 @@
 
 CWL v1.2.1 runner in OCaml 5.5. Binary: `ccr`.
 
-Spec, then the v1.2 conformance tests, then cwltool only for a disputed
-corner. Not a cwltool port.
+Source of truth, in order: the CWL v1.2 spec (CommandLineTool, Workflow,
+Process, `invocation.md`) and the Schema Salad spec, then the v1.2
+conformance tests in `vendor/cwl-v1.2`, then cwltool. cwltool is the oracle
+for any expected value the suite does not pin. Not a cwltool port: match
+its behavior, don't copy its code.
 
 CLI: `ccr [tool] [job]`. On success, print the output object as JSON on
 stdout. Exit 33 means an unimplemented feature was required. Any other
@@ -44,8 +47,7 @@ An unimplemented CWL construct is a `diagnostic`. In requirements it is
 fatal at execute (exit 33). In hints it is reported and execution
 continues. It is never omitted.
 
-A JavaScript engine and a vendored `cwl-v1.2` tree are added in the module
-that uses them, not before.
+A JavaScript engine is added in the module that uses it, not before.
 
 ## Tests
 
@@ -53,11 +55,31 @@ Alcotest only. Invariants in types and signatures first. Example fixtures
 and QCheck2 properties via `qcheck-alcotest`. No ppx generators.
 `execute_edges` is one runner over fixture files.
 
+Conformance is measured, not asserted:
+
+- `scripts/conformance.py` runs cwltest on `vendor/cwl-v1.2` and ratchets
+  `conformance/v1.2.passing`. `--suite oracle` does the same for
+  `test/oracle`. A listed id that stops passing fails CI.
+- A PR that makes ids pass records them with `--update` in the same PR and
+  names them, with the spec section it implements, in the PR body.
+- An expected CWL output comes from the conformance suite or from
+  `scripts/oracle.py` (cwltool). It is never typed by hand. New CWL-behavior
+  cases go in `test/oracle`. Alcotest fixtures cover internal contracts.
+- Done means `dune runtest` and both ratchets pass.
+- Reading budget: `_build/conformance/<suite>.status` lists every id with
+  its status. Read one failing test's tool and job and the one spec section
+  it needs, not a whole spec file.
+
 ## Commands
 
 ```
+git submodule update --init
 opam switch create . ocaml-base-compiler.5.5.0 --no-install
 dune build && dune runtest
 dune exec -- ccr --version
 dune fmt
+pip install -r scripts/requirements.txt       # pinned cwltest, cwltool
+scripts/conformance.py [--tags T] [--update]  # v1.2 suite
+scripts/conformance.py --suite oracle         # cwltool-verified probes
+scripts/oracle.py [ID ...]                    # record expected outputs
 ```
