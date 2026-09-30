@@ -21,6 +21,11 @@ val run :
   (module Runtime.RUNTIME) ->
   ?docker:(Schema.docker -> (module Runtime.RUNTIME)) ->
   ?outdir:string ->
-  string ->
+  ?job:string ->
+  ?rm_tmpdir:bool ->
   string ->
   (Type.object_ Error.annotated, Error.t) result
+(** [run runtime ?job tool]. Without [job] the input object is empty and
+    defaults resolve against the tool's directory. The tool's [TMPDIR] is
+    deleted when the run ends, success or failure, unless [rm_tmpdir] is
+    [false]. The outdir is kept. *)

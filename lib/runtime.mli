@@ -9,6 +9,11 @@ type stdio = {
   stderr_file : string option;
 }
 
+type tool_env = { home : string; tmpdir : string; path : string option }
+(** The environment CWL gives the tool: [HOME] is the designated outdir,
+    [TMPDIR] the designated tmpdir, and [PATH] the parent's when set. Paths are
+    as the tool sees them (container paths under Docker). *)
+
 module type RUNTIME = sig
   include Glob.FS
 
@@ -19,20 +24,35 @@ module type RUNTIME = sig
   val read_file : string -> (string, Error.t) result
   val write_file : string -> string -> (unit, Error.t) result
   val file_size : string -> (int64, Error.t) result
+
+  val sha1 : string -> (string, Error.t) result
+  (** Lowercase hex SHA-1 of the file contents, read in chunks. *)
+
+  val remove_tree : string -> (unit, Error.t) result
+  (** Delete a file or directory tree. Symlinks are unlinked, never followed. A
+      missing path is [Ok ()]. *)
+
   val lstat : string -> node
   val stat : string -> node
   val realpath : string -> (string, Error.t) result
   val confined : string list -> string -> (unit, Error.t) result
 
   val spawn :
-    env:string list -> string -> stdio -> string list -> (int, Error.t) result
+    env:tool_env -> string -> stdio -> string list -> (int, Error.t) result
 end
 
-val tool_env : outdir:string -> tmpdir:string -> string list
-(** [HOME] is [outdir], [TMPDIR] is [tmpdir], and [PATH] is copied from the
-    parent when it is set. No other variable is included. *)
+val tool_env : outdir:string -> tmpdir:string -> tool_env
+(** [PATH] is copied from the parent when it is set. *)
 
-val local : Eio_unix.Stdenv.base -> (module RUNTIME)
+val env_list : tool_env -> string list
+(** [HOME], [TMPDIR], and [PATH] when set, as [NAME=value]. A local tool's whole
+    environment; no other variable is included. *)
+
+type console = Eio.Flow.sink_ty Eio.Resource.t
+(** Where a tool's uncaptured stdout and stderr go. The CLI default is the
+    runner's stderr, so the output JSON keeps stdout to itself. *)
+
+val local : ?console:console -> Eio_unix.Stdenv.base -> (module RUNTIME)
 val docker_executable : unit -> string
 
 type docker_spec = {
@@ -41,6 +61,8 @@ type docker_spec = {
   cwd : string;
   workdir : string;
   image : string;
+  mounts : (string * string) list;  (** Extra [-v source:target] pairs. *)
+  container_env : string list;  (** [NAME=value] set inside the container. *)
 }
 
 val docker_mount :
@@ -54,7 +76,8 @@ val docker_run_argv : docker_spec -> string list -> string list
 (** [docker run] argv. The host [cwd] is bind-mounted at [workdir] and [argv] is
     the suffix: the CWL command in exec form. *)
 
-val docker : Eio_unix.Stdenv.base -> Schema.docker -> (module RUNTIME)
+val docker :
+  ?console:console -> Eio_unix.Stdenv.base -> Schema.docker -> (module RUNTIME)
 (** Same filesystem as [local]. [spawn] acquires the image ([docker pull], an
     existing id, [docker load], [docker import], or [docker build]) then
     [docker run]. The host outdir is bind-mounted at [dockerOutputDirectory] and

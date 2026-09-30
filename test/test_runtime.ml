@@ -50,11 +50,11 @@ let process_env_table () =
       include Local
 
       let spawn ~env cwd _stdio _argv =
-        seen := env;
+        seen := Cwl.Runtime.env_list env;
         cwd_seen := cwd;
         Ok 0
     end in
-    Cwl.run (module R) tool job
+    Cwl.run (module R) ~job tool
   in
   (match result with
   | Ok _ -> ()
@@ -92,6 +92,112 @@ let process_env_table () =
         "parent HOME absent" false
         (List.mem ("HOME=" ^ home) !seen)
 
+let no_job_uses_defaults () =
+  match
+    Eio_main.run @@ fun env ->
+    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl")
+  with
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok ann -> lookup_bytes "out" "from-default\n" ann
+
+let contains ~sub s =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
+let uncaptured_output_reaches_console () =
+  let buf = Buffer.create 64 in
+  let result =
+    Eio_main.run @@ fun env ->
+    let console = (Eio.Flow.buffer_sink buf :> Cwl.Runtime.console) in
+    Cwl.run (Cwl.Runtime.local ~console env) (fixture "console.cwl")
+  in
+  (match result with
+  | Error (Cwl.Error.Runtime _) -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok _ -> Alcotest.fail "exit 3 is not a success code");
+  let seen = Buffer.contents buf in
+  Alcotest.(check bool) "stdout" true (contains ~sub:"to-out" seen);
+  Alcotest.(check bool) "stderr" true (contains ~sub:"to-err" seen)
+
+let sha1_vectors () =
+  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  let dir = expect_ok (R.mkdtemp "ccr-sha1-") in
+  List.iter
+    (fun (name, body, hex) ->
+      let file = Filename.concat dir name in
+      expect_ok (R.write_file file body);
+      Alcotest.(check string) name hex (expect_ok (R.sha1 file)))
+    [
+      ("empty", "", "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+      ("abc", "abc", "a9993e364706816aba3e25717850c26c9cd0d89d");
+      ( "million-a",
+        String.make 1_000_000 'a',
+        "34aa973cd4c4daa4f61eeb2bdbad27316534016f" );
+    ]
+
+let output_file_checksum () =
+  match
+    Eio_main.run @@ fun env ->
+    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl")
+  with
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok ann ->
+      let f = lookup_file "out" ann in
+      let sum = "sha1$e2fcc2f00a193284d3bcd74d7dfc209f05899362" in
+      Alcotest.(check (option string)) "checksum" (Some sum) f.checksum;
+      Alcotest.(check bool)
+        "in JSON" true
+        (contains
+           ~sub:(Printf.sprintf "\"checksum\":%S" sum)
+           (Cwl.Type.object_to_json ann.value))
+
+(* Runs tmpdir-report.cwl in a fresh outdir. Returns the run result, the
+   tool's TMPDIR, and the outdir. *)
+let tmpdir_run ?rm_tmpdir job =
+  let outdir = Filename.temp_dir "ccr-rm-" "" in
+  let result =
+    Eio_main.run @@ fun env ->
+    Cwl.run (Cwl.Runtime.local env) ~outdir ?rm_tmpdir ~job:(fixture job)
+      (fixture "tmpdir-report.cwl")
+  in
+  let tmpdir =
+    In_channel.with_open_text
+      (Filename.concat outdir "tmpdir.txt")
+      In_channel.input_all
+  in
+  (result, tmpdir, outdir)
+
+let rm_tmpdir_on_success () =
+  let result, tmpdir, outdir = tmpdir_run "tmpdir-ok.json" in
+  (match result with
+  | Ok _ -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e));
+  Alcotest.(check bool) "tmpdir removed" false (Sys.file_exists tmpdir);
+  Alcotest.(check bool)
+    "symlink target kept" true
+    (Sys.file_exists (Filename.concat outdir "tmpdir.txt"))
+
+let rm_tmpdir_on_failure () =
+  let result, tmpdir, _ = tmpdir_run "tmpdir-fail.json" in
+  (match result with
+  | Error (Cwl.Error.Runtime _) -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok _ -> Alcotest.fail "exit 3 is not a success code");
+  Alcotest.(check bool) "tmpdir removed" false (Sys.file_exists tmpdir)
+
+let leave_tmpdir () =
+  let result, tmpdir, _ = tmpdir_run ~rm_tmpdir:false "tmpdir-ok.json" in
+  (match result with
+  | Ok _ -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e));
+  Alcotest.(check bool)
+    "tmpdir kept" true
+    (Sys.file_exists (Filename.concat tmpdir "scratch"));
+  ignore (Sys.command ("rm -rf " ^ Filename.quote tmpdir) : int)
+
 let tests =
   [
     ( "runtime",
@@ -100,5 +206,12 @@ let tests =
         ("confined_rejects_sibling", `Quick, confined_rejects_sibling);
         ("confined_rejects_dotdot", `Quick, confined_rejects_dotdot);
         ("process_env", `Quick, process_env_table);
+        ("no_job_uses_defaults", `Quick, no_job_uses_defaults);
+        ("uncaptured_output", `Quick, uncaptured_output_reaches_console);
+        ("sha1_vectors", `Quick, sha1_vectors);
+        ("output_file_checksum", `Quick, output_file_checksum);
+        ("rm_tmpdir_on_success", `Quick, rm_tmpdir_on_success);
+        ("rm_tmpdir_on_failure", `Quick, rm_tmpdir_on_failure);
+        ("leave_tmpdir", `Quick, leave_tmpdir);
       ] );
   ]
