@@ -5,7 +5,16 @@
 include module type of Data.Error
 
 val unimplemented : ?in_requirements:bool -> string -> string -> diagnostic
-val ( let* ) : ('a, t) result -> ('a -> ('b, t) result) -> ('b, t) result
+
+(** [open Error.Syntax] in every module that sequences results. *)
+module Syntax : sig
+  val ( let* ) : ('a, t) result -> ('a -> ('b, t) result) -> ('b, t) result
+  (** Sequence: the rest needs this value. The first [Error] stops it. *)
+
+  val ( let+ ) : ('a, t) result -> ('a -> 'b) -> ('b, t) result
+  (** Last step: transform the value; the transform cannot fail. *)
+end
+
 val map_list : ('a -> ('b, t) result) -> 'a list -> ('b list, t) result
 val pp : Format.formatter -> t -> unit
 val to_string : t -> string
