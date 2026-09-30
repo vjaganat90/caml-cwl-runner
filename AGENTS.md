@@ -86,7 +86,7 @@ opam switch create . ocaml-base-compiler.5.5.0 --no-install
 dune build && dune runtest
 dune exec -- ccr --version
 dune fmt
-pip install cwltest cwltool                   # conformance and oracle only
+pip install -r scripts/requirements.txt       # pinned cwltest, cwltool
 scripts/conformance.py [--baseline REF]       # v1.2 suite
 scripts/conformance.py --suite oracle         # spec-quoted probes
 scripts/oracle.py [--check] [ID ...]          # check authorities, consult cwltool
