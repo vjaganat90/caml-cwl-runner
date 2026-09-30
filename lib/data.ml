@@ -113,11 +113,9 @@ module Schema = struct
     type t = private string
 
     val of_string : string -> (t, string) result
-    val to_string : t -> string
   end = struct
     type t = string
 
-    let to_string s = s
     let control c = c < ' ' || c = '\127'
 
     let of_string path =

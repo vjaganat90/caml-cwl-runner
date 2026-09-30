@@ -90,9 +90,7 @@ let prop_container_outdir =
     (Gen.oneof [ legal_path; Gen.string ])
     (fun path ->
       match Cwl.Schema.Container_outdir.of_string path with
-      | Ok p ->
-          canonical_container path
-          && Cwl.Schema.Container_outdir.to_string p = path
+      | Ok p -> canonical_container path && (p :> string) = path
       | Error _ -> not (canonical_container path))
 
 let container_outdir_cases =
@@ -135,10 +133,7 @@ let container_outdir_table () =
       if canonical_container path <> legal then
         Alcotest.failf "predicate disagrees with %S" path;
       match Cwl.Schema.Container_outdir.of_string path with
-      | Ok got when legal ->
-          Alcotest.(check string)
-            path path
-            (Cwl.Schema.Container_outdir.to_string got)
+      | Ok got when legal -> Alcotest.(check string) path path (got :> string)
       | Ok _ -> Alcotest.failf "accepted %S" path
       | Error _ when not legal -> ()
       | Error message -> Alcotest.failf "rejected %S (%s)" path message)
@@ -158,7 +153,7 @@ let docker_field reqs =
       reqs
   with
   | None -> None
-  | Some path -> Some (Option.map Cwl.Schema.Container_outdir.to_string path)
+  | Some path -> Some (path :> string option)
 
 let docker_output_documents () =
   let cases =
