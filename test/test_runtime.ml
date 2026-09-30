@@ -49,12 +49,12 @@ let process_env_table () =
     let module R = struct
       include Local
 
-      let spawn ~env cwd _stdio _argv =
+      let spawn env cwd _stdio _argv =
         seen := Cwl.Runtime.env_list env;
         cwd_seen := cwd;
         Ok 0
     end in
-    Cwl.run (module R) ~job tool
+    Cwl.run (module R) tool (Some job)
   in
   (match result with
   | Ok _ -> ()
@@ -91,7 +91,7 @@ let local_env_inherits_only_path () =
     Eio_main.run @@ fun env ->
     let (module R : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
     R.spawn
-      ~env:{ home = dir; tmpdir = dir }
+      { home = dir; tmpdir = dir }
       dir
       { stdin_file = None; stdout_file = Some out; stderr_file = None }
       [ "/usr/bin/env" ]
@@ -112,7 +112,7 @@ let local_env_inherits_only_path () =
 let no_job_uses_defaults () =
   match
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl")
+    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl") None
   with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann -> lookup_bytes "out" "from-default\n" ann
@@ -129,7 +129,7 @@ let uncaptured_output_reaches_console () =
   let result =
     Eio_main.run @@ fun env ->
     let console = (Eio.Flow.buffer_sink buf :> Cwl.Runtime.console) in
-    Cwl.run (Cwl.Runtime.local ~console env) (fixture "console.cwl")
+    Cwl.run (Cwl.Runtime.local ~console env) (fixture "console.cwl") None
   in
   (match result with
   | Error (Cwl.Error.Runtime _) -> ()
@@ -158,7 +158,7 @@ let sha1_vectors () =
 let output_file_checksum () =
   match
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl")
+    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl") None
   with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann ->
@@ -177,8 +177,9 @@ let tmpdir_run ?rm_tmpdir job =
   let outdir = Filename.temp_dir "ccr-rm-" "" in
   let result =
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) ~outdir ?rm_tmpdir ~job:(fixture job)
+    Cwl.run (Cwl.Runtime.local env) ~outdir ?rm_tmpdir
       (fixture "tmpdir-report.cwl")
+      (Some (fixture job))
   in
   let tmpdir =
     In_channel.with_open_text
