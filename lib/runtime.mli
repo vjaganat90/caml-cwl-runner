@@ -34,7 +34,6 @@ module type RUNTIME = sig
 
   val lstat : string -> node
   val stat : string -> node
-  val realpath : string -> (string, Error.t) result
   val confined : string list -> string -> (unit, Error.t) result
 
   val spawn :
