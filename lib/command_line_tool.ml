@@ -158,7 +158,6 @@ let of_tree doc =
       let tool =
         {
           cwl_version;
-          class_;
           base_command;
           arguments;
           inputs;
