@@ -17,9 +17,6 @@ let runtime_with_cores cores = { default_runtime with cores }
 let runtime_with ~outdir ~tmpdir ~cores =
   { outdir; tmpdir; cores; ram = default_runtime.ram }
 
-let expr_err message = Error (Error.Expr { message })
-let unsupported feature = Error (Error.Unsupported { feature })
-
 let is_ident_start = function
   | 'A' .. 'Z' | 'a' .. 'z' | '_' -> true
   | _ -> false
@@ -131,7 +128,8 @@ let eval_path ctx root segs =
                ("ram", number_of_float ctx.runtime.ram);
              ])
     | "null" -> Ok Ty.Vnull
-    | other -> expr_err (Printf.sprintf "unknown parameter context '%s'" other)
+    | other ->
+        Error.expr (Printf.sprintf "unknown parameter context '%s'" other)
   in
   let rec step current = function
     | [] -> Ok current
@@ -141,33 +139,34 @@ let eval_path ctx root segs =
         in
         match (current, seg) with
         | Ty.Vnull, _ ->
-            expr_err (Printf.sprintf "cannot look up '%s' on null" key)
+            Error.expr (Printf.sprintf "cannot look up '%s' on null" key)
         | Ty.Vrecord kvs, (Dot k | Quote k) -> (
             match List.assoc_opt k kvs with
             | Some v -> step v rest
-            | None -> expr_err (Printf.sprintf "missing field '%s' in object" k)
-            )
+            | None ->
+                Error.expr (Printf.sprintf "missing field '%s' in object" k))
         | Ty.Vfile f, (Dot k | Quote k) -> (
             match file_field f k with
             | Some v -> step v rest
-            | None -> expr_err (Printf.sprintf "unknown File field '%s'" k))
+            | None -> Error.expr (Printf.sprintf "unknown File field '%s'" k))
         | Ty.Vdir d, (Dot k | Quote k) -> (
             match dir_field d k with
             | Some v -> step v rest
-            | None -> expr_err (Printf.sprintf "unknown Directory field '%s'" k)
-            )
+            | None ->
+                Error.expr (Printf.sprintf "unknown Directory field '%s'" k))
         | Ty.Varray xs, (Dot "length" | Quote "length") when rest = [] ->
             Ok (Ty.Vint (Int64.of_int (List.length xs)))
         | Ty.Varray xs, Index i -> (
             match List.nth_opt xs i with
             | Some v -> step v rest
-            | None -> expr_err (Printf.sprintf "array index %d out of range" i))
+            | None ->
+                Error.expr (Printf.sprintf "array index %d out of range" i))
         | Ty.Vstring s, Index i ->
             if i >= 0 && i < String.length s then
               step (Ty.Vstring (String.make 1 s.[i])) rest
-            else expr_err (Printf.sprintf "string index %d out of range" i)
+            else Error.expr (Printf.sprintf "string index %d out of range" i)
         | _ ->
-            expr_err
+            Error.expr
               (Printf.sprintf "cannot look up '%s' on a %s" key
                  (Ty.value_kind current)))
   in
@@ -211,12 +210,13 @@ let rec scan ctx s i buf =
     let open_c = s.[i + 1] in
     let close_c = if open_c = '(' then ')' else '}' in
     match close_at s (i + 2) 0 open_c close_c None with
-    | None -> expr_err "unclosed parameter reference"
-    | Some _ when open_c = '{' -> unsupported "InlineJavascriptRequirement"
+    | None -> Error.expr "unclosed parameter reference"
+    | Some _ when open_c = '{' ->
+        Error.unsupported "InlineJavascriptRequirement"
     | Some j -> (
         let raw = String.sub s i (j + 1 - i) in
         match parse_param_ref raw with
-        | None -> unsupported "InlineJavascriptRequirement"
+        | None -> Error.unsupported "InlineJavascriptRequirement"
         | Some (root, segs) -> (
             match eval_path ctx root segs with
             | Error _ as e -> e
