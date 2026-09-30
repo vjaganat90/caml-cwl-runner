@@ -50,7 +50,7 @@ let process_env_table () =
       include Local
 
       let spawn ~env cwd _stdio _argv =
-        seen := env;
+        seen := Cwl.Runtime.env_list env;
         cwd_seen := cwd;
         Ok 0
     end in
@@ -67,23 +67,13 @@ let process_env_table () =
         | Some i -> String.sub e 0 i)
       !seen
   in
-  let path = Sys.getenv_opt "PATH" in
-  let expect_names =
-    match path with
-    | None -> [ "HOME"; "TMPDIR" ]
-    | Some _ -> [ "HOME"; "TMPDIR"; "PATH" ]
-  in
-  Alcotest.(check (list string)) "names" expect_names names;
+  Alcotest.(check (list string)) "names" [ "HOME"; "TMPDIR" ] names;
   Alcotest.(check bool)
     "HOME is cwd" true
     (List.mem ("HOME=" ^ !cwd_seen) !seen);
   Alcotest.(check bool)
     "TMPDIR differs" true
     (not (List.mem ("TMPDIR=" ^ !cwd_seen) !seen));
-  (match path with
-  | None -> ()
-  | Some p ->
-      Alcotest.(check bool) "PATH copied" true (List.mem ("PATH=" ^ p) !seen));
   match Sys.getenv_opt "HOME" with
   | None -> ()
   | Some home when home = !cwd_seen -> ()
@@ -91,6 +81,33 @@ let process_env_table () =
       Alcotest.(check bool)
         "parent HOME absent" false
         (List.mem ("HOME=" ^ home) !seen)
+
+(* The local launcher's real process: nothing but HOME, TMPDIR, and the
+   parent's PATH. *)
+let local_env_inherits_only_path () =
+  let dir = Filename.temp_dir "ccr-env-" "" in
+  let out = Filename.concat dir "env.txt" in
+  let code =
+    Eio_main.run @@ fun env ->
+    let (module R : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+    R.spawn
+      ~env:{ home = dir; tmpdir = dir }
+      dir
+      { stdin_file = None; stdout_file = Some out; stderr_file = None }
+      [ "/usr/bin/env" ]
+  in
+  Alcotest.(check (result int reject)) "env ran" (Ok 0) code;
+  let seen =
+    In_channel.with_open_text out In_channel.input_lines
+    |> List.sort String.compare
+  in
+  let path =
+    match Sys.getenv_opt "PATH" with None -> [] | Some p -> [ "PATH=" ^ p ]
+  in
+  Alcotest.(check (list string))
+    "environment"
+    (List.sort String.compare ([ "HOME=" ^ dir; "TMPDIR=" ^ dir ] @ path))
+    seen
 
 let no_job_uses_defaults () =
   match
@@ -206,6 +223,7 @@ let tests =
         ("confined_rejects_sibling", `Quick, confined_rejects_sibling);
         ("confined_rejects_dotdot", `Quick, confined_rejects_dotdot);
         ("process_env", `Quick, process_env_table);
+        ("local_env_inherits_only_path", `Quick, local_env_inherits_only_path);
         ("no_job_uses_defaults", `Quick, no_job_uses_defaults);
         ("uncaptured_output", `Quick, uncaptured_output_reaches_console);
         ("sha1_vectors", `Quick, sha1_vectors);

@@ -186,8 +186,14 @@ are `{}`. JSON is hand-written from `Type.value`.
 Eio is the Runtime body because `Unix.create_process` cannot set child
 cwd and a process-global `chdir` races with future Workflow fibers. The
 tool process receives `HOME` (the outdir), `TMPDIR`, and `PATH` copied
-from the parent. The docker client keeps the invoking environment, and
-prepends its own directory to `PATH` when the binary is absolute.
+from the parent. Each launcher sets the environment of the process it
+starts: locally that is exactly those three variables; under Docker the
+*client* keeps the invoking environment (its config and contexts live under
+the user's `HOME`, and its own directory goes first on `PATH` when the
+binary is absolute), while the *container* gets `--env HOME=<container
+outdir>` and `--env TMPDIR=<tmpdir>`. The tmpdir is the `realpath` of a
+fresh directory and is bind-mounted at that same path. Directory inputs are
+not mounted yet.
 `DockerRequirement` in requirements selects `Runtime.docker`. The image is
 one of `dockerPull`, `dockerImageId`, `dockerLoad`, `dockerImport`, or
 `dockerFile` (Dockerfile contents). `dockerPull` wins when it is set; the
