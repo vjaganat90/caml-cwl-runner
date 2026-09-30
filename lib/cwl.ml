@@ -124,18 +124,14 @@ let stage_leaf (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used =
   | v -> Ok (v, used)
 
 let stage (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used v =
-  Ty.fold_map
-    (stage_leaf (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir)
-    used v
+  Ty.fold_map (stage_leaf (module R) ~container ~outdir ~job_dir) used v
 
 let stage_inputs (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir inputs
     =
   let rec go used acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
-        let* v, used =
-          stage (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used v
-        in
+        let* v, used = stage (module R) ~container ~outdir ~job_dir used v in
         go used ((k, v) :: acc) rest
   in
   go [] [] inputs
@@ -203,8 +199,7 @@ let rec value_of_hit (module R : Runtime.RUNTIME) ty path =
       value_of_hit (module R : Runtime.RUNTIME) items path
   | _ ->
       if dir && is_dir_ty ty then Ok (dir_of path)
-      else if (not dir) && is_file_ty ty then
-        file_of (module R : Runtime.RUNTIME) path
+      else if (not dir) && is_file_ty ty then file_of (module R) path
       else if dir && is_file_ty ty && not (is_dir_ty ty) then
         Error
           (Error.Type { param = path; expected = "File"; got = "Directory" })
@@ -212,7 +207,7 @@ let rec value_of_hit (module R : Runtime.RUNTIME) ty path =
         Error
           (Error.Type { param = path; expected = "Directory"; got = "File" })
       else if dir then Ok (dir_of path)
-      else file_of (module R : Runtime.RUNTIME) path
+      else file_of (module R) path
 
 let pack_hits (module R : Runtime.RUNTIME) id ty hits =
   let optional = Ty.is_optional ty in
@@ -222,15 +217,13 @@ let pack_hits (module R : Runtime.RUNTIME) id ty hits =
   | [], false, true -> Ok Ty.Vnull
   | [], false, false -> Error.runtime (Printf.sprintf "missing output '%s'" id)
   | [], true, _ -> Ok (Ty.Varray [])
-  | [ p ], false, _ -> value_of_hit (module R : Runtime.RUNTIME) inner p
+  | [ p ], false, _ -> value_of_hit (module R) inner p
   | ps, false, _ ->
       Error.runtime
         (Printf.sprintf "output '%s' matched %d paths, expected one" id
            (List.length ps))
   | ps, true, _ ->
-      let* vs =
-        Error.map_list (value_of_hit (module R : Runtime.RUNTIME) inner) ps
-      in
+      let* vs = Error.map_list (value_of_hit (module R) inner) ps in
       Ok (Ty.Varray vs)
 
 let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
@@ -307,7 +300,7 @@ let collect_output (module R : Runtime.RUNTIME) ~container outdir roots ctx
     let* groups = Error.map_list (Glob.glob (module R) ~roots outdir) pats in
     let hits = List.concat groups |> List.sort_uniq String.compare in
     let* _ = Error.map_list (R.confined roots) hits in
-    let+ v = pack_hits (module R : Runtime.RUNTIME) o.id o.ty hits in
+    let+ v = pack_hits (module R) o.id o.ty hits in
     (o.id, v)
 
 let resolve_output_paths ~container outdir v =
@@ -495,9 +488,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
       let cores = Option.value (Command_line_tool.cores_min tool) ~default:1. in
       let container = designated_outdir tool outdir in
       let* inputs =
-        stage_inputs
-          (module R : Runtime.RUNTIME)
-          ~container ~outdir ~job_dir inputs
+        stage_inputs (module R) ~container ~outdir ~job_dir inputs
       in
       let runtime = Expr.runtime_with ~outdir:container ~tmpdir ~cores in
       let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
@@ -560,22 +551,20 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
             let* obj = check_json_outputs tool.outputs obj in
             Error.map_list
               (fun (k, v) ->
-                let* v =
-                  confine_value (module R : Runtime.RUNTIME) [ outdir ] v
-                in
+                let* v = confine_value (module R) [ outdir ] v in
                 Ok (k, v))
               obj
           else
             Error.map_list
               (collect_output
-                 (module R : Runtime.RUNTIME)
+                 (module R)
                  ~container outdir glob_roots ctx stdout_name stderr_name)
               tool.outputs
         in
         let* outputs =
           Error.map_list
             (fun (k, v) ->
-              let+ v = with_checksum (module R : Runtime.RUNTIME) v in
+              let+ v = with_checksum (module R) v in
               (k, v))
             outputs
         in
