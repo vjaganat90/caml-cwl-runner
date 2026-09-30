@@ -2,36 +2,7 @@
     Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
 
 open Error.Syntax
-
-type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
-
-type stdio = {
-  stdin_file : string option;
-  stdout_file : string option;
-  stderr_file : string option;
-}
-
-type tool_env = { home : string; tmpdir : string }
-
-module type RUNTIME = sig
-  include Glob.FS
-
-  val mkdir_p : string -> (unit, Error.t) result
-  val abspath : string -> (string, Error.t) result
-  val mkdtemp : string -> (string, Error.t) result
-  val copy_file : string -> string -> (unit, Error.t) result
-  val read_file : string -> (string, Error.t) result
-  val write_file : string -> string -> (unit, Error.t) result
-  val file_size : string -> (int64, Error.t) result
-  val sha1 : string -> (string, Error.t) result
-  val remove_tree : string -> (unit, Error.t) result
-  val lstat : string -> node
-  val stat : string -> node
-  val confined : string list -> string -> (unit, Error.t) result
-
-  val spawn :
-    tool_env -> string -> stdio -> string list -> (int, Error.t) result
-end
+include Data.Runtime
 
 let wrap f = try Ok (f ()) with exn -> Error.runtime (Printexc.to_string exn)
 
