@@ -100,9 +100,9 @@ let filesystem env ~(console : console) ~launch =
           In_channel.with_open_bin (native s) @@ fun ic ->
           let buf = Bytes.create 65536 in
           let rec go ctx =
-            match In_channel.input ic buf 0 (Bytes.length buf) with
-            | 0 -> ctx
-            | len -> go (Digestif.SHA1.feed_bytes ctx ~off:0 ~len buf)
+            let read = In_channel.input ic buf 0 (Bytes.length buf) in
+            if read = 0 then ctx (* end of file *)
+            else go (Digestif.SHA1.feed_bytes ctx ~off:0 ~len:read buf)
           in
           Digestif.SHA1.(to_hex (get (go empty))))
 
