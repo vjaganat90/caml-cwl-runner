@@ -29,7 +29,7 @@ module type RUNTIME = sig
   val confined : string list -> string -> (unit, Error.t) result
 
   val spawn :
-    env:tool_env -> string -> stdio -> string list -> (int, Error.t) result
+    tool_env -> string -> stdio -> string list -> (int, Error.t) result
 end
 
 let rt_err message = Error (Error.Runtime { message })
@@ -76,7 +76,7 @@ let path_of eio s =
   if Filename.is_relative s then Eio.Stdenv.cwd eio / s
   else Eio.Stdenv.fs eio / s
 
-let run_process eio ~(console : console) { cwd; argv; env }
+let run_process eio (console : console) { cwd; argv; env }
     ({ stdin_file; stdout_file; stderr_file } : stdio) =
   wrap (fun () ->
       Eio.Switch.run @@ fun sw ->
@@ -101,7 +101,7 @@ let run_process eio ~(console : console) { cwd; argv; env }
       | `Exited n -> n
       | `Signaled s -> failwith (Printf.sprintf "process killed by signal %d" s))
 
-let filesystem eio ~(console : console) ~launch =
+let filesystem eio (console : console) launch =
   let p = path_of eio in
   let native s =
     match Eio.Path.native (p s) with
@@ -172,7 +172,7 @@ let filesystem eio ~(console : console) ~launch =
               rt_err (Printf.sprintf "%s destination is a symlink" label)
           | _ -> Ok ())
 
-    let spawn ~env cwd (stdio : stdio) argv =
+    let spawn env cwd (stdio : stdio) argv =
       let ( let* ) = Result.bind in
       if argv = [] then rt_err "empty argv"
       else
@@ -180,12 +180,12 @@ let filesystem eio ~(console : console) ~launch =
         let* () = reject_stdio_symlink "stdout" stdio.stdout_file in
         let* () = reject_stdio_symlink "stderr" stdio.stderr_file in
         let* launched = launch env cwd argv in
-        run_process eio ~console launched stdio
+        run_process eio console launched stdio
   end : RUNTIME)
 
 let local ?console env =
   let console = Option.value console ~default:(default_console env) in
-  filesystem env ~console ~launch:(fun tool cwd argv ->
+  filesystem env console (fun tool cwd argv ->
       Ok { cwd; argv; env = env_list tool @ inherited_path () })
 
 let docker_executable () =
@@ -256,12 +256,12 @@ let client_env bin =
     ("PATH=" ^ path)
     :: List.filter (fun e -> not (String.starts_with ~prefix:"PATH=" e)) host
 
-let run_docker eio ~console argv =
+let run_docker eio console argv =
   let ( let* ) = Error.( let* ) in
   let out = Filename.temp_file "ccr-docker-" ".txt" in
   let bin = match argv with b :: _ -> b | [] -> "" in
   let* code =
-    run_process eio ~console
+    run_process eio console
       { cwd = "/"; argv; env = client_env bin }
       { stdin_file = None; stdout_file = Some out; stderr_file = None }
   in
@@ -276,11 +276,11 @@ let is_http s =
   String.starts_with ~prefix:"http://" s
   || String.starts_with ~prefix:"https://" s
 
-let fetch env ~console source =
+let fetch env console source =
   let ( let* ) = Error.( let* ) in
   if is_http source then
     let dest = Filename.temp_file "ccr-docker-" ".img" in
-    let* _ = run_docker env ~console [ "curl"; "-fsSL"; "-o"; dest; source ] in
+    let* _ = run_docker env console [ "curl"; "-fsSL"; "-o"; dest; source ] in
     Ok dest
   else if Sys.file_exists source then Ok source
   else rt_err (Printf.sprintf "docker image source not found: %s" source)
@@ -323,17 +323,17 @@ let tag_of name contents =
   | Some tag -> tag
   | None -> Printf.sprintf "ccr:%x" (Hashtbl.hash contents)
 
-let prepare_image env ~console image =
+let prepare_image env console image =
   let ( let* ) = Error.( let* ) in
   let bin = docker_executable () in
   match image with
   | Schema.Pull name ->
-      let* _ = run_docker env ~console [ bin; "pull"; name ] in
+      let* _ = run_docker env console [ bin; "pull"; name ] in
       Ok name
   | Schema.Image_id id -> Ok id
   | Schema.Load { source; name } -> (
-      let* path = fetch env ~console source in
-      let* text = run_docker env ~console [ bin; "load"; "-i"; path ] in
+      let* path = fetch env console source in
+      let* text = run_docker env console [ bin; "load"; "-i"; path ] in
       match name with
       | Some tag -> Ok tag
       | None -> (
@@ -344,10 +344,10 @@ let prepare_image env ~console image =
                 (Printf.sprintf "docker load did not name an image: %s"
                    (String.trim text))))
   | Schema.Import { source; name } ->
-      let* path = fetch env ~console source in
+      let* path = fetch env console source in
       let* tar = gunzip_if_needed path in
       let tag = tag_of name source in
-      let* _ = run_docker env ~console [ bin; "import"; tar; tag ] in
+      let* _ = run_docker env console [ bin; "import"; tar; tag ] in
       Ok tag
   | Schema.Dockerfile { contents; tag } ->
       let dir = Filename.temp_dir "ccr-docker-" "" in
@@ -356,14 +356,14 @@ let prepare_image env ~console image =
       Out_channel.output_string oc contents;
       Out_channel.close oc;
       let tag = tag_of tag contents in
-      let* _ = run_docker env ~console [ bin; "build"; "-t"; tag; dir ] in
+      let* _ = run_docker env console [ bin; "build"; "-t"; tag; dir ] in
       Ok tag
 
 let docker ?console env (req : Schema.docker) =
   let ( let* ) = Error.( let* ) in
   let console = Option.value console ~default:(default_console env) in
-  filesystem env ~console ~launch:(fun (tool : tool_env) cwd argv ->
-      let* tag = prepare_image env ~console req.image in
+  filesystem env console (fun (tool : tool_env) cwd argv ->
+      let* tag = prepare_image env console req.image in
       let user = Printf.sprintf "%d:%d" (Unix.getuid ()) (Unix.getgid ()) in
       let bin = docker_executable () in
       let workdir =

@@ -6,7 +6,7 @@ let run outdir quiet rm_tmpdir tool_path job =
   Eio_main.run @@ fun env ->
   let local = Cwl.Runtime.local env in
   let docker image = Cwl.Runtime.docker env image in
-  match Cwl.run local ~docker ?outdir ?job ~rm_tmpdir tool_path with
+  match Cwl.run local ~docker ?outdir ~rm_tmpdir tool_path job with
   | Error (Cwl.Error.Unsupported { feature }) ->
       Printf.eprintf "ccr: unsupported feature: %s\n" feature;
       33
