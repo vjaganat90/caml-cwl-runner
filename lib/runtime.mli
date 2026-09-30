@@ -9,6 +9,11 @@ type stdio = {
   stderr_file : string option;
 }
 
+type tool_env = { home : string; tmpdir : string; path : string option }
+(** The environment CWL gives the tool: [HOME] is the designated outdir,
+    [TMPDIR] the designated tmpdir, and [PATH] the parent's when set. Paths are
+    as the tool sees them (container paths under Docker). *)
+
 module type RUNTIME = sig
   include Glob.FS
 
@@ -33,12 +38,15 @@ module type RUNTIME = sig
   val confined : string list -> string -> (unit, Error.t) result
 
   val spawn :
-    env:string list -> string -> stdio -> string list -> (int, Error.t) result
+    env:tool_env -> string -> stdio -> string list -> (int, Error.t) result
 end
 
-val tool_env : outdir:string -> tmpdir:string -> string list
-(** [HOME] is [outdir], [TMPDIR] is [tmpdir], and [PATH] is copied from the
-    parent when it is set. No other variable is included. *)
+val tool_env : outdir:string -> tmpdir:string -> tool_env
+(** [PATH] is copied from the parent when it is set. *)
+
+val env_list : tool_env -> string list
+(** [HOME], [TMPDIR], and [PATH] when set, as [NAME=value]. A local tool's whole
+    environment; no other variable is included. *)
 
 type console = Eio.Flow.sink_ty Eio.Resource.t
 (** Where a tool's uncaptured stdout and stderr go. The CLI default is the
@@ -53,6 +61,8 @@ type docker_spec = {
   cwd : string;
   workdir : string;
   image : string;
+  mounts : (string * string) list;  (** Extra [-v source:target] pairs. *)
+  container_env : string list;  (** [NAME=value] set inside the container. *)
 }
 
 val docker_mount :

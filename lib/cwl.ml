@@ -473,7 +473,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?job
         | None -> R.mkdtemp "ccr-"
       in
       let* tmpdir = R.mkdtemp "ccr-tmp-" in
-      let* tmpdir = R.abspath tmpdir in
+      let* tmpdir = R.realpath tmpdir in
       Fun.protect ~finally:(fun () ->
           if rm_tmpdir then
             ignore (R.remove_tree tmpdir : (unit, Error.t) result))
@@ -531,7 +531,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?job
       let stderr_file = Option.map (Filename.concat outdir) stderr_name in
       let* code =
         R.spawn
-          ~env:(Runtime.tool_env ~outdir ~tmpdir)
+          ~env:(Runtime.tool_env ~outdir:container ~tmpdir)
           outdir
           { stdin_file; stdout_file; stderr_file }
           argv

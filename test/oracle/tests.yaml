@@ -208,6 +208,20 @@
       checksum: sha1$70cbb989f1e9a2d6fb7b811a4f35047c1148d7b7
       size: 11
       location: out.txt
+- id: docker_home_tmpdir
+  doc: In a container, HOME is the outdir and the working directory, and TMPDIR is a writable directory.
+  tool: docker-home-tmpdir.cwl
+  tags:
+  - command_line_tool
+  - oracle
+  - docker
+  output:
+    out:
+      basename: out.txt
+      class: File
+      checksum: sha1$e60bdfaba2da51fbdca4a229608860cfef435370
+      size: 15
+      location: out.txt
 - id: docker_home_tmpdir_directory
   doc: In a container, HOME is the outdir, TMPDIR exists, and Directory inputs are visible.
   tool: docker-env.cwl

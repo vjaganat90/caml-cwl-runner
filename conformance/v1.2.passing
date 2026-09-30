@@ -9,6 +9,8 @@ cl_empty_array_input
 cl_gen_arrayofarrays
 cl_optional_bindings_provided
 cl_optional_inputs_missing
+docker_entrypoint
+dockeroutputdir
 expr_reference_self_noinput
 glob_outside_outputs_fails
 hints_unknown_ignored
@@ -34,6 +36,8 @@ shelldir_notinterpreted
 stdinout_redirect
 stdinout_redirect_docker
 stdout_redirect_docker
+stdout_redirect_mediumcut_docker
+stdout_redirect_shortcut_docker
 success_codes
 very_big_and_very_floats_nojs
 wf_step_access_undeclared_param
