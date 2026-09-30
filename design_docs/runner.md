@@ -12,7 +12,10 @@ Source of truth, in order: CWL v1.2.1 spec
 ([CommandLineTool](https://www.commonwl.org/v1.2/CommandLineTool.html),
 [Workflow](https://www.commonwl.org/v1.2/Workflow.html),
 [invocation.md](https://github.com/common-workflow-language/cwl-v1.2/blob/main/invocation.md))
-→ v1.2 conformance tests → cwltool only for a disputed corner.
+and [Schema Salad](https://www.commonwl.org/v1.2/SchemaSalad.html) (ids,
+map forms, type DSL, link resolution) → v1.2 conformance tests
+(`vendor/cwl-v1.2`) → cwltool, which is the oracle for any expected value
+the suite does not pin.
 
 Contracts live in `lib/*.mli`. Private ADTs live once in `lib/data.ml`
 and are `include`d into `Cwl.Error`, `Cwl.Untyped_tree`, `Cwl.Type`,
@@ -257,9 +260,6 @@ deleted.
 - **Workflow** — a graph of steps on the same Eio scheduler. Each step
   gets its own `outdir` and `Cwl.run`. ExpressionTool is `ENGINE.eval`,
   no spawn.
-- **`cwl-runner`** — second public name of `ccr` for `cwltest`. The
-  `cwl-v1.2` tree is a git submodule used to run that suite, added when
-  that entrypoint exists.
 
 `$import` and `$include` load local paths and `file://` URIs. An `http`
 target is `Unsupported`. `$graph` selects the fragment on the tool path,
@@ -268,6 +268,15 @@ otherwise the entry `main`. `cwlVersion` is `v1.0`, `v1.1`, or `v1.2`.
 ---
 
 ## Tests
+
+Conformance is a ratchet, not a claim. `scripts/conformance.py` runs
+cwltest over `vendor/cwl-v1.2` and keeps `conformance/v1.2.passing`;
+`--suite oracle` runs `test/oracle`, whose expected outputs
+`scripts/oracle.py` records from cwltool. The oracle ids that do not pass
+are the known deviations from the spec; `conformance/oracle.passing` shows
+which are fixed. Parts of this document describe behavior those cases
+contradict (staging into `outdir`, basename collisions, `location` as a
+path); the cases win.
 
 Alcotest only. QCheck2 via `qcheck-alcotest`. No ppx generators.
 Invariants in types and signatures first (no Yaml past `Untyped_tree`; Bind cannot
