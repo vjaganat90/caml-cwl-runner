@@ -373,6 +373,31 @@ let confine_value (module R : Runtime.RUNTIME) roots v =
       | v -> Ok v)
     v
 
+let with_checksum (module R : Runtime.RUNTIME) v =
+  Ty.map_result
+    (function
+      | Ty.Vfile f -> (
+          match Ty.file_path f with
+          | None -> Ok (Ty.Vfile f)
+          | Some path ->
+              let* checksum =
+                match f.checksum with
+                | Some _ as c -> Ok c
+                | None ->
+                    let* hex = R.sha1 path in
+                    Ok (Some ("sha1$" ^ hex))
+              in
+              let* size =
+                match f.size with
+                | Some _ as n -> Ok n
+                | None ->
+                    let* n = R.file_size path in
+                    Ok (Some n)
+              in
+              Ok (Ty.Vfile { f with checksum; size }))
+      | v -> Ok v)
+    v
+
 let collect_dir_roots acc v =
   Ty.fold
     (fun acc -> function
@@ -540,5 +565,12 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?job tool_path =
                  (module R : Runtime.RUNTIME)
                  ~container outdir glob_roots ctx stdout_name stderr_name)
               tool.outputs
+        in
+        let* outputs =
+          Error.map_list
+            (fun (k, v) ->
+              let* v = with_checksum (module R : Runtime.RUNTIME) v in
+              Ok (k, v))
+            outputs
         in
         Ok { Error.value = outputs; diagnostics }

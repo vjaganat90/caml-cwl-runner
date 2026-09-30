@@ -19,6 +19,7 @@ module type RUNTIME = sig
   val read_file : string -> (string, Error.t) result
   val write_file : string -> string -> (unit, Error.t) result
   val file_size : string -> (int64, Error.t) result
+  val sha1 : string -> (string, Error.t) result
   val lstat : string -> node
   val stat : string -> node
   val realpath : string -> (string, Error.t) result
@@ -93,6 +94,17 @@ let filesystem env ~(console : console) ~launch =
       wrap (fun () ->
           let st = Eio.Path.stat ~follow:true (p s) in
           Optint.Int63.to_int64 st.size)
+
+    let sha1 s =
+      wrap (fun () ->
+          In_channel.with_open_bin (native s) @@ fun ic ->
+          let buf = Bytes.create 65536 in
+          let rec go ctx =
+            match In_channel.input ic buf 0 (Bytes.length buf) with
+            | 0 -> ctx
+            | len -> go (Digestif.SHA1.feed_bytes ctx ~off:0 ~len buf)
+          in
+          Digestif.SHA1.(to_hex (get (go empty))))
 
     let lstat s =
       try node_of (Eio.Path.kind ~follow:false (p s)) with _ -> `Other
