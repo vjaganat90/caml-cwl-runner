@@ -23,6 +23,10 @@ module type RUNTIME = sig
   val sha1 : string -> (string, Error.t) result
   (** Lowercase hex SHA-1 of the file contents, read in chunks. *)
 
+  val remove_tree : string -> (unit, Error.t) result
+  (** Delete a file or directory tree. Symlinks are unlinked, never followed. A
+      missing path is [Ok ()]. *)
+
   val lstat : string -> node
   val stat : string -> node
   val realpath : string -> (string, Error.t) result

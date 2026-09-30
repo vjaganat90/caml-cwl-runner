@@ -20,6 +20,7 @@ module type RUNTIME = sig
   val write_file : string -> string -> (unit, Error.t) result
   val file_size : string -> (int64, Error.t) result
   val sha1 : string -> (string, Error.t) result
+  val remove_tree : string -> (unit, Error.t) result
   val lstat : string -> node
   val stat : string -> node
   val realpath : string -> (string, Error.t) result
@@ -105,6 +106,8 @@ let filesystem env ~(console : console) ~launch =
             else go (Digestif.SHA1.feed_bytes ctx ~off:0 ~len:read buf)
           in
           Digestif.SHA1.(to_hex (get (go empty))))
+
+    let remove_tree s = wrap (fun () -> Eio.Path.rmtree ~missing_ok:true (p s))
 
     let lstat s =
       try node_of (Eio.Path.kind ~follow:false (p s)) with _ -> `Other
