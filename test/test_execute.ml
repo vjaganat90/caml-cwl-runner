@@ -5,7 +5,7 @@ open Harness
 
 let run_tool tool job =
   Eio_main.run @@ fun env ->
-  Cwl.run (Cwl.Runtime.local env) (fixture tool) (fixture job)
+  Cwl.run (Cwl.Runtime.local env) (fixture tool) (Some (fixture job))
 
 type outcome =
   | Expect_ok of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
@@ -209,7 +209,7 @@ let run_edge (e : edge) () =
       Eio_main.run @@ fun env ->
       let local = Cwl.Runtime.local env in
       let docker image = Cwl.Runtime.docker env image in
-      Cwl.run local ~docker (fixture e.tool) (fixture e.job)
+      Cwl.run local ~docker (fixture e.tool) (Some (fixture e.job))
   in
   match result with
   | Ok ann -> (
@@ -261,7 +261,7 @@ let planted_symlink_runtime ~prefix ~link_name ~tool ~job () =
   expect_ok (R.mkdir_p outdir);
   expect_ok (R.write_file outside "keep\n");
   Unix.symlink outside (Filename.concat outdir link_name);
-  match Cwl.run (module R) ~outdir (fixture tool) (fixture job) with
+  match Cwl.run (module R) ~outdir (fixture tool) (Some (fixture job)) with
   | Error (Cwl.Error.Runtime _) ->
       Alcotest.(check string)
         "outside unchanged" "keep\n"
@@ -294,7 +294,7 @@ let output_under_outdir =
           (module R)
           ~outdir
           (fixture "echo-stdout.cwl")
-          (fixture "echo-job.json")
+          (Some (fixture "echo-job.json"))
       with
       | Error e -> Alcotest.fail (Cwl.Error.to_string e)
       | Ok ann ->

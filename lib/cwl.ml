@@ -373,6 +373,31 @@ let confine_value (module R : Runtime.RUNTIME) roots v =
       | v -> Ok v)
     v
 
+let with_checksum (module R : Runtime.RUNTIME) v =
+  Ty.map_result
+    (function
+      | Ty.Vfile f -> (
+          match Ty.file_path f with
+          | None -> Ok (Ty.Vfile f)
+          | Some path ->
+              let* checksum =
+                match f.checksum with
+                | Some _ as c -> Ok c
+                | None ->
+                    let* hex = R.sha1 path in
+                    Ok (Some ("sha1$" ^ hex))
+              in
+              let* size =
+                match f.size with
+                | Some _ as n -> Ok n
+                | None ->
+                    let* n = R.file_size path in
+                    Ok (Some n)
+              in
+              Ok (Ty.Vfile { f with checksum; size }))
+      | v -> Ok v)
+    v
+
 let collect_dir_roots acc v =
   Ty.fold
     (fun acc -> function
@@ -426,7 +451,8 @@ let designated_outdir (tool : Command_line_tool.t) host =
       Schema.Container_outdir.to_string path
   | _ -> host
 
-let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
+let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
+    tool_path job =
   let* tool, diagnostics = load_command_line_tool tool_path in
   match first_unimplemented_requirement tool with
   | Some feature -> Error (Error.Unsupported { feature })
@@ -447,10 +473,19 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
         | None -> R.mkdtemp "ccr-"
       in
       let* tmpdir = R.mkdtemp "ccr-tmp-" in
-      let* tmpdir = R.abspath tmpdir in
-      let job_dir = Filename.dirname job_path in
-      let* job_tree = Untyped_tree.load_file job_path in
-      let* job_raw = Type.object_of_tree job_tree in
+      let* tmpdir = R.realpath tmpdir in
+      Fun.protect ~finally:(fun () ->
+          if rm_tmpdir then
+            ignore (R.remove_tree tmpdir : (unit, Error.t) result))
+      @@ fun () ->
+      let* job_dir, job_raw =
+        match job with
+        | None -> Ok (Filename.dirname (fst (split_fragment tool_path)), [])
+        | Some job_path ->
+            let* job_tree = Untyped_tree.load_file job_path in
+            let* job_raw = Type.object_of_tree job_tree in
+            Ok (Filename.dirname job_path, job_raw)
+      in
       let* inputs =
         Type.apply_defaults_and_check
           (Command_line_tool.input_specs tool)
@@ -496,7 +531,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
       let stderr_file = Option.map (Filename.concat outdir) stderr_name in
       let* code =
         R.spawn
-          ~env:(Runtime.tool_env ~outdir ~tmpdir)
+          (Runtime.tool_env ~outdir:container ~tmpdir)
           outdir
           { stdin_file; stdout_file; stderr_file }
           argv
@@ -535,5 +570,12 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir tool_path job_path =
                  (module R : Runtime.RUNTIME)
                  ~container outdir glob_roots ctx stdout_name stderr_name)
               tool.outputs
+        in
+        let* outputs =
+          Error.map_list
+            (fun (k, v) ->
+              let* v = with_checksum (module R : Runtime.RUNTIME) v in
+              Ok (k, v))
+            outputs
         in
         Ok { Error.value = outputs; diagnostics }
