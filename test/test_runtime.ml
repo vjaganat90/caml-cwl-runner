@@ -82,6 +82,22 @@ let process_env_table () =
         "parent HOME absent" false
         (List.mem ("HOME=" ^ home) !seen)
 
+(* A runtime call made in a cancelled fiber stops the fiber. It must not
+   come back as an [Error] the caller could carry on from. *)
+let cancellation_passes_through () =
+  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  let _, root = runtime_setup (module R) in
+  let file = Filename.concat root "a.txt" in
+  expect_ok (R.write_file file "x");
+  match
+    Eio.Cancel.sub (fun context ->
+        Eio.Cancel.cancel context Exit;
+        R.read_file file)
+  with
+  | exception Eio.Cancel.Cancelled Exit -> ()
+  | Ok _ -> Alcotest.fail "read_file ran in a cancelled fiber"
+  | Error e -> Alcotest.failf "cancellation became %s" (Cwl.Error.to_string e)
+
 (* The local launcher's real process: nothing but HOME, TMPDIR, and the
    parent's PATH. *)
 let local_env_inherits_only_path () =
@@ -224,6 +240,7 @@ let tests =
         ("confined_rejects_sibling", `Quick, confined_rejects_sibling);
         ("confined_rejects_dotdot", `Quick, confined_rejects_dotdot);
         ("process_env", `Quick, process_env_table);
+        ("cancellation_passes_through", `Quick, cancellation_passes_through);
         ("local_env_inherits_only_path", `Quick, local_env_inherits_only_path);
         ("no_job_uses_defaults", `Quick, no_job_uses_defaults);
         ("uncaptured_output", `Quick, uncaptured_output_reaches_console);
