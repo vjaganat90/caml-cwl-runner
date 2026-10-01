@@ -1,7 +1,7 @@
-(** Nested YAML/JSON file contents, before CWL types. The only file reader.
-    [load] resolves local [$import] and [$include]. Does not leak [Yaml.value].
-    Default [FILE] is [In_channel]. Not [Document] (CommandLineTool | Workflow)
-    and not [Type.value]. *)
+(** Nested YAML/JSON file contents, before CWL types. The only document reader.
+    [load] resolves local [$import] and [$include], reading every file through
+    the [FILE] it is given. Does not leak [Yaml.value]. Not [Document]
+    (CommandLineTool | Workflow) and not [Type.value]. *)
 
 include Data.Untyped_tree
 open Error.Syntax
@@ -26,15 +26,6 @@ let of_yaml_string ?(path = "") s =
   | Error (`Msg msg) ->
       let path = if path = "" then None else Some path in
       Error (Error.Parse { path; message = msg })
-
-module Sys_file : FILE = struct
-  let read path =
-    try Ok (In_channel.with_open_text path In_channel.input_all) with
-    | Sys_error msg -> Error (Error.Parse { path = Some path; message = msg })
-    | exn ->
-        Error
-          (Error.Parse { path = Some path; message = Printexc.to_string exn })
-end
 
 let load_string ?path s = of_yaml_string ?path s
 
@@ -156,7 +147,9 @@ and resolve_object (module F : FILE) ~base ~stack kvs =
       if List.mem path stack then
         Error.schema path ("import cycle involving " ^ path)
       else
-        match F.read path with Error _ as e -> e | Ok text -> Ok (String text))
+        match F.read_file path with
+        | Error _ as e -> e
+        | Ok text -> Ok (String text))
   | Some _, None | None, Some _ ->
       Error.schema "$import" "$import and $include must be strings"
   | None, None ->
@@ -174,7 +167,7 @@ and splice (module F : FILE) ~base ~stack ~feature uri =
   if List.mem path stack then
     Error.schema path ("import cycle involving " ^ path)
   else
-    match F.read path with
+    match F.read_file path with
     | Error _ as e -> e
     | Ok text -> (
         match of_yaml_string ~path text with
@@ -185,9 +178,7 @@ and splice (module F : FILE) ~base ~stack ~feature uri =
               ~base:(`File path) ~stack:(path :: stack) tree)
 
 let load (module F : FILE) path =
-  let* text = F.read path in
+  let* text = F.read_file path in
   let* tree = of_yaml_string ~path text in
   let path = normalize path in
   resolve (module F : FILE) ~base:(`File path) ~stack:[ path ] tree
-
-let load_file path = load (module Sys_file) path

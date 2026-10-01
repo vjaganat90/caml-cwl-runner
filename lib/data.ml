@@ -35,7 +35,7 @@ module Untyped_tree = struct
     | Object of (string * value) list
 
   module type FILE = sig
-    val read : string -> (string, Error.t) result
+    val read_file : string -> (string, Error.t) result
   end
 end
 
@@ -246,9 +246,9 @@ module Runtime = struct
 
   module type READ = sig
     include Glob.FS
+    include Untyped_tree.FILE
 
     val abspath : string -> (string, Error.t) result
-    val read_file : string -> (string, Error.t) result
     val file_size : string -> (int64, Error.t) result
 
     val sha1 : string -> (string, Error.t) result

@@ -64,7 +64,9 @@ let prop_docker_argv_suffix =
 let prop_docker_diagnosed =
   Test.make ~name:"unimplemented keys are diagnosed" ~count:1 Gen.unit
     (fun () ->
-      match Cwl.Untyped_tree.load_file (fixture "docker-diagnosed.cwl") with
+      match
+        Cwl.Untyped_tree.load (module Sys_file) (fixture "docker-diagnosed.cwl")
+      with
       | Error _ -> false
       | Ok tree -> (
           match Cwl.Command_line_tool.of_tree tree with

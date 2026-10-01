@@ -15,7 +15,11 @@ module Glob : module type of Glob
 module Runtime : module type of Runtime
 
 val command_line :
-  string -> string -> (string list Error.annotated, Error.t) result
+  (module Untyped_tree.FILE) ->
+  string ->
+  string ->
+  (string list Error.annotated, Error.t) result
+(** [command_line file tool job]. *)
 
 val run :
   (module Runtime.RUNTIME) ->

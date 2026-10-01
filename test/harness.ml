@@ -174,8 +174,16 @@ let lookup_dir id ann =
       | None -> Alcotest.fail "Directory missing path")
   | _ -> Alcotest.fail "expected Directory"
 
+(* Reads fixtures for tests that load a document without a runtime. *)
+module Sys_file : Cwl.Untyped_tree.FILE = struct
+  let read_file path =
+    try Ok (In_channel.with_open_text path In_channel.input_all)
+    with Sys_error message ->
+      Error (Cwl.Error.Parse { path = Some path; message })
+end
+
 let command_line tool job =
-  match Cwl.command_line (fixture tool) (fixture job) with
+  match Cwl.command_line (module Sys_file) (fixture tool) (fixture job) with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann -> ann
 

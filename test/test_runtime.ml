@@ -82,6 +82,31 @@ let process_env_table () =
         "parent HOME absent" false
         (List.mem ("HOME=" ^ home) !seen)
 
+(* Cwl.run reads the tool and the job through the runtime it is given, so a
+   fake sees every document read. *)
+let documents_load_through_runtime () =
+  let dir = Filename.temp_dir "ccr-load-" "" in
+  let tool = copy_fixture dir "true.cwl" "tool.cwl" in
+  let job = Filename.concat dir "job.json" in
+  Out_channel.with_open_text job (fun oc -> output_string oc "{}\n");
+  let read = ref [] in
+  let result =
+    Eio_main.run @@ fun env ->
+    let (module Local : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+    let module R = struct
+      include Local
+
+      let read_file path =
+        read := path :: !read;
+        Local.read_file path
+    end in
+    Cwl.run (module R) tool (Some job)
+  in
+  (match result with
+  | Ok _ -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e));
+  Alcotest.(check (list string)) "documents read" [ tool; job ] (List.rev !read)
+
 (* A runtime call made in a cancelled fiber stops the fiber. It must not
    come back as an [Error] the caller could carry on from. *)
 let cancellation_passes_through () =
@@ -241,6 +266,9 @@ let tests =
         ("confined_rejects_dotdot", `Quick, confined_rejects_dotdot);
         ("process_env", `Quick, process_env_table);
         ("cancellation_passes_through", `Quick, cancellation_passes_through);
+        ( "documents_load_through_runtime",
+          `Quick,
+          documents_load_through_runtime );
         ("local_env_inherits_only_path", `Quick, local_env_inherits_only_path);
         ("no_job_uses_defaults", `Quick, no_job_uses_defaults);
         ("uncaptured_output", `Quick, uncaptured_output_reaches_console);
