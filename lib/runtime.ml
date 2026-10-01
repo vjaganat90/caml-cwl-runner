@@ -53,6 +53,22 @@ let path_of eio s =
   if Filename.is_relative s then Eio.Stdenv.cwd eio / s
   else Eio.Stdenv.fs eio / s
 
+(* The few blocking calls Eio has no operation for run on a system thread:
+   the calling fiber waits, the others keep running. *)
+let blocking f = Eio_unix.run_in_systhread f
+
+let host_realpath path =
+  wrap (fun () -> blocking (fun () -> Unix.realpath path))
+
+let temp_dir prefix =
+  wrap (fun () -> blocking (fun () -> Filename.temp_dir prefix ""))
+
+let temp_file prefix suffix =
+  wrap (fun () -> blocking (fun () -> Filename.temp_file prefix suffix))
+
+let is_file eio path =
+  try Eio.Path.is_file (path_of eio path) with Eio.Io _ -> false
+
 let run_process eio (console : console) { cwd; argv; env }
     ({ stdin_file; stdout_file; stderr_file } : stdio) =
   wrap (fun () ->
@@ -101,7 +117,7 @@ let filesystem eio (console : console) launch =
       wrap (fun () -> Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 (p s))
 
     let abspath s = wrap (fun () -> native s)
-    let mkdtemp prefix = wrap (fun () -> Filename.temp_dir prefix "")
+    let mkdtemp prefix = temp_dir prefix
     let read_file s = wrap (fun () -> Eio.Path.load (p s))
 
     let write_file s data =
@@ -114,7 +130,9 @@ let filesystem eio (console : console) launch =
 
     let sha1 s =
       wrap (fun () ->
-          In_channel.with_open_bin (native s) @@ fun ic ->
+          let path = native s in
+          blocking @@ fun () ->
+          In_channel.with_open_bin path @@ fun ic ->
           let buf = Bytes.create 65536 in
           let rec go ctx =
             let read = In_channel.input ic buf 0 (Bytes.length buf) in
@@ -138,7 +156,10 @@ let filesystem eio (console : console) launch =
           Error.runtime
             (Printf.sprintf "copy source is not a regular file: %s" src)
 
-    let realpath s = wrap (fun () -> Unix.realpath (native s))
+    let realpath s =
+      let* path = wrap (fun () -> native s) in
+      host_realpath path
+
     let confined roots path = confined_using realpath roots path
 
     let reject_stdio_symlink label = function
@@ -164,7 +185,7 @@ let local ?console env =
   filesystem env console (fun tool cwd argv ->
       Ok { cwd; argv; env = env_list tool @ inherited_path () })
 
-let docker_executable () =
+let docker_executable eio =
   let candidates =
     [
       "/Applications/Docker.app/Contents/Resources/bin/docker";
@@ -172,11 +193,14 @@ let docker_executable () =
       "/usr/local/bin/docker";
     ]
   in
-  if Sys.command "command -v docker >/dev/null 2>&1" = 0 then "docker"
-  else
-    match List.find_opt Sys.file_exists candidates with
-    | Some path -> path
-    | None -> "docker"
+  let on_path =
+    Option.value (Sys.getenv_opt "PATH") ~default:""
+    |> String.split_on_char ':'
+    |> List.exists (fun dir ->
+        dir <> "" && is_file eio (Filename.concat dir "docker"))
+  in
+  if on_path then "docker"
+  else Option.value (List.find_opt (is_file eio) candidates) ~default:"docker"
 
 type docker_spec = {
   bin : string;
@@ -194,10 +218,7 @@ let mount_target s =
   | Error message -> Error.runtime ("docker mount path " ^ message)
 
 let docker_mount ~host ~workdir =
-  let* source =
-    try Ok (Unix.realpath host)
-    with exn -> Error.runtime (Printexc.to_string exn)
-  in
+  let* source = host_realpath host in
   let* source = mount_target source in
   let+ workdir = mount_target workdir in
   (source, workdir)
@@ -221,8 +242,10 @@ let docker_run_argv spec argv =
    contexts, and credential helpers live under the user's HOME. When [bin] is
    an absolute path, its directory goes first on PATH so helpers installed
    beside it are found. *)
+let host_env () = Array.to_list (Unix.environment ())
+
 let client_env bin =
-  let host = Array.to_list (Unix.environment ()) in
+  let host = host_env () in
   if Filename.is_relative bin then host
   else
     let dir = Filename.dirname bin in
@@ -233,15 +256,19 @@ let client_env bin =
     :: List.filter (fun e -> not (String.starts_with ~prefix:"PATH=" e)) host
 
 let run_docker eio console argv =
-  let out = Filename.temp_file "ccr-docker-" ".txt" in
+  let* out = temp_file "ccr-docker-" ".txt" in
   let bin = match argv with b :: _ -> b | [] -> "" in
-  let* code =
-    run_process eio console
-      { cwd = "/"; argv; env = client_env bin }
-      { stdin_file = None; stdout_file = Some out; stderr_file = None }
+  let captured =
+    let* code =
+      run_process eio console
+        { cwd = "/"; argv; env = client_env bin }
+        { stdin_file = None; stdout_file = Some out; stderr_file = None }
+    in
+    let+ text = wrap (fun () -> Eio.Path.load (path_of eio out)) in
+    (code, text)
   in
-  let text = In_channel.with_open_bin out In_channel.input_all in
-  Sys.remove out;
+  ignore (wrap (fun () -> Eio.Path.unlink (path_of eio out)) : (unit, _) result);
+  let* code, text = captured in
   if code <> 0 then
     Error.runtime
       (Printf.sprintf "docker command failed (%d): %s" code (String.trim text))
@@ -253,20 +280,20 @@ let is_http s =
 
 let fetch env console source =
   if is_http source then
-    let dest = Filename.temp_file "ccr-docker-" ".img" in
+    let* dest = temp_file "ccr-docker-" ".img" in
     let+ _ = run_docker env console [ "curl"; "-fsSL"; "-o"; dest; source ] in
     dest
-  else if Sys.file_exists source then Ok source
+  else if is_file env source then Ok source
   else Error.runtime (Printf.sprintf "docker image source not found: %s" source)
 
-let gunzip_if_needed path =
+let gunzip_if_needed eio console path =
   if String.ends_with ~suffix:".gz" path || String.ends_with ~suffix:".tgz" path
   then
-    let dest = Filename.temp_file "ccr-docker-" ".tar" in
-    let code =
-      Sys.command
-        (Printf.sprintf "gzip -dc %s > %s" (Filename.quote path)
-           (Filename.quote dest))
+    let* dest = temp_file "ccr-docker-" ".tar" in
+    let* code =
+      run_process eio console
+        { cwd = "/"; argv = [ "gzip"; "-dc"; path ]; env = host_env () }
+        { stdin_file = None; stdout_file = Some dest; stderr_file = None }
     in
     if code <> 0 then Error.runtime (Printf.sprintf "gunzip failed (%d)" code)
     else Ok dest
@@ -298,7 +325,7 @@ let tag_of name contents =
   | None -> Printf.sprintf "ccr:%x" (Hashtbl.hash contents)
 
 let prepare_image env console image =
-  let bin = docker_executable () in
+  let bin = docker_executable env in
   match image with
   | Schema.Pull name ->
       let+ _ = run_docker env console [ bin; "pull"; name ] in
@@ -318,16 +345,17 @@ let prepare_image env console image =
                    (String.trim text))))
   | Schema.Import { source; name } ->
       let* path = fetch env console source in
-      let* tar = gunzip_if_needed path in
+      let* tar = gunzip_if_needed env console path in
       let tag = tag_of name source in
       let+ _ = run_docker env console [ bin; "import"; tar; tag ] in
       tag
   | Schema.Dockerfile { contents; tag } ->
-      let dir = Filename.temp_dir "ccr-docker-" "" in
-      let dockerfile = Filename.concat dir "Dockerfile" in
-      let oc = Out_channel.open_text dockerfile in
-      Out_channel.output_string oc contents;
-      Out_channel.close oc;
+      let* dir = temp_dir "ccr-docker-" in
+      let dockerfile = path_of env (Filename.concat dir "Dockerfile") in
+      let* () =
+        wrap (fun () ->
+            Eio.Path.save ~create:(`Exclusive 0o644) dockerfile contents)
+      in
       let tag = tag_of tag contents in
       let+ _ = run_docker env console [ bin; "build"; "-t"; tag; dir ] in
       tag
@@ -337,7 +365,7 @@ let docker ?console env (req : Schema.docker) =
   filesystem env console (fun (tool : tool_env) cwd argv ->
       let* tag = prepare_image env console req.image in
       let user = Printf.sprintf "%d:%d" (Unix.getuid ()) (Unix.getgid ()) in
-      let bin = docker_executable () in
+      let bin = docker_executable env in
       let workdir =
         match req.output_directory with
         | None -> cwd
