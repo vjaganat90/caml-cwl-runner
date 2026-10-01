@@ -79,7 +79,7 @@ let resolve ~job_dir loc =
   let loc = strip_file_uri loc in
   if Filename.is_relative loc then Filename.concat job_dir loc else loc
 
-let stage_leaf (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used =
+let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
   function
   | Ty.Vfile f ->
       let src = Option.map (resolve ~job_dir) (Ty.file_loc f) in
@@ -123,11 +123,10 @@ let stage_leaf (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used =
       Ok (Ty.Vdir { location = Some src; path = Some src }, used)
   | v -> Ok (v, used)
 
-let stage (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir used v =
+let stage (module R : Runtime.WRITE) ~container ~outdir ~job_dir used v =
   Ty.fold_map (stage_leaf (module R) ~container ~outdir ~job_dir) used v
 
-let stage_inputs (module R : Runtime.RUNTIME) ~container ~outdir ~job_dir inputs
-    =
+let stage_inputs (module R : Runtime.WRITE) ~container ~outdir ~job_dir inputs =
   let rec go used acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
@@ -165,7 +164,7 @@ let eval_glob_pattern ctx pat =
         (Printf.sprintf "glob expression must yield string, got %s"
            (Ty.value_kind other))
 
-let file_of (module R : Runtime.RUNTIME) path =
+let file_of (module R : Runtime.READ) path =
   let* size = R.file_size path in
   Ok
     (Ty.fill_file_paths
@@ -192,11 +191,10 @@ let rec is_dir_ty = function
   | Ty.Union ts -> List.exists is_dir_ty ts
   | _ -> false
 
-let rec value_of_hit (module R : Runtime.RUNTIME) ty path =
+let rec value_of_hit (module R : Runtime.READ) ty path =
   let dir = R.is_dir path in
   match ty with
-  | Ty.Array { items; _ } ->
-      value_of_hit (module R : Runtime.RUNTIME) items path
+  | Ty.Array { items; _ } -> value_of_hit (module R : Runtime.READ) items path
   | _ ->
       if dir && is_dir_ty ty then Ok (dir_of path)
       else if (not dir) && is_file_ty ty then file_of (module R) path
@@ -209,7 +207,7 @@ let rec value_of_hit (module R : Runtime.RUNTIME) ty path =
       else if dir then Ok (dir_of path)
       else file_of (module R) path
 
-let pack_hits (module R : Runtime.RUNTIME) id ty hits =
+let pack_hits (module R : Runtime.READ) id ty hits =
   let optional = Ty.is_optional ty in
   let inner = match ty with Ty.Array { items; _ } -> items | _ -> ty in
   let is_array = match ty with Ty.Array _ -> true | _ -> false in
@@ -282,7 +280,7 @@ let relocate ~container ~host path =
                 (String.length normalized - String.length container)
           else path
 
-let collect_output (module R : Runtime.RUNTIME) ~container outdir roots ctx
+let collect_output (module R : Runtime.READ) ~container outdir roots ctx
     stdout_name stderr_name (o : Schema.output) =
   let* pats = glob_patterns ctx stdout_name stderr_name o in
   if pats = [] then
@@ -343,7 +341,7 @@ let node_matches path expected got =
         (Error.Type
            { param = path; expected = "Directory"; got = "not a directory" })
 
-let confine_value (module R : Runtime.RUNTIME) roots v =
+let confine_value (module R : Runtime.READ) roots v =
   let confine_path raw =
     if raw = "" then Error.runtime "File or Directory output missing path"
     else
@@ -367,7 +365,7 @@ let confine_value (module R : Runtime.RUNTIME) roots v =
       | v -> Ok v)
     v
 
-let with_checksum (module R : Runtime.RUNTIME) v =
+let with_checksum (module R : Runtime.READ) v =
   Ty.map_result
     (function
       | Ty.Vfile f -> (
