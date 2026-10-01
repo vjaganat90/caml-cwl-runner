@@ -14,7 +14,7 @@ let prop_integral_yaml =
 
 let mem_files files =
   let module F = struct
-    let read path =
+    let read_file path =
       match List.assoc_opt path files with
       | Some text -> Ok text
       | None ->
