@@ -14,7 +14,9 @@ val local : ?console:console -> Eio_unix.Stdenv.base -> (module RUNTIME)
 (** Runs the tool on the host. Its whole environment is {!env_list} plus the
     parent's [PATH] when set, which [spawn] reads. *)
 
-val docker_executable : unit -> string
+val docker_executable : Eio_unix.Stdenv.base -> string
+(** [docker] when it is on [PATH], else the first known install location that
+    exists. *)
 
 type docker_spec = {
   bin : string;
