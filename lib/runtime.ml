@@ -4,7 +4,12 @@
 open Error.Syntax
 include Data.Runtime
 
-let wrap f = try Ok (f ()) with exn -> Error.runtime (Printexc.to_string exn)
+(* A failure becomes a value. Cancellation is not a failure: it is how Eio
+   stops a fiber, so it passes through. *)
+let wrap f =
+  try Ok (f ()) with
+  | Eio.Cancel.Cancelled _ as cancelled -> raise cancelled
+  | exn -> Error.runtime (Printexc.to_string exn)
 
 let confined_using realpath roots path =
   if roots = [] then Error.runtime "confined: no roots"
@@ -81,12 +86,15 @@ let filesystem eio (console : console) launch =
     | None -> failwith (Printf.sprintf "not a native path: %s" s)
   in
   (module struct
-    let exists s =
-      match Eio.Path.kind ~follow:true (p s) with
-      | `Not_found -> false
-      | _ -> true
+    (* A path that cannot be inspected is [`Other]: it is there, and it is not
+       something the runner can use. *)
+    let kind ~follow s =
+      try node_of (Eio.Path.kind ~follow (p s)) with Eio.Io _ -> `Other
 
-    let is_dir s = Eio.Path.is_directory (p s)
+    let lstat s = kind ~follow:false s
+    let stat s = kind ~follow:true s
+    let exists s = stat s <> `Not_found
+    let is_dir s = stat s = `Directory
     let read_dir s = wrap (fun () -> Eio.Path.read_dir (p s))
 
     let mkdir_p s =
@@ -116,12 +124,6 @@ let filesystem eio (console : console) launch =
           Digestif.SHA1.(to_hex (get (go empty))))
 
     let remove_tree s = wrap (fun () -> Eio.Path.rmtree ~missing_ok:true (p s))
-
-    let lstat s =
-      try node_of (Eio.Path.kind ~follow:false (p s)) with _ -> `Other
-
-    let stat s =
-      try node_of (Eio.Path.kind ~follow:true (p s)) with _ -> `Other
 
     let copy_file src dst =
       match stat src with
