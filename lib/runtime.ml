@@ -118,7 +118,11 @@ let filesystem eio (console : console) launch =
 
     let abspath s = wrap (fun () -> native s)
     let mkdtemp prefix = temp_dir prefix
-    let read_file s = wrap (fun () -> Eio.Path.load (p s))
+
+    let read_file s =
+      match stat s with
+      | `Not_found -> Error.runtime (Printf.sprintf "file not found: %s" s)
+      | _ -> wrap (fun () -> Eio.Path.load (p s))
 
     let write_file s data =
       wrap (fun () -> Eio.Path.save ~create:(`Or_truncate 0o644) (p s) data)

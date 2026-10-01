@@ -23,17 +23,17 @@ let split_fragment path =
       let frag = String.sub path (i + 1) (String.length path - i - 1) in
       if file = "" || frag = "" then (path, None) else (file, Some frag)
 
-let load_command_line_tool tool_path =
+let load_command_line_tool (module F : Untyped_tree.FILE) tool_path =
   let path, fragment = split_fragment tool_path in
-  let* tree = Untyped_tree.load_file path in
+  let* tree = Untyped_tree.load (module F) path in
   let* doc = Document.of_tree ?fragment tree in
   match doc.value with
   | Document.Command_line_tool tool -> Ok (tool, doc.diagnostics)
   | Document.Workflow _ -> Error.unsupported "Workflow"
 
-let command_line tool_path job_path =
-  let* tool, diagnostics = load_command_line_tool tool_path in
-  let* job_tree = Untyped_tree.load_file job_path in
+let command_line (module F : Untyped_tree.FILE) tool_path job_path =
+  let* tool, diagnostics = load_command_line_tool (module F) tool_path in
+  let* job_tree = Untyped_tree.load (module F) job_path in
   let* job_raw = Type.object_of_tree job_tree in
   let* inputs =
     Type.apply_defaults_and_check (Command_line_tool.input_specs tool) job_raw
@@ -444,7 +444,7 @@ let designated_outdir (tool : Command_line_tool.t) host =
 
 let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
     tool_path job =
-  let* tool, diagnostics = load_command_line_tool tool_path in
+  let* tool, diagnostics = load_command_line_tool (module Local) tool_path in
   match first_unimplemented_requirement tool with
   | Some feature -> Error.unsupported feature
   | None ->
@@ -474,7 +474,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
         match job with
         | None -> Ok (Filename.dirname (fst (split_fragment tool_path)), [])
         | Some job_path ->
-            let* job_tree = Untyped_tree.load_file job_path in
+            let* job_tree = Untyped_tree.load (module Local) job_path in
             let+ job_raw = Type.object_of_tree job_tree in
             (Filename.dirname job_path, job_raw)
       in
