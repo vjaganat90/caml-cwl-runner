@@ -14,12 +14,24 @@ failure is exit 1.
 
 ## Modules
 
-`.mli` is the contract. ADTs and module signatures (`FS`, `RUNTIME`, `ENGINE`, `FILE`) are defined
-once in private `Data` and
-`include`d into the public modules. Effectful holes are module arguments
-`(module E : ENGINE)`, `(module FS)`, `(module RUNTIME)`,
-`(module FILE)`. Stdlib and `Result.t`. No objects, `Obj`, refs, or
-`Hashtbl` unless a Runtime body needs them.
+`.mli` is the contract. ADTs and module signatures (`FILE`, `FS`, `READ`,
+`WRITE`, `SPAWN`, `RUNTIME`, `ENGINE`) are defined once in private `Data`
+and `include`d into the public modules. Stdlib and `Result.t`. No objects,
+`Obj`, refs, or `Hashtbl` unless a Runtime body needs them.
+
+Effects:
+
+- A function does I/O only through a module argument, and takes the
+  narrowest signature that covers what it does: `(module FILE)` reads
+  documents, `(module FS)` globs, `(module READ)` inspects files,
+  `(module WRITE)` changes them, `(module RUNTIME)` also spawns, and
+  `(module E : ENGINE)` evaluates expressions.
+- A function with no module argument is pure: no I/O, no exception
+  escapes, and a failure is an `Error.t`.
+- Only `lib/runtime.ml` and `bin/main.ml` call Eio, `Unix`, or `Sys`.
+- Inside `Runtime` every wait is an Eio operation. A blocking call Eio has
+  no operation for runs through `Eio_unix.run_in_systhread`.
+- `Eio.Cancel.Cancelled` is re-raised, never turned into an `Error`.
 
 `Untyped_tree` is the nested YAML/JSON value, before CWL types. It is the
 only document reader. `Document.of_tree` reads `class` and returns
@@ -32,9 +44,8 @@ inputs, outputs, requirements, types, bindings. `Command_line_tool` adds
 record and calls `Schema` for the shared fields. Graph execution is not
 implemented; `Document.Workflow` is `Unsupported`.
 
-I/O is only in `Untyped_tree` (load) and `Runtime` (filesystem and spawn).
 Eio is the Runtime body and the CLI scheduler (`Eio_main.run`). No Lwt.
-`Glob` is pure given `(module FS)`. A runnable `DockerRequirement` is one
+A runnable `DockerRequirement` is one
 image source (`dockerPull`, `dockerImageId`, `dockerLoad`, `dockerImport`,
 or `dockerFile`) and selects `Runtime.docker`. `dockerOutputDirectory`, when
 set, is a canonical absolute container path: `runtime.outdir` and the

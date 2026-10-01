@@ -36,11 +36,17 @@ not a global. `open Error.Syntax` gives `let*` (bind) and `let+` (map) over
 `(_, Error.t) result`. Tests pack a fake `RUNTIME` or
 `Glob.FS`; spawn tests wrap `Eio_main.run`.
 
-Effectful holes are module arguments: `(module Expr.ENGINE)`,
-`(module Glob.FS)`, `(module Runtime.RUNTIME)`, `(module Untyped_tree.FILE)`.
-Not an IO monad. Stdlib + `Result.t`. I/O only in `Untyped_tree` (load)
-and `Runtime` (FS + spawn). Eio is the Runtime body and the CLI scheduler.
-No Lwt. Known-unimplemented CWL is a `diagnostic`, never a silent drop.
+A function's effects are the signature of the module it is given:
+`(module Untyped_tree.FILE)` reads documents, `(module Glob.FS)` globs,
+`(module Runtime.READ)` inspects files, `(module Runtime.WRITE)` changes
+them, `(module Runtime.RUNTIME)` is all of those plus `SPAWN`, and
+`(module Expr.ENGINE)` evaluates expressions. A function with no module
+argument is pure. Not an IO monad. Stdlib + `Result.t`. Only
+`lib/runtime.ml` and `bin/main.ml` call Eio, `Unix`, or `Sys`; inside
+`Runtime` a blocking call with no Eio operation runs through
+`Eio_unix.run_in_systhread`, and cancellation is never turned into an
+`Error`. No Lwt. Known-unimplemented CWL is a `diagnostic`, never a silent
+drop.
 
 Salad compact forms (`T?`, `T[]`) are decoded by hand from
 `Untyped_tree.value`. No ppx derivers.
