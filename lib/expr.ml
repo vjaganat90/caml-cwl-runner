@@ -77,7 +77,12 @@ let parse_param_ref s =
           else if body.[i] = '[' then
             let j = digits_end body (i + 1) in
             if j < String.length body && body.[j] = ']' && j > i + 1 then
-              let idx = int_of_string (String.sub body (i + 1) (j - i - 1)) in
+              let digits = String.sub body (i + 1) (j - i - 1) in
+              (* More digits than an int holds: nothing is that long, so the
+                 lookup fails as out of range. *)
+              let idx =
+                Option.value (int_of_string_opt digits) ~default:max_int
+              in
               segs (j + 1) (Index idx :: acc)
             else None
           else if body.[i] = '\'' || body.[i] = '"' then
