@@ -240,29 +240,44 @@ module Runtime = struct
       and [TMPDIR] the designated tmpdir. Paths are as the tool sees them
       (container paths under Docker). *)
 
-  module type RUNTIME = sig
+  (** What a function may do to the world is the signature of the module it is
+      given: [READ] looks, [WRITE] changes files, [SPAWN] starts the tool. A
+      function with no module argument does none of it. *)
+
+  module type READ = sig
     include Glob.FS
 
-    val mkdir_p : string -> (unit, Error.t) result
     val abspath : string -> (string, Error.t) result
-    val mkdtemp : string -> (string, Error.t) result
-    val copy_file : string -> string -> (unit, Error.t) result
     val read_file : string -> (string, Error.t) result
-    val write_file : string -> string -> (unit, Error.t) result
     val file_size : string -> (int64, Error.t) result
 
     val sha1 : string -> (string, Error.t) result
     (** Lowercase hex SHA-1 of the file contents, read in chunks. *)
 
-    val remove_tree : string -> (unit, Error.t) result
-    (** Delete a file or directory tree. Symlinks are unlinked, never followed.
-        A missing path is [Ok ()]. *)
-
     val lstat : string -> node
     val stat : string -> node
     val confined : string list -> string -> (unit, Error.t) result
+  end
 
+  module type WRITE = sig
+    val mkdir_p : string -> (unit, Error.t) result
+    val mkdtemp : string -> (string, Error.t) result
+    val copy_file : string -> string -> (unit, Error.t) result
+    val write_file : string -> string -> (unit, Error.t) result
+
+    val remove_tree : string -> (unit, Error.t) result
+    (** Delete a file or directory tree. Symlinks are unlinked, never followed.
+        A missing path is [Ok ()]. *)
+  end
+
+  module type SPAWN = sig
     val spawn :
       tool_env -> string -> stdio -> string list -> (int, Error.t) result
+  end
+
+  module type RUNTIME = sig
+    include READ
+    include WRITE
+    include SPAWN
   end
 end
