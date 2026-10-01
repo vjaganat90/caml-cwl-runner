@@ -86,7 +86,7 @@ let substitute text needle repl =
 let with_runtime f = Eio_main.run @@ fun env -> f (Cwl.Runtime.local env)
 
 let docker_ready () =
-  let bin = Filename.quote (Cwl.Runtime.docker_executable ()) in
+  let bin = Filename.quote (Eio_main.run Cwl.Runtime.docker_executable) in
   match Unix.system (bin ^ " info >/dev/null 2>&1") with
   | Unix.WEXITED 0 -> true
   | _ -> false

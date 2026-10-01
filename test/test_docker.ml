@@ -270,6 +270,7 @@ let designated_cases =
   ]
 
 let docker_mount_table () =
+  Eio_main.run @@ fun _env ->
   let parent = Filename.temp_dir "ccr-mnt-" "" in
   let real = Filename.concat parent "real" in
   let link = Filename.concat parent "link" in
@@ -389,7 +390,7 @@ let designated_outdir_table () =
     designated_cases
 
 let docker_prefix () =
-  let bin = Cwl.Runtime.docker_executable () in
+  let bin = Eio_main.run Cwl.Runtime.docker_executable in
   let q = Filename.quote bin in
   let prefix =
     if Filename.is_relative bin then ""
