@@ -17,9 +17,10 @@ map forms, type DSL, link resolution) → v1.2 conformance tests
 (`vendor/cwl-v1.2`). cwltool decides only what the spec leaves open; where
 it or a conformance test contradicts the spec, the spec wins.
 
-Contracts live in `lib/*.mli`. Private ADTs live once in `lib/data.ml`
-and are `include`d into `Cwl.Error`, `Cwl.Untyped_tree`, `Cwl.Type`,
-`Cwl.Command_line_tool`, `Cwl.Workflow`, `Cwl.Document`, `Cwl.Expr`. If
+Contracts live in `lib/*.mli`. Private ADTs and module signatures live
+once in `lib/data.ml` and are `include`d into `Cwl.Error`,
+`Cwl.Untyped_tree`, `Cwl.Type`, `Cwl.Command_line_tool`, `Cwl.Workflow`,
+`Cwl.Document`, `Cwl.Expr`, `Cwl.Glob`, `Cwl.Runtime`. If
 this file and an `.mli` disagree, the `.mli` wins.
 
 ---
@@ -31,14 +32,21 @@ Each `lib/*.mli` is the module’s contract. `lib/cwl.ml` is CommandLineTool
 execute. `bin/main.ml` is flags plus `Eio_main.run` — no CWL logic.
 
 `(module R)` on `Cwl.run` is a capability (filesystem + spawn) passed in,
-not a global. `let*` is `Result.bind`. Tests pack a fake `RUNTIME` or
+not a global. `open Error.Syntax` gives `let*` (bind) and `let+` (map) over
+`(_, Error.t) result`. Tests pack a fake `RUNTIME` or
 `Glob.FS`; spawn tests wrap `Eio_main.run`.
 
-Effectful holes are module arguments: `(module Expr.ENGINE)`,
-`(module Glob.FS)`, `(module Runtime.RUNTIME)`, `(module Untyped_tree.FILE)`.
-Not an IO monad. Stdlib + `Result.t`. I/O only in `Untyped_tree` (load)
-and `Runtime` (FS + spawn). Eio is the Runtime body and the CLI scheduler.
-No Lwt. Known-unimplemented CWL is a `diagnostic`, never a silent drop.
+A function's effects are the signature of the module it is given:
+`(module Untyped_tree.FILE)` reads documents, `(module Glob.FS)` globs,
+`(module Runtime.READ)` inspects files, `(module Runtime.WRITE)` changes
+them, `(module Runtime.RUNTIME)` is all of those plus `SPAWN`, and
+`(module Expr.ENGINE)` evaluates expressions. A function with no module
+argument is pure. Not an IO monad. Stdlib + `Result.t`. Only
+`lib/runtime.ml` and `bin/main.ml` call Eio, `Unix`, or `Sys`; inside
+`Runtime` a blocking call with no Eio operation runs through
+`Eio_unix.run_in_systhread`, and cancellation is never turned into an
+`Error`. No Lwt. Known-unimplemented CWL is a `diagnostic`, never a silent
+drop.
 
 Salad compact forms (`T?`, `T[]`) are decoded by hand from
 `Untyped_tree.value`. No ppx derivers.
@@ -186,8 +194,14 @@ are `{}`. JSON is hand-written from `Type.value`.
 Eio is the Runtime body because `Unix.create_process` cannot set child
 cwd and a process-global `chdir` races with future Workflow fibers. The
 tool process receives `HOME` (the outdir), `TMPDIR`, and `PATH` copied
-from the parent. The docker client keeps the invoking environment, and
-prepends its own directory to `PATH` when the binary is absolute.
+from the parent. Each launcher sets the environment of the process it
+starts: locally that is exactly those three variables; under Docker the
+*client* keeps the invoking environment (its config and contexts live under
+the user's `HOME`, and its own directory goes first on `PATH` when the
+binary is absolute), while the *container* gets `--env HOME=<container
+outdir>` and `--env TMPDIR=<tmpdir>`. The tmpdir is the `realpath` of a
+fresh directory and is bind-mounted at that same path. Directory inputs are
+not mounted yet.
 `DockerRequirement` in requirements selects `Runtime.docker`. The image is
 one of `dockerPull`, `dockerImageId`, `dockerLoad`, `dockerImport`, or
 `dockerFile` (Dockerfile contents). `dockerPull` wins when it is set; the

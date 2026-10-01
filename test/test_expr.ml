@@ -98,9 +98,13 @@ let interpolation_table () =
   | Error (Cwl.Error.Unsupported { feature = "InlineJavascriptRequirement" }) ->
       ()
   | other -> Alcotest.failf "javascript: %s" (show_eval other));
-  match eval msg "$(inputs.msg" with
+  (match eval msg "$(inputs.msg" with
   | Error (Cwl.Error.Expr _) -> ()
-  | other -> Alcotest.failf "unclosed: %s" (show_eval other)
+  | other -> Alcotest.failf "unclosed: %s" (show_eval other));
+  let xs = [ ("xs", Cwl.Type.Varray [ Cwl.Type.Vint 1L ]) ] in
+  match eval xs "$(inputs.xs[99999999999999999999])" with
+  | Error (Cwl.Error.Expr _) -> ()
+  | other -> Alcotest.failf "index past max_int: %s" (show_eval other)
 
 let tests =
   [

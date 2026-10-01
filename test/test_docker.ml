@@ -38,6 +38,8 @@ let prop_docker_argv_suffix =
           cwd = "/host-out";
           workdir;
           image = "alpine";
+          mounts = [];
+          container_env = [];
         }
       in
       let got = Cwl.Runtime.docker_run_argv spec argv in
@@ -62,7 +64,9 @@ let prop_docker_argv_suffix =
 let prop_docker_diagnosed =
   Test.make ~name:"unimplemented keys are diagnosed" ~count:1 Gen.unit
     (fun () ->
-      match Cwl.Untyped_tree.load_file (fixture "docker-diagnosed.cwl") with
+      match
+        Cwl.Untyped_tree.load (module Sys_file) (fixture "docker-diagnosed.cwl")
+      with
       | Error _ -> false
       | Ok tree -> (
           match Cwl.Command_line_tool.of_tree tree with
@@ -88,9 +92,7 @@ let prop_container_outdir =
     (Gen.oneof [ legal_path; Gen.string ])
     (fun path ->
       match Cwl.Schema.Container_outdir.of_string path with
-      | Ok p ->
-          canonical_container path
-          && Cwl.Schema.Container_outdir.to_string p = path
+      | Ok p -> canonical_container path && (p :> string) = path
       | Error _ -> not (canonical_container path))
 
 let container_outdir_cases =
@@ -133,10 +135,7 @@ let container_outdir_table () =
       if canonical_container path <> legal then
         Alcotest.failf "predicate disagrees with %S" path;
       match Cwl.Schema.Container_outdir.of_string path with
-      | Ok got when legal ->
-          Alcotest.(check string)
-            path path
-            (Cwl.Schema.Container_outdir.to_string got)
+      | Ok got when legal -> Alcotest.(check string) path path (got :> string)
       | Ok _ -> Alcotest.failf "accepted %S" path
       | Error _ when not legal -> ()
       | Error message -> Alcotest.failf "rejected %S (%s)" path message)
@@ -156,7 +155,7 @@ let docker_field reqs =
       reqs
   with
   | None -> None
-  | Some path -> Some (Option.map Cwl.Schema.Container_outdir.to_string path)
+  | Some path -> Some (path :> string option)
 
 let docker_output_documents () =
   let cases =
@@ -273,6 +272,7 @@ let designated_cases =
   ]
 
 let docker_mount_table () =
+  Eio_main.run @@ fun _env ->
   let parent = Filename.temp_dir "ccr-mnt-" "" in
   let real = Filename.concat parent "real" in
   let link = Filename.concat parent "link" in
@@ -322,7 +322,7 @@ let designated_outdir_table () =
         let module R = struct
           include Local
 
-          let spawn ~env:_ cwd _stdio argv =
+          let spawn _env cwd _stdio argv =
             (argv_ok :=
                match case with
                | Host_outdir -> List.mem cwd argv
@@ -358,7 +358,7 @@ let designated_outdir_table () =
         Cwl.run
           (module Local)
           ~docker:(fun _req -> (module R : Cwl.Runtime.RUNTIME))
-          ~job tool
+          tool (Some job)
       in
       if not !argv_ok then
         Alcotest.failf "%s: $(runtime.outdir) was not the designated directory"
@@ -369,7 +369,7 @@ let designated_outdir_table () =
             match case with
             | Input_container | Input_host -> ()
             | Glob_dir _ -> (
-                match Cwl.Type.lookup "d" ann.value with
+                match List.assoc_opt "d" ann.value with
                 | Some (Cwl.Type.Vdir d) -> (
                     match Cwl.Type.dir_path d with
                     | Some p ->
@@ -392,7 +392,7 @@ let designated_outdir_table () =
     designated_cases
 
 let docker_prefix () =
-  let bin = Cwl.Runtime.docker_executable () in
+  let bin = Eio_main.run Cwl.Runtime.docker_executable in
   let q = Filename.quote bin in
   let prefix =
     if Filename.is_relative bin then ""
@@ -410,7 +410,7 @@ let run_archive_tool ~dir ~fixture_name ~archive () =
   Eio_main.run @@ fun env ->
   let local = Cwl.Runtime.local env in
   let docker image = Cwl.Runtime.docker env image in
-  match Cwl.run local ~docker ~job tool with
+  match Cwl.run local ~docker tool (Some job) with
   | Ok _ -> ()
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
 
@@ -457,6 +457,42 @@ let docker_import_saved =
       then Alcotest.fail "gzip failed";
       run_archive_tool ~dir ~fixture_name:"docker-import.cwl" ~archive:gz () )
 
+let docker_run_argv_env_and_mounts () =
+  let spec =
+    {
+      Cwl.Runtime.bin = "docker";
+      user = "501:20";
+      cwd = "/host/out";
+      workdir = "/out";
+      image = "alpine";
+      mounts = [ ("/host/tmp", "/host/tmp") ];
+      container_env = [ "HOME=/out"; "TMPDIR=/host/tmp" ];
+    }
+  in
+  Alcotest.(check (list string))
+    "argv"
+    [
+      "docker";
+      "run";
+      "--rm";
+      "--user";
+      "501:20";
+      "-v";
+      "/host/out:/out";
+      "-v";
+      "/host/tmp:/host/tmp";
+      "--env";
+      "HOME=/out";
+      "--env";
+      "TMPDIR=/host/tmp";
+      "-w";
+      "/out";
+      "alpine";
+      "echo";
+      "hi";
+    ]
+    (Cwl.Runtime.docker_run_argv spec [ "echo"; "hi" ])
+
 let tests =
   [
     ( "docker_properties",
@@ -470,6 +506,7 @@ let tests =
         ("paths", `Quick, container_outdir_table);
         ("documents", `Quick, docker_output_documents);
         ("mount", `Quick, docker_mount_table);
+        ("run_argv_env_and_mounts", `Quick, docker_run_argv_env_and_mounts);
         ("designated", `Quick, designated_outdir_table);
       ] );
     ("docker_image", [ docker_load_saved; docker_import_saved ]);

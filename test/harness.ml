@@ -4,7 +4,6 @@
 let mk_tool ?(base_command = [ "echo" ]) ?(arguments = []) inputs =
   {
     Cwl.Command_line_tool.cwl_version = "v1.2";
-    class_ = "CommandLineTool";
     base_command;
     arguments;
     inputs;
@@ -87,7 +86,7 @@ let substitute text needle repl =
 let with_runtime f = Eio_main.run @@ fun env -> f (Cwl.Runtime.local env)
 
 let docker_ready () =
-  let bin = Filename.quote (Cwl.Runtime.docker_executable ()) in
+  let bin = Filename.quote (Eio_main.run Cwl.Runtime.docker_executable) in
   match Unix.system (bin ^ " info >/dev/null 2>&1") with
   | Unix.WEXITED 0 -> true
   | _ -> false
@@ -126,7 +125,7 @@ let file_bytes = function
   | _ -> Alcotest.fail "expected File with path"
 
 let lookup_file id ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some (Cwl.Type.Vfile f) -> f
   | _ -> Alcotest.fail ("expected File " ^ id)
 
@@ -137,27 +136,27 @@ let lookup_file_basename id expected ann =
 let lookup_file_path id ann = (lookup_file id ann).Cwl.Type.path
 
 let lookup_bytes id expected ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some v -> Alcotest.(check string) "bytes" expected (file_bytes v)
   | None -> Alcotest.fail ("missing " ^ id)
 
 let lookup_int id expected ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some (Cwl.Type.Vint n) -> Alcotest.(check int64) id expected n
   | _ -> Alcotest.fail ("expected " ^ id ^ " int")
 
 let lookup_null id ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some Cwl.Type.Vnull -> ()
   | _ -> Alcotest.fail "expected null"
 
 let lookup_empty_array id ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some (Cwl.Type.Varray []) -> ()
   | _ -> Alcotest.fail "expected empty array"
 
 let lookup_basenames id expected ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some (Cwl.Type.Varray xs) ->
       let names =
         List.filter_map file_basename xs |> List.sort String.compare
@@ -166,7 +165,7 @@ let lookup_basenames id expected ann =
   | _ -> Alcotest.fail "expected File array"
 
 let lookup_dir id ann =
-  match Cwl.Type.lookup id ann.Cwl.Error.value with
+  match List.assoc_opt id ann.Cwl.Error.value with
   | Some v -> (
       match dir_path v with
       | Some p ->
@@ -175,8 +174,16 @@ let lookup_dir id ann =
       | None -> Alcotest.fail "Directory missing path")
   | _ -> Alcotest.fail "expected Directory"
 
+(* Reads fixtures for tests that load a document without a runtime. *)
+module Sys_file : Cwl.Untyped_tree.FILE = struct
+  let read_file path =
+    try Ok (In_channel.with_open_text path In_channel.input_all)
+    with Sys_error message ->
+      Error (Cwl.Error.Parse { path = Some path; message })
+end
+
 let command_line tool job =
-  match Cwl.command_line (fixture tool) (fixture job) with
+  match Cwl.command_line (module Sys_file) (fixture tool) (fixture job) with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann -> ann
 

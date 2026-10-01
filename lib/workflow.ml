@@ -2,8 +2,7 @@
     [of_tree] accepts [class: Workflow] and reports it unimplemented. *)
 
 include Data.Workflow
-
-let ( let* ) = Error.( let* )
+open Error.Syntax
 
 let of_tree tree =
   match tree with
@@ -27,20 +26,12 @@ let of_tree tree =
       in
       Ok
         {
-          Error.value =
-            {
-              cwl_version;
-              class_ = "Workflow";
-              inputs;
-              outputs;
-              requirements;
-              hints;
-            };
+          Error.value = { cwl_version; inputs; outputs; requirements; hints };
           diagnostics =
             [ Error.unimplemented "Workflow" "class" ]
             @ in_diags @ out_diags @ req_diags @ hint_diags;
         }
   | other ->
-      Schema.schema_err "/"
+      Error.schema "/"
         (Format.asprintf "expected a CWL document object, got %a"
            Untyped_tree.pp other)

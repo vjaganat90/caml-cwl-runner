@@ -4,14 +4,24 @@
 
 include Data.Error
 
-let ( let* ) = Result.bind
+module Syntax = struct
+  let ( let* ) = Result.bind
+  let ( let+ ) x f = Result.map f x
+end
+
+open Syntax
+
+let runtime message = Error (Runtime { message })
+let schema path message = Error (Schema { path; message })
+let expr message = Error (Expr { message })
+let unsupported feature = Error (Unsupported { feature })
 
 let rec map_list f = function
   | [] -> Ok []
   | x :: xs ->
       let* y = f x in
-      let* ys = map_list f xs in
-      Ok (y :: ys)
+      let+ ys = map_list f xs in
+      y :: ys
 
 let unimplemented ?(in_requirements = false) feature json_path =
   {

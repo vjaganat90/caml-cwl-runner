@@ -49,12 +49,12 @@ let process_env_table () =
     let module R = struct
       include Local
 
-      let spawn ~env cwd _stdio _argv =
-        seen := env;
+      let spawn env cwd _stdio _argv =
+        seen := Cwl.Runtime.env_list env;
         cwd_seen := cwd;
         Ok 0
     end in
-    Cwl.run (module R) ~job tool
+    Cwl.run (module R) tool (Some job)
   in
   (match result with
   | Ok _ -> ()
@@ -67,23 +67,13 @@ let process_env_table () =
         | Some i -> String.sub e 0 i)
       !seen
   in
-  let path = Sys.getenv_opt "PATH" in
-  let expect_names =
-    match path with
-    | None -> [ "HOME"; "TMPDIR" ]
-    | Some _ -> [ "HOME"; "TMPDIR"; "PATH" ]
-  in
-  Alcotest.(check (list string)) "names" expect_names names;
+  Alcotest.(check (list string)) "names" [ "HOME"; "TMPDIR" ] names;
   Alcotest.(check bool)
     "HOME is cwd" true
     (List.mem ("HOME=" ^ !cwd_seen) !seen);
   Alcotest.(check bool)
     "TMPDIR differs" true
     (not (List.mem ("TMPDIR=" ^ !cwd_seen) !seen));
-  (match path with
-  | None -> ()
-  | Some p ->
-      Alcotest.(check bool) "PATH copied" true (List.mem ("PATH=" ^ p) !seen));
   match Sys.getenv_opt "HOME" with
   | None -> ()
   | Some home when home = !cwd_seen -> ()
@@ -92,10 +82,78 @@ let process_env_table () =
         "parent HOME absent" false
         (List.mem ("HOME=" ^ home) !seen)
 
+(* Cwl.run reads the tool and the job through the runtime it is given, so a
+   fake sees every document read. *)
+let documents_load_through_runtime () =
+  let dir = Filename.temp_dir "ccr-load-" "" in
+  let tool = copy_fixture dir "true.cwl" "tool.cwl" in
+  let job = Filename.concat dir "job.json" in
+  Out_channel.with_open_text job (fun oc -> output_string oc "{}\n");
+  let read = ref [] in
+  let result =
+    Eio_main.run @@ fun env ->
+    let (module Local : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+    let module R = struct
+      include Local
+
+      let read_file path =
+        read := path :: !read;
+        Local.read_file path
+    end in
+    Cwl.run (module R) tool (Some job)
+  in
+  (match result with
+  | Ok _ -> ()
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e));
+  Alcotest.(check (list string)) "documents read" [ tool; job ] (List.rev !read)
+
+(* A runtime call made in a cancelled fiber stops the fiber. It must not
+   come back as an [Error] the caller could carry on from. *)
+let cancellation_passes_through () =
+  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  let _, root = runtime_setup (module R) in
+  let file = Filename.concat root "a.txt" in
+  expect_ok (R.write_file file "x");
+  match
+    Eio.Cancel.sub (fun context ->
+        Eio.Cancel.cancel context Exit;
+        R.read_file file)
+  with
+  | exception Eio.Cancel.Cancelled Exit -> ()
+  | Ok _ -> Alcotest.fail "read_file ran in a cancelled fiber"
+  | Error e -> Alcotest.failf "cancellation became %s" (Cwl.Error.to_string e)
+
+(* The local launcher's real process: nothing but HOME, TMPDIR, and the
+   parent's PATH. *)
+let local_env_inherits_only_path () =
+  let dir = Filename.temp_dir "ccr-env-" "" in
+  let out = Filename.concat dir "env.txt" in
+  let code =
+    Eio_main.run @@ fun env ->
+    let (module R : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+    R.spawn
+      { home = dir; tmpdir = dir }
+      dir
+      { stdin_file = None; stdout_file = Some out; stderr_file = None }
+      [ "/usr/bin/env" ]
+  in
+  Alcotest.(check (result int reject)) "env ran" (Ok 0) code;
+  let seen =
+    In_channel.with_open_text out In_channel.input_lines
+    |> List.sort String.compare
+  in
+  let path =
+    match Sys.getenv_opt "PATH" with None -> [] | Some p -> [ "PATH=" ^ p ]
+  in
+  Alcotest.(check (list string))
+    "environment"
+    (List.sort String.compare ([ "HOME=" ^ dir; "TMPDIR=" ^ dir ] @ path))
+    seen
+
 let no_job_uses_defaults () =
   match
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl")
+    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl") None
   with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann -> lookup_bytes "out" "from-default\n" ann
@@ -112,7 +170,7 @@ let uncaptured_output_reaches_console () =
   let result =
     Eio_main.run @@ fun env ->
     let console = (Eio.Flow.buffer_sink buf :> Cwl.Runtime.console) in
-    Cwl.run (Cwl.Runtime.local ~console env) (fixture "console.cwl")
+    Cwl.run (Cwl.Runtime.local ~console env) (fixture "console.cwl") None
   in
   (match result with
   | Error (Cwl.Error.Runtime _) -> ()
@@ -141,7 +199,7 @@ let sha1_vectors () =
 let output_file_checksum () =
   match
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl")
+    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl") None
   with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann ->
@@ -160,8 +218,9 @@ let tmpdir_run ?rm_tmpdir job =
   let outdir = Filename.temp_dir "ccr-rm-" "" in
   let result =
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) ~outdir ?rm_tmpdir ~job:(fixture job)
+    Cwl.run (Cwl.Runtime.local env) ~outdir ?rm_tmpdir
       (fixture "tmpdir-report.cwl")
+      (Some (fixture job))
   in
   let tmpdir =
     In_channel.with_open_text
@@ -206,6 +265,11 @@ let tests =
         ("confined_rejects_sibling", `Quick, confined_rejects_sibling);
         ("confined_rejects_dotdot", `Quick, confined_rejects_dotdot);
         ("process_env", `Quick, process_env_table);
+        ("cancellation_passes_through", `Quick, cancellation_passes_through);
+        ( "documents_load_through_runtime",
+          `Quick,
+          documents_load_through_runtime );
+        ("local_env_inherits_only_path", `Quick, local_env_inherits_only_path);
         ("no_job_uses_defaults", `Quick, no_job_uses_defaults);
         ("uncaptured_output", `Quick, uncaptured_output_reaches_console);
         ("sha1_vectors", `Quick, sha1_vectors);

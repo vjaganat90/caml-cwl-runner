@@ -1,51 +1,22 @@
 (** Stage files and spawn processes. The local body is Eio; tests pack a fake.
     Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
 
-type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
+include module type of Data.Runtime
 
-type stdio = {
-  stdin_file : string option;
-  stdout_file : string option;
-  stderr_file : string option;
-}
-
-module type RUNTIME = sig
-  include Glob.FS
-
-  val mkdir_p : string -> (unit, Error.t) result
-  val abspath : string -> (string, Error.t) result
-  val mkdtemp : string -> (string, Error.t) result
-  val copy_file : string -> string -> (unit, Error.t) result
-  val read_file : string -> (string, Error.t) result
-  val write_file : string -> string -> (unit, Error.t) result
-  val file_size : string -> (int64, Error.t) result
-
-  val sha1 : string -> (string, Error.t) result
-  (** Lowercase hex SHA-1 of the file contents, read in chunks. *)
-
-  val remove_tree : string -> (unit, Error.t) result
-  (** Delete a file or directory tree. Symlinks are unlinked, never followed. A
-      missing path is [Ok ()]. *)
-
-  val lstat : string -> node
-  val stat : string -> node
-  val realpath : string -> (string, Error.t) result
-  val confined : string list -> string -> (unit, Error.t) result
-
-  val spawn :
-    env:string list -> string -> stdio -> string list -> (int, Error.t) result
-end
-
-val tool_env : outdir:string -> tmpdir:string -> string list
-(** [HOME] is [outdir], [TMPDIR] is [tmpdir], and [PATH] is copied from the
-    parent when it is set. No other variable is included. *)
+val env_list : tool_env -> string list
+(** [HOME] and [TMPDIR] as [NAME=value]. *)
 
 type console = Eio.Flow.sink_ty Eio.Resource.t
 (** Where a tool's uncaptured stdout and stderr go. The CLI default is the
     runner's stderr, so the output JSON keeps stdout to itself. *)
 
 val local : ?console:console -> Eio_unix.Stdenv.base -> (module RUNTIME)
-val docker_executable : unit -> string
+(** Runs the tool on the host. Its whole environment is {!env_list} plus the
+    parent's [PATH] when set, which [spawn] reads. *)
+
+val docker_executable : Eio_unix.Stdenv.base -> string
+(** [docker] when it is on [PATH], else the first known install location that
+    exists. *)
 
 type docker_spec = {
   bin : string;
@@ -53,6 +24,8 @@ type docker_spec = {
   cwd : string;
   workdir : string;
   image : string;
+  mounts : (string * string) list;  (** Extra [-v source:target] pairs. *)
+  container_env : string list;  (** [NAME=value] set inside the container. *)
 }
 
 val docker_mount :

@@ -15,17 +15,21 @@ module Glob : module type of Glob
 module Runtime : module type of Runtime
 
 val command_line :
-  string -> string -> (string list Error.annotated, Error.t) result
+  (module Untyped_tree.FILE) ->
+  string ->
+  string ->
+  (string list Error.annotated, Error.t) result
+(** [command_line file tool job]. *)
 
 val run :
   (module Runtime.RUNTIME) ->
   ?docker:(Schema.docker -> (module Runtime.RUNTIME)) ->
   ?outdir:string ->
-  ?job:string ->
   ?rm_tmpdir:bool ->
   string ->
+  string option ->
   (Type.object_ Error.annotated, Error.t) result
-(** [run runtime ?job tool]. Without [job] the input object is empty and
+(** [run runtime tool job]. With [job = None] the input object is empty and
     defaults resolve against the tool's directory. The tool's [TMPDIR] is
     deleted when the run ends, success or failure, unless [rm_tmpdir] is
     [false]. The outdir is kept. *)

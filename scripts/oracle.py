@@ -34,7 +34,22 @@ from ruamel.yaml import YAML
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(ROOT, "test/oracle/tests.yaml")
+REQUIREMENTS = os.path.join(ROOT, "scripts/requirements.txt")
 SPEC, QUOTE, UNSPECIFIED = "ccr:spec", "ccr:quote", "ccr:unspecified"
+
+
+def pinned(package):
+    with open(REQUIREMENTS) as f:
+        for line in f:
+            name, _, version = line.strip().partition("==")
+            if name == package:
+                return version
+    sys.exit(f"{package} is not pinned in {REQUIREMENTS}")
+
+
+def installed(tool):
+    out = subprocess.run([tool, "--version"], capture_output=True, text=True).stdout
+    return out.split()[-1] if out.split() else "unknown"
 
 
 def yaml():
@@ -151,6 +166,11 @@ def main():
     print("\n".join(bad) if bad else f"checked the authority of {len(cases)} case(s)")
     if bad or args.check:
         return 1 if bad else 0
+
+    want, have = pinned("cwltool"), installed("cwltool")
+    if want != have:
+        sys.exit(f"cwltool {have} is installed but {want} is pinned; "
+                 "run `pip install -r scripts/requirements.txt`")
 
     base = os.path.dirname(TESTS)
     diverged = 0

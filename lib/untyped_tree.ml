@@ -1,9 +1,10 @@
-(** Nested YAML/JSON file contents, before CWL types. The only file reader.
-    [load] resolves local [$import] and [$include]. Does not leak [Yaml.value].
-    Default [FILE] is [In_channel]. Not [Document] (CommandLineTool | Workflow)
-    and not [Type.value]. *)
+(** Nested YAML/JSON file contents, before CWL types. The only document reader.
+    [load] resolves local [$import] and [$include], reading every file through
+    the [FILE] it is given. Does not leak [Yaml.value]. Not [Document]
+    (CommandLineTool | Workflow) and not [Type.value]. *)
 
 include Data.Untyped_tree
+open Error.Syntax
 
 let rec of_yaml : Yaml.value -> value = function
   | `Null -> Null
@@ -26,29 +27,7 @@ let of_yaml_string ?(path = "") s =
       let path = if path = "" then None else Some path in
       Error (Error.Parse { path; message = msg })
 
-module Sys_file : FILE = struct
-  let read path =
-    try Ok (In_channel.with_open_text path In_channel.input_all) with
-    | Sys_error msg -> Error (Error.Parse { path = Some path; message = msg })
-    | exn ->
-        Error
-          (Error.Parse { path = Some path; message = Printexc.to_string exn })
-end
-
 let load_string ?path s = of_yaml_string ?path s
-let assoc key = function Object kvs -> List.assoc_opt key kvs | _ -> None
-let object_fields = function Object kvs -> Some kvs | _ -> None
-let as_string = function String s -> Some s | _ -> None
-let as_bool = function Bool b -> Some b | _ -> None
-let as_int = function Int n -> Some n | _ -> None
-
-let as_float = function
-  | Float f -> Some f
-  | Int n -> Some (Int64.to_float n)
-  | _ -> None
-
-let as_list = function Array xs -> Some xs | _ -> None
-let is_null = function Null -> true | _ -> false
 
 let string_field kvs key =
   match List.assoc_opt key kvs with Some (String s) -> Some s | _ -> None
@@ -118,21 +97,19 @@ let base_dir = function
   | `Dir path -> path
 
 let locate ~feature ~base uri =
-  if is_remote uri then Error (Error.Unsupported { feature })
+  if is_remote uri then Error.unsupported feature
   else
     let uri = strip_file uri in
     let dir = base_dir base in
-    if is_remote dir then Error (Error.Unsupported { feature })
+    if is_remote dir then Error.unsupported feature
     else if Filename.is_relative uri then
       Ok (normalize (Filename.concat dir uri))
     else Ok (normalize uri)
 
-let schema path message = Error (Error.Schema { path; message })
-
 let only_keys kvs allowed =
   match List.find_opt (fun (k, _) -> not (List.mem k allowed)) kvs with
   | None -> Ok ()
-  | Some (k, _) -> schema k "unexpected field next to $import or $include"
+  | Some (k, _) -> Error.schema k "unexpected field next to $import or $include"
 
 let rec resolve (module F : FILE) ~base ~stack = function
   | Array xs ->
@@ -148,7 +125,6 @@ let rec resolve (module F : FILE) ~base ~stack = function
   | other -> Ok other
 
 and resolve_object (module F : FILE) ~base ~stack kvs =
-  let ( let* ) = Result.bind in
   let* base =
     match List.assoc_opt "$base" kvs with
     | None -> Ok base
@@ -157,21 +133,25 @@ and resolve_object (module F : FILE) ~base ~stack kvs =
         if String.ends_with ~suffix:"/" (strip_file raw) then Ok (`Dir path)
         else Ok (`File path)
     | Some other ->
-        schema "$base" (Format.asprintf "expected string, got %a" pp other)
+        Error.schema "$base"
+          (Format.asprintf "expected string, got %a" pp other)
   in
   match (List.assoc_opt "$import" kvs, List.assoc_opt "$include" kvs) with
-  | Some _, Some _ -> schema "$import" "$import and $include are both set"
+  | Some _, Some _ -> Error.schema "$import" "$import and $include are both set"
   | Some (String uri), None ->
       let* () = only_keys kvs [ "$import"; "$base" ] in
       splice (module F : FILE) ~base ~stack ~feature:"remote $import" uri
   | None, Some (String uri) -> (
       let* () = only_keys kvs [ "$include"; "$base" ] in
       let* path = locate ~feature:"remote $include" ~base uri in
-      if List.mem path stack then schema path ("import cycle involving " ^ path)
+      if List.mem path stack then
+        Error.schema path ("import cycle involving " ^ path)
       else
-        match F.read path with Error _ as e -> e | Ok text -> Ok (String text))
+        match F.read_file path with
+        | Error _ as e -> e
+        | Ok text -> Ok (String text))
   | Some _, None | None, Some _ ->
-      schema "$import" "$import and $include must be strings"
+      Error.schema "$import" "$import and $include must be strings"
   | None, None ->
       let rec go acc = function
         | [] -> Ok (Object (List.rev acc))
@@ -183,11 +163,11 @@ and resolve_object (module F : FILE) ~base ~stack kvs =
       go [] kvs
 
 and splice (module F : FILE) ~base ~stack ~feature uri =
-  let ( let* ) = Result.bind in
   let* path = locate ~feature ~base uri in
-  if List.mem path stack then schema path ("import cycle involving " ^ path)
+  if List.mem path stack then
+    Error.schema path ("import cycle involving " ^ path)
   else
-    match F.read path with
+    match F.read_file path with
     | Error _ as e -> e
     | Ok text -> (
         match of_yaml_string ~path text with
@@ -198,10 +178,7 @@ and splice (module F : FILE) ~base ~stack ~feature uri =
               ~base:(`File path) ~stack:(path :: stack) tree)
 
 let load (module F : FILE) path =
-  let ( let* ) = Result.bind in
-  let* text = F.read path in
+  let* text = F.read_file path in
   let* tree = of_yaml_string ~path text in
   let path = normalize path in
   resolve (module F : FILE) ~base:(`File path) ~stack:[ path ] tree
-
-let load_file path = load (module Sys_file) path

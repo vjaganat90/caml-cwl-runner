@@ -4,8 +4,7 @@
     documents or spawn. *)
 
 include Data.Type
-
-let ( let* ) = Error.( let* )
+open Error.Syntax
 
 let default_binding =
   {
@@ -58,16 +57,14 @@ let rec map f = function
 
 let rec map_result f = function
   | Varray xs ->
-      let ( let* ) = Error.( let* ) in
-      let* xs = Error.map_list (map_result f) xs in
-      Ok (Varray xs)
+      let+ xs = Error.map_list (map_result f) xs in
+      Varray xs
   | Vrecord kvs ->
-      let ( let* ) = Error.( let* ) in
       let* kvs =
         Error.map_list
           (fun (k, v) ->
-            let* v = map_result f v in
-            Ok (k, v))
+            let+ v = map_result f v in
+            (k, v))
           kvs
       in
       Ok (Vrecord kvs)
@@ -80,7 +77,6 @@ let rec fold f acc = function
 
 let rec fold_map f acc = function
   | Varray xs ->
-      let ( let* ) = Error.( let* ) in
       let rec go acc acc_xs = function
         | [] -> Ok (Varray (List.rev acc_xs), acc)
         | x :: xs ->
@@ -89,7 +85,6 @@ let rec fold_map f acc = function
       in
       go acc [] xs
   | Vrecord kvs ->
-      let ( let* ) = Error.( let* ) in
       let rec go acc acc_kvs = function
         | [] -> Ok (Vrecord (List.rev acc_kvs), acc)
         | (k, v) :: rest ->
@@ -131,8 +126,6 @@ let fill_file_paths =
     | Vdir d ->
         Vdir { d with path = or_else d.path (file_basename_of d.location) }
     | v -> v)
-
-let lookup key obj = List.assoc_opt key obj
 
 let rec matches ty value =
   match (ty, value) with
@@ -223,8 +216,8 @@ and value_of_tree param ty doc =
   | File, Untyped_tree.Object kvs -> parse_file_object param kvs
   | Directory, Untyped_tree.Object kvs -> parse_directory_object param kvs
   | Array { items; _ }, Untyped_tree.Array xs ->
-      let* xs = Error.map_list (value_of_tree param items) xs in
-      Ok (Varray xs)
+      let+ xs = Error.map_list (value_of_tree param items) xs in
+      Varray xs
   | _, Untyped_tree.Null ->
       if is_optional ty then Ok Vnull else fail (type_name ty)
   | _ -> fail (type_name ty)
@@ -269,7 +262,7 @@ let apply_defaults_and_check inputs job =
   let rec go acc = function
     | [] -> Ok (List.rev acc)
     | spec :: rest -> (
-        let provided = lookup spec.id job in
+        let provided = List.assoc_opt spec.id job in
         let raw =
           match provided with
           | Some Vnull | None -> (
@@ -355,6 +348,21 @@ let add_opt name conv v fields =
 let file_uri loc =
   if String.starts_with ~prefix:"file:" loc then loc else "file://" ^ loc
 
+let file_fields (f : file) =
+  [ ("class", json_string "File") ]
+  |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
+  |> add_opt "path" json_string f.path
+  |> add_opt "basename" json_string f.basename
+  |> add_opt "nameroot" json_string f.nameroot
+  |> add_opt "nameext" json_string f.nameext
+  |> add_opt "checksum" json_string f.checksum
+  |> add_opt "size" Int64.to_string f.size
+
+let dir_fields (d : directory) =
+  [ ("class", json_string "Directory") ]
+  |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
+  |> add_opt "path" json_string d.path
+
 let rec to_json = function
   | Vnull -> "null"
   | Vbool true -> "true"
@@ -364,50 +372,18 @@ let rec to_json = function
       if Float.is_integer f && Float.abs f < 1e15 then Printf.sprintf "%.0f" f
       else string_of_float f
   | Vstring s -> json_string s
-  | Vfile f ->
-      [ ("class", json_string "File") ]
-      |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
-      |> add_opt "path" json_string f.path
-      |> add_opt "basename" json_string f.basename
-      |> add_opt "nameroot" json_string f.nameroot
-      |> add_opt "nameext" json_string f.nameext
-      |> add_opt "checksum" json_string f.checksum
-      |> add_opt "size" Int64.to_string f.size
-      |> json_object
-  | Vdir d ->
-      [ ("class", json_string "Directory") ]
-      |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
-      |> add_opt "path" json_string d.path
-      |> json_object
+  | Vfile f -> json_object (file_fields f)
+  | Vdir d -> json_object (dir_fields d)
   | Varray xs -> "[" ^ String.concat "," (List.map to_json xs) ^ "]"
   | Vrecord kvs -> json_object (List.map (fun (k, v) -> (k, to_json v)) kvs)
 
 let object_to_json obj = to_json (Vrecord obj)
+let by_key fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields
 
 let rec to_json_sorted = function
   | Varray xs -> "[" ^ String.concat "," (List.map to_json_sorted xs) ^ "]"
   | Vrecord kvs ->
-      let kvs = List.sort (fun (a, _) (b, _) -> String.compare a b) kvs in
-      json_object (List.map (fun (k, v) -> (k, to_json_sorted v)) kvs)
-  | Vfile f ->
-      let fields =
-        [ ("class", json_string "File") ]
-        |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
-        |> add_opt "path" json_string f.path
-        |> add_opt "basename" json_string f.basename
-        |> add_opt "nameroot" json_string f.nameroot
-        |> add_opt "nameext" json_string f.nameext
-        |> add_opt "checksum" json_string f.checksum
-        |> add_opt "size" Int64.to_string f.size
-      in
-      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-      json_object fields
-  | Vdir d ->
-      let fields =
-        [ ("class", json_string "Directory") ]
-        |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
-        |> add_opt "path" json_string d.path
-      in
-      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-      json_object fields
+      json_object (List.map (fun (k, v) -> (k, to_json_sorted v)) (by_key kvs))
+  | Vfile f -> json_object (by_key (file_fields f))
+  | Vdir d -> json_object (by_key (dir_fields d))
   | v -> to_json v

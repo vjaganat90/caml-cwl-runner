@@ -5,7 +5,7 @@ open Harness
 
 let run_tool tool job =
   Eio_main.run @@ fun env ->
-  Cwl.run (Cwl.Runtime.local env) ~job:(fixture job) (fixture tool)
+  Cwl.run (Cwl.Runtime.local env) (fixture tool) (Some (fixture job))
 
 type outcome =
   | Expect_ok of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
@@ -129,7 +129,7 @@ let execute_edges =
     edge "glob_runtime_outdir" "glob-outdir.cwl"
       (Expect_ok
          (fun ann ->
-           match Cwl.Type.lookup "d" ann.value with
+           match List.assoc_opt "d" ann.value with
            | Some v -> (
                match dir_path v with
                | Some p ->
@@ -180,7 +180,7 @@ let execute_edges =
     edge "directory_input_argv" "dir-in.cwl" ~job:"dir-in-job.json"
       (Expect_ok
          (fun ann ->
-           match Cwl.Type.lookup "out" ann.value with
+           match List.assoc_opt "out" ann.value with
            | Some v ->
                let p = String.trim (file_bytes v) in
                Alcotest.(check bool) "is dir" true (Sys.is_directory p)
@@ -209,7 +209,7 @@ let run_edge (e : edge) () =
       Eio_main.run @@ fun env ->
       let local = Cwl.Runtime.local env in
       let docker image = Cwl.Runtime.docker env image in
-      Cwl.run local ~docker ~job:(fixture e.job) (fixture e.tool)
+      Cwl.run local ~docker (fixture e.tool) (Some (fixture e.job))
   in
   match result with
   | Ok ann -> (
@@ -261,7 +261,7 @@ let planted_symlink_runtime ~prefix ~link_name ~tool ~job () =
   expect_ok (R.mkdir_p outdir);
   expect_ok (R.write_file outside "keep\n");
   Unix.symlink outside (Filename.concat outdir link_name);
-  match Cwl.run (module R) ~outdir ~job:(fixture job) (fixture tool) with
+  match Cwl.run (module R) ~outdir (fixture tool) (Some (fixture job)) with
   | Error (Cwl.Error.Runtime _) ->
       Alcotest.(check string)
         "outside unchanged" "keep\n"
@@ -292,8 +292,9 @@ let output_under_outdir =
       match
         Cwl.run
           (module R)
-          ~outdir ~job:(fixture "echo-job.json")
+          ~outdir
           (fixture "echo-stdout.cwl")
+          (Some (fixture "echo-job.json"))
       with
       | Error e -> Alcotest.fail (Cwl.Error.to_string e)
       | Ok ann ->

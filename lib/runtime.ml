@@ -1,47 +1,26 @@
 (** Stage files and spawn processes. The local body is Eio; tests pack a fake.
     Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
 
-type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
+open Error.Syntax
+include Data.Runtime
 
-type stdio = {
-  stdin_file : string option;
-  stdout_file : string option;
-  stderr_file : string option;
-}
-
-module type RUNTIME = sig
-  include Glob.FS
-
-  val mkdir_p : string -> (unit, Error.t) result
-  val abspath : string -> (string, Error.t) result
-  val mkdtemp : string -> (string, Error.t) result
-  val copy_file : string -> string -> (unit, Error.t) result
-  val read_file : string -> (string, Error.t) result
-  val write_file : string -> string -> (unit, Error.t) result
-  val file_size : string -> (int64, Error.t) result
-  val sha1 : string -> (string, Error.t) result
-  val remove_tree : string -> (unit, Error.t) result
-  val lstat : string -> node
-  val stat : string -> node
-  val realpath : string -> (string, Error.t) result
-  val confined : string list -> string -> (unit, Error.t) result
-
-  val spawn :
-    env:string list -> string -> stdio -> string list -> (int, Error.t) result
-end
-
-let rt_err message = Error (Error.Runtime { message })
-let wrap f = try Ok (f ()) with exn -> rt_err (Printexc.to_string exn)
+(* A failure becomes a value. Cancellation is not a failure: it is how Eio
+   stops a fiber, so it passes through. *)
+let wrap f =
+  try Ok (f ()) with
+  | Eio.Cancel.Cancelled _ as cancelled -> raise cancelled
+  | exn -> Error.runtime (Printexc.to_string exn)
 
 let confined_using realpath roots path =
-  if roots = [] then rt_err "confined: no roots"
+  if roots = [] then Error.runtime "confined: no roots"
   else
     match realpath path with
     | Error _ as e -> e
     | Ok resolved ->
         let rec go = function
           | [] ->
-              rt_err (Printf.sprintf "path %S is not under a legal root" path)
+              Error.runtime
+                (Printf.sprintf "path %S is not under a legal root" path)
           | root :: rest -> (
               match realpath root with
               | Ok r when Glob.under r resolved -> Ok ()
@@ -56,37 +35,94 @@ let node_of = function
   | `Symbolic_link -> `Symlink
   | `Unknown | `Fifo | `Character_special | `Block_device | `Socket -> `Other
 
-type launch = { cwd : string; argv : string list }
 type console = Eio.Flow.sink_ty Eio.Resource.t
 
 let default_console env = (Eio.Stdenv.stderr env :> console)
+let env_list e = [ "HOME=" ^ e.home; "TMPDIR=" ^ e.tmpdir ]
 
-let filesystem env ~(console : console) ~launch =
-  let fs = Eio.Stdenv.fs env in
-  let cwd_path = Eio.Stdenv.cwd env in
-  let proc_mgr = Eio.Stdenv.process_mgr env in
+(* CWL lets a tool that runs outside a container inherit the parent's PATH. *)
+let inherited_path () =
+  match Sys.getenv_opt "PATH" with None -> [] | Some p -> [ "PATH=" ^ p ]
+
+(* What to start: a launcher turns the tool's cwd, argv, and tool_env into
+   the process that actually runs, with that process's own environment. *)
+type launch = { cwd : string; argv : string list; env : string list }
+
+let path_of eio s =
   let ( / ) = Eio.Path.( / ) in
-  let p s = if Filename.is_relative s then cwd_path / s else fs / s in
+  if Filename.is_relative s then Eio.Stdenv.cwd eio / s
+  else Eio.Stdenv.fs eio / s
+
+(* The few blocking calls Eio has no operation for run on a system thread:
+   the calling fiber waits, the others keep running. *)
+let blocking f = Eio_unix.run_in_systhread f
+
+let host_realpath path =
+  wrap (fun () -> blocking (fun () -> Unix.realpath path))
+
+let temp_dir prefix =
+  wrap (fun () -> blocking (fun () -> Filename.temp_dir prefix ""))
+
+let temp_file prefix suffix =
+  wrap (fun () -> blocking (fun () -> Filename.temp_file prefix suffix))
+
+let is_file eio path =
+  try Eio.Path.is_file (path_of eio path) with Eio.Io _ -> false
+
+let run_process eio (console : console) { cwd; argv; env }
+    ({ stdin_file; stdout_file; stderr_file } : stdio) =
+  wrap (fun () ->
+      Eio.Switch.run @@ fun sw ->
+      let p = path_of eio in
+      let open_in = function
+        | None -> (Eio.Path.open_in ~sw (p "/dev/null") :> _ Eio.Flow.source)
+        | Some f -> (Eio.Path.open_in ~sw (p f) :> _ Eio.Flow.source)
+      in
+      let open_out = function
+        | None -> console
+        | Some f ->
+            (Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644) (p f)
+              :> console)
+      in
+      let proc =
+        Eio.Process.spawn ~sw
+          (Eio.Stdenv.process_mgr eio)
+          ~cwd:(p cwd) ~env:(Array.of_list env) ~stdin:(open_in stdin_file)
+          ~stdout:(open_out stdout_file) ~stderr:(open_out stderr_file) argv
+      in
+      match Eio.Process.await proc with
+      | `Exited n -> n
+      | `Signaled s -> failwith (Printf.sprintf "process killed by signal %d" s))
+
+let filesystem eio (console : console) launch =
+  let p = path_of eio in
   let native s =
     match Eio.Path.native (p s) with
     | Some n -> n
     | None -> failwith (Printf.sprintf "not a native path: %s" s)
   in
   (module struct
-    let exists s =
-      match Eio.Path.kind ~follow:true (p s) with
-      | `Not_found -> false
-      | _ -> true
+    (* A path that cannot be inspected is [`Other]: it is there, and it is not
+       something the runner can use. *)
+    let kind ~follow s =
+      try node_of (Eio.Path.kind ~follow (p s)) with Eio.Io _ -> `Other
 
-    let is_dir s = Eio.Path.is_directory (p s)
+    let lstat s = kind ~follow:false s
+    let stat s = kind ~follow:true s
+    let exists s = stat s <> `Not_found
+    let is_dir s = stat s = `Directory
     let read_dir s = wrap (fun () -> Eio.Path.read_dir (p s))
 
     let mkdir_p s =
       wrap (fun () -> Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 (p s))
 
     let abspath s = wrap (fun () -> native s)
-    let mkdtemp prefix = wrap (fun () -> Filename.temp_dir prefix "")
-    let read_file s = wrap (fun () -> Eio.Path.load (p s))
+    let mkdtemp prefix = temp_dir prefix
+
+    let read_file s =
+      match stat s with
+      | `Not_found -> Error.runtime (Printf.sprintf "file not found: %s" s)
+      | _ -> wrap (fun () -> Eio.Path.load (p s))
 
     let write_file s data =
       wrap (fun () -> Eio.Path.save ~create:(`Or_truncate 0o644) (p s) data)
@@ -98,7 +134,9 @@ let filesystem env ~(console : console) ~launch =
 
     let sha1 s =
       wrap (fun () ->
-          In_channel.with_open_bin (native s) @@ fun ic ->
+          let path = native s in
+          blocking @@ fun () ->
+          In_channel.with_open_bin path @@ fun ic ->
           let buf = Bytes.create 65536 in
           let rec go ctx =
             let read = In_channel.input ic buf 0 (Bytes.length buf) in
@@ -109,12 +147,6 @@ let filesystem env ~(console : console) ~launch =
 
     let remove_tree s = wrap (fun () -> Eio.Path.rmtree ~missing_ok:true (p s))
 
-    let lstat s =
-      try node_of (Eio.Path.kind ~follow:false (p s)) with _ -> `Other
-
-    let stat s =
-      try node_of (Eio.Path.kind ~follow:true (p s)) with _ -> `Other
-
     let copy_file src dst =
       match stat src with
       | `File ->
@@ -122,10 +154,16 @@ let filesystem env ~(console : console) ~launch =
               Eio.Path.with_open_in (p src) @@ fun inn ->
               Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (p dst)
               @@ fun out -> Eio.Flow.copy inn out)
-      | `Not_found -> rt_err (Printf.sprintf "copy source not found: %s" src)
-      | _ -> rt_err (Printf.sprintf "copy source is not a regular file: %s" src)
+      | `Not_found ->
+          Error.runtime (Printf.sprintf "copy source not found: %s" src)
+      | _ ->
+          Error.runtime
+            (Printf.sprintf "copy source is not a regular file: %s" src)
 
-    let realpath s = wrap (fun () -> Unix.realpath (native s))
+    let realpath s =
+      let* path = wrap (fun () -> native s) in
+      host_realpath path
+
     let confined roots path = confined_using realpath roots path
 
     let reject_stdio_symlink label = function
@@ -133,82 +171,25 @@ let filesystem env ~(console : console) ~launch =
       | Some f -> (
           match lstat f with
           | `Symlink ->
-              rt_err (Printf.sprintf "%s destination is a symlink" label)
+              Error.runtime (Printf.sprintf "%s destination is a symlink" label)
           | _ -> Ok ())
 
-    let spawn ~env cwd ({ stdin_file; stdout_file; stderr_file } : stdio) argv =
-      if argv = [] then rt_err "empty argv"
+    let spawn env cwd (stdio : stdio) argv =
+      if argv = [] then Error.runtime "empty argv"
       else
-        match
-          let ( let* ) = Result.bind in
-          let* () = reject_stdio_symlink "stdin" stdin_file in
-          let* () = reject_stdio_symlink "stdout" stdout_file in
-          let* () = reject_stdio_symlink "stderr" stderr_file in
-          Ok ()
-        with
-        | Error _ as e -> e
-        | Ok () -> (
-            match launch cwd argv with
-            | Error _ as e -> e
-            | Ok launched ->
-                wrap (fun () ->
-                    Eio.Switch.run @@ fun sw ->
-                    let open_in = function
-                      | None ->
-                          (Eio.Path.open_in ~sw (p "/dev/null")
-                            :> _ Eio.Flow.source)
-                      | Some f ->
-                          (Eio.Path.open_in ~sw (p f) :> _ Eio.Flow.source)
-                    in
-                    let open_out = function
-                      | None -> console
-                      | Some f ->
-                          (Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644)
-                             (p f)
-                            :> console)
-                    in
-                    let env =
-                      match launched.argv with
-                      | exe :: _
-                        when (not (Filename.is_relative exe))
-                             && Filename.basename exe = "docker" ->
-                          let dir = Filename.dirname exe in
-                          let path =
-                            match Sys.getenv_opt "PATH" with
-                            | Some p -> dir ^ ":" ^ p
-                            | None -> dir
-                          in
-                          Unix.environment () |> Array.to_list
-                          |> List.filter (fun e ->
-                              not (String.starts_with ~prefix:"PATH=" e))
-                          |> List.cons ("PATH=" ^ path)
-                          |> Array.of_list
-                      | _ -> Array.of_list env
-                    in
-                    let proc =
-                      Eio.Process.spawn ~sw proc_mgr ~cwd:(p launched.cwd) ~env
-                        ~stdin:(open_in stdin_file)
-                        ~stdout:(open_out stdout_file)
-                        ~stderr:(open_out stderr_file) launched.argv
-                    in
-                    match Eio.Process.await proc with
-                    | `Exited n -> n
-                    | `Signaled s ->
-                        failwith
-                          (Printf.sprintf "process killed by signal %d" s)))
+        let* () = reject_stdio_symlink "stdin" stdio.stdin_file in
+        let* () = reject_stdio_symlink "stdout" stdio.stdout_file in
+        let* () = reject_stdio_symlink "stderr" stdio.stderr_file in
+        let* launched = launch env cwd argv in
+        run_process eio console launched stdio
   end : RUNTIME)
-
-let tool_env ~outdir ~tmpdir =
-  let env = [ "HOME=" ^ outdir; "TMPDIR=" ^ tmpdir ] in
-  match Sys.getenv_opt "PATH" with
-  | None -> env
-  | Some path -> env @ [ "PATH=" ^ path ]
 
 let local ?console env =
   let console = Option.value console ~default:(default_console env) in
-  filesystem env ~console ~launch:(fun cwd argv -> Ok { cwd; argv })
+  filesystem env console (fun tool cwd argv ->
+      Ok { cwd; argv; env = env_list tool @ inherited_path () })
 
-let docker_executable () =
+let docker_executable eio =
   let candidates =
     [
       "/Applications/Docker.app/Contents/Resources/bin/docker";
@@ -216,11 +197,14 @@ let docker_executable () =
       "/usr/local/bin/docker";
     ]
   in
-  if Sys.command "command -v docker >/dev/null 2>&1" = 0 then "docker"
-  else
-    match List.find_opt Sys.file_exists candidates with
-    | Some path -> path
-    | None -> "docker"
+  let on_path =
+    Option.value (Sys.getenv_opt "PATH") ~default:""
+    |> String.split_on_char ':'
+    |> List.exists (fun dir ->
+        dir <> "" && is_file eio (Filename.concat dir "docker"))
+  in
+  if on_path then "docker"
+  else Option.value (List.find_opt (is_file eio) candidates) ~default:"docker"
 
 type docker_spec = {
   bin : string;
@@ -228,21 +212,20 @@ type docker_spec = {
   cwd : string;
   workdir : string;
   image : string;
+  mounts : (string * string) list;
+  container_env : string list;
 }
 
 let mount_target s =
   match Schema.Container_outdir.of_string s with
-  | Ok path -> Ok (Schema.Container_outdir.to_string path)
-  | Error message -> rt_err ("docker mount path " ^ message)
+  | Ok path -> Ok (path :> string)
+  | Error message -> Error.runtime ("docker mount path " ^ message)
 
 let docker_mount ~host ~workdir =
-  let ( let* ) = Error.( let* ) in
-  let* source =
-    try Ok (Unix.realpath host) with exn -> rt_err (Printexc.to_string exn)
-  in
+  let* source = host_realpath host in
   let* source = mount_target source in
-  let* workdir = mount_target workdir in
-  Ok (source, workdir)
+  let+ workdir = mount_target workdir in
+  (source, workdir)
 
 let docker_run_argv spec argv =
   [
@@ -253,27 +236,45 @@ let docker_run_argv spec argv =
     spec.user;
     "-v";
     spec.cwd ^ ":" ^ spec.workdir;
-    "-w";
-    spec.workdir;
-    spec.image;
   ]
+  @ List.concat_map (fun (src, dst) -> [ "-v"; src ^ ":" ^ dst ]) spec.mounts
+  @ List.concat_map (fun e -> [ "--env"; e ]) spec.container_env
+  @ [ "-w"; spec.workdir; spec.image ]
   @ argv
 
-let run_docker env argv =
-  let ( let* ) = Error.( let* ) in
-  let (module Host : RUNTIME) = local env in
-  let out = Filename.temp_file "ccr-docker-" ".txt" in
-  let* code =
-    Host.spawn
-      ~env:(Unix.environment () |> Array.to_list)
-      "/"
-      { stdin_file = None; stdout_file = Some out; stderr_file = None }
-      argv
+(* The docker client runs with the invoking environment: its config,
+   contexts, and credential helpers live under the user's HOME. When [bin] is
+   an absolute path, its directory goes first on PATH so helpers installed
+   beside it are found. *)
+let host_env () = Array.to_list (Unix.environment ())
+
+let client_env bin =
+  let host = host_env () in
+  if Filename.is_relative bin then host
+  else
+    let dir = Filename.dirname bin in
+    let path =
+      match Sys.getenv_opt "PATH" with Some p -> dir ^ ":" ^ p | None -> dir
+    in
+    ("PATH=" ^ path)
+    :: List.filter (fun e -> not (String.starts_with ~prefix:"PATH=" e)) host
+
+let run_docker eio console argv =
+  let* out = temp_file "ccr-docker-" ".txt" in
+  let bin = match argv with b :: _ -> b | [] -> "" in
+  let captured =
+    let* code =
+      run_process eio console
+        { cwd = "/"; argv; env = client_env bin }
+        { stdin_file = None; stdout_file = Some out; stderr_file = None }
+    in
+    let+ text = wrap (fun () -> Eio.Path.load (path_of eio out)) in
+    (code, text)
   in
-  let* text = Host.read_file out in
-  Sys.remove out;
+  ignore (wrap (fun () -> Eio.Path.unlink (path_of eio out)) : (unit, _) result);
+  let* code, text = captured in
   if code <> 0 then
-    rt_err
+    Error.runtime
       (Printf.sprintf "docker command failed (%d): %s" code (String.trim text))
   else Ok text
 
@@ -281,25 +282,24 @@ let is_http s =
   String.starts_with ~prefix:"http://" s
   || String.starts_with ~prefix:"https://" s
 
-let fetch env source =
-  let ( let* ) = Error.( let* ) in
+let fetch env console source =
   if is_http source then
-    let dest = Filename.temp_file "ccr-docker-" ".img" in
-    let* _ = run_docker env [ "curl"; "-fsSL"; "-o"; dest; source ] in
-    Ok dest
-  else if Sys.file_exists source then Ok source
-  else rt_err (Printf.sprintf "docker image source not found: %s" source)
+    let* dest = temp_file "ccr-docker-" ".img" in
+    let+ _ = run_docker env console [ "curl"; "-fsSL"; "-o"; dest; source ] in
+    dest
+  else if is_file env source then Ok source
+  else Error.runtime (Printf.sprintf "docker image source not found: %s" source)
 
-let gunzip_if_needed path =
+let gunzip_if_needed eio console path =
   if String.ends_with ~suffix:".gz" path || String.ends_with ~suffix:".tgz" path
   then
-    let dest = Filename.temp_file "ccr-docker-" ".tar" in
-    let code =
-      Sys.command
-        (Printf.sprintf "gzip -dc %s > %s" (Filename.quote path)
-           (Filename.quote dest))
+    let* dest = temp_file "ccr-docker-" ".tar" in
+    let* code =
+      run_process eio console
+        { cwd = "/"; argv = [ "gzip"; "-dc"; path ]; env = host_env () }
+        { stdin_file = None; stdout_file = Some dest; stderr_file = None }
     in
-    if code <> 0 then rt_err (Printf.sprintf "gunzip failed (%d)" code)
+    if code <> 0 then Error.runtime (Printf.sprintf "gunzip failed (%d)" code)
     else Ok dest
   else Ok path
 
@@ -328,60 +328,67 @@ let tag_of name contents =
   | Some tag -> tag
   | None -> Printf.sprintf "ccr:%x" (Hashtbl.hash contents)
 
-let prepare_image env image =
-  let ( let* ) = Error.( let* ) in
-  let bin = docker_executable () in
+let prepare_image env console image =
+  let bin = docker_executable env in
   match image with
   | Schema.Pull name ->
-      let* _ = run_docker env [ bin; "pull"; name ] in
-      Ok name
+      let+ _ = run_docker env console [ bin; "pull"; name ] in
+      name
   | Schema.Image_id id -> Ok id
   | Schema.Load { source; name } -> (
-      let* path = fetch env source in
-      let* text = run_docker env [ bin; "load"; "-i"; path ] in
+      let* path = fetch env console source in
+      let* text = run_docker env console [ bin; "load"; "-i"; path ] in
       match name with
       | Some tag -> Ok tag
       | None -> (
           match loaded_name text with
           | Some tag -> Ok tag
           | None ->
-              rt_err
+              Error.runtime
                 (Printf.sprintf "docker load did not name an image: %s"
                    (String.trim text))))
   | Schema.Import { source; name } ->
-      let* path = fetch env source in
-      let* tar = gunzip_if_needed path in
+      let* path = fetch env console source in
+      let* tar = gunzip_if_needed env console path in
       let tag = tag_of name source in
-      let* _ = run_docker env [ bin; "import"; tar; tag ] in
-      Ok tag
+      let+ _ = run_docker env console [ bin; "import"; tar; tag ] in
+      tag
   | Schema.Dockerfile { contents; tag } ->
-      let dir = Filename.temp_dir "ccr-docker-" "" in
-      let dockerfile = Filename.concat dir "Dockerfile" in
-      let oc = Out_channel.open_text dockerfile in
-      Out_channel.output_string oc contents;
-      Out_channel.close oc;
+      let* dir = temp_dir "ccr-docker-" in
+      let dockerfile = path_of env (Filename.concat dir "Dockerfile") in
+      let* () =
+        wrap (fun () ->
+            Eio.Path.save ~create:(`Exclusive 0o644) dockerfile contents)
+      in
       let tag = tag_of tag contents in
-      let* _ = run_docker env [ bin; "build"; "-t"; tag; dir ] in
-      Ok tag
+      let+ _ = run_docker env console [ bin; "build"; "-t"; tag; dir ] in
+      tag
 
 let docker ?console env (req : Schema.docker) =
-  let ( let* ) = Error.( let* ) in
   let console = Option.value console ~default:(default_console env) in
-  filesystem env ~console ~launch:(fun cwd argv ->
-      let* tag = prepare_image env req.image in
+  filesystem env console (fun (tool : tool_env) cwd argv ->
+      let* tag = prepare_image env console req.image in
       let user = Printf.sprintf "%d:%d" (Unix.getuid ()) (Unix.getgid ()) in
-      let bin = docker_executable () in
+      let bin = docker_executable env in
       let workdir =
         match req.output_directory with
         | None -> cwd
-        | Some path -> Schema.Container_outdir.to_string path
+        | Some path -> (path :> string)
       in
       let* source, workdir = docker_mount ~host:cwd ~workdir in
-      Ok
+      let* tmp = docker_mount ~host:tool.tmpdir ~workdir:tool.tmpdir in
+      let container_env = [ "HOME=" ^ tool.home; "TMPDIR=" ^ tool.tmpdir ] in
+      let spec =
         {
-          cwd = "/";
-          argv =
-            docker_run_argv
-              { bin; user; cwd = source; workdir; image = tag }
-              argv;
-        })
+          bin;
+          user;
+          cwd = source;
+          workdir;
+          image = tag;
+          mounts = [ tmp ];
+          container_env;
+        }
+      in
+      Ok
+        ({ cwd = "/"; argv = docker_run_argv spec argv; env = client_env bin }
+          : launch))
