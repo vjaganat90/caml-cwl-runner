@@ -38,6 +38,8 @@ let prop_docker_argv_suffix =
           cwd = "/host-out";
           workdir;
           image = "alpine";
+          mounts = [];
+          container_env = [];
         }
       in
       let got = Cwl.Runtime.docker_run_argv spec argv in
@@ -457,6 +459,42 @@ let docker_import_saved =
       then Alcotest.fail "gzip failed";
       run_archive_tool ~dir ~fixture_name:"docker-import.cwl" ~archive:gz () )
 
+let docker_run_argv_env_and_mounts () =
+  let spec =
+    {
+      Cwl.Runtime.bin = "docker";
+      user = "501:20";
+      cwd = "/host/out";
+      workdir = "/out";
+      image = "alpine";
+      mounts = [ ("/host/tmp", "/host/tmp") ];
+      container_env = [ "HOME=/out"; "TMPDIR=/host/tmp" ];
+    }
+  in
+  Alcotest.(check (list string))
+    "argv"
+    [
+      "docker";
+      "run";
+      "--rm";
+      "--user";
+      "501:20";
+      "-v";
+      "/host/out:/out";
+      "-v";
+      "/host/tmp:/host/tmp";
+      "--env";
+      "HOME=/out";
+      "--env";
+      "TMPDIR=/host/tmp";
+      "-w";
+      "/out";
+      "alpine";
+      "echo";
+      "hi";
+    ]
+    (Cwl.Runtime.docker_run_argv spec [ "echo"; "hi" ])
+
 let tests =
   [
     ( "docker_properties",
@@ -470,6 +508,7 @@ let tests =
         ("paths", `Quick, container_outdir_table);
         ("documents", `Quick, docker_output_documents);
         ("mount", `Quick, docker_mount_table);
+        ("run_argv_env_and_mounts", `Quick, docker_run_argv_env_and_mounts);
         ("designated", `Quick, designated_outdir_table);
       ] );
     ("docker_image", [ docker_load_saved; docker_import_saved ]);
