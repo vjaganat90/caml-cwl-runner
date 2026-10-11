@@ -400,11 +400,11 @@ let docker_prefix () =
   in
   (prefix, q)
 
-let run_archive_tool ~dir ~fixture_name ~archive () =
+let run_archive_tool ~dir ~template ~archive () =
   let tool =
     write_text
       (Filename.concat dir "tool.cwl")
-      (substitute (read_fixture fixture_name) "@ARCHIVE@" archive)
+      (substitute template "@ARCHIVE@" archive)
   in
   let job = write_text (Filename.concat dir "job.json") "{}\n" in
   Eio_main.run @@ fun env ->
@@ -413,6 +413,19 @@ let run_archive_tool ~dir ~fixture_name ~archive () =
   match Cwl.run local ~docker tool (Some job) with
   | Ok _ -> ()
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+
+let gzip_to ~src ~dst =
+  if
+    Sys.command
+      (Printf.sprintf "gzip -c %s > %s" (Filename.quote src)
+         (Filename.quote dst))
+    <> 0
+  then Alcotest.fail "gzip failed"
+
+let with_cwd dir f =
+  let back = Sys.getcwd () in
+  Sys.chdir dir;
+  Fun.protect ~finally:(fun () -> Sys.chdir back) f
 
 let docker_load_saved =
   ( "docker_load_saved",
@@ -429,7 +442,9 @@ let docker_load_saved =
              prefix q (Filename.quote tar))
       in
       if code <> 0 then Alcotest.fail "docker save failed";
-      run_archive_tool ~dir ~fixture_name:"docker-load.cwl" ~archive:tar () )
+      run_archive_tool ~dir
+        ~template:(read_fixture "docker-load.cwl")
+        ~archive:tar () )
 
 let docker_import_saved =
   ( "docker_import_saved",
@@ -448,14 +463,15 @@ let docker_import_saved =
              prefix q prefix q prefix q (Filename.quote tar) prefix q)
       in
       if code <> 0 then Alcotest.fail "docker export failed";
-      let gz = tar ^ ".gz" in
-      if
-        Sys.command
-          (Printf.sprintf "gzip -c %s > %s" (Filename.quote tar)
-             (Filename.quote gz))
-        <> 0
-      then Alcotest.fail "gzip failed";
-      run_archive_tool ~dir ~fixture_name:"docker-import.cwl" ~archive:gz () )
+      let template = read_fixture "docker-import.cwl" in
+      let import ~archive = run_archive_tool ~dir ~template ~archive () in
+      let gz = Filename.concat dir "rootfs.tar.gz" in
+      gzip_to ~src:tar ~dst:gz;
+      import ~archive:gz;
+      with_cwd dir (fun () -> import ~archive:"rootfs.tar.gz");
+      let tgz = Filename.concat dir "rootfs.tgz" in
+      gzip_to ~src:tar ~dst:tgz;
+      with_cwd dir (fun () -> import ~archive:"rootfs.tgz") )
 
 let docker_run_argv_env_and_mounts () =
   let spec =
