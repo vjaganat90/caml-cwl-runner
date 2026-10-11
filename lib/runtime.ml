@@ -293,10 +293,12 @@ let fetch env console source =
 let gunzip_if_needed eio console path =
   if String.ends_with ~suffix:".gz" path || String.ends_with ~suffix:".tgz" path
   then
+    (* gzip is started at /, so a relative archive would be opened there. *)
+    let* src = host_realpath path in
     let* dest = temp_file "ccr-docker-" ".tar" in
     let* code =
       run_process eio console
-        { cwd = "/"; argv = [ "gzip"; "-dc"; path ]; env = host_env () }
+        { cwd = "/"; argv = [ "gzip"; "-dc"; src ]; env = host_env () }
         { stdin_file = None; stdout_file = Some dest; stderr_file = None }
     in
     if code <> 0 then Error.runtime (Printf.sprintf "gunzip failed (%d)" code)
