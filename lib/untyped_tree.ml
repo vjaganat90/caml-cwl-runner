@@ -6,7 +6,7 @@
 include Data.Untyped_tree
 open Error.Syntax
 
-let rec of_yaml : Yaml.value -> value = function
+let rec of_yaml = function
   | `Null -> Null
   | `Bool b -> Bool b
   | `Float f ->
@@ -26,8 +26,6 @@ let of_yaml_string ?(path = "") s =
   | Error (`Msg msg) ->
       let path = if path = "" then None else Some path in
       Error (Error.Parse { path; message = msg })
-
-let load_string ?path s = of_yaml_string ?path s
 
 let string_field kvs key =
   match List.assoc_opt key kvs with Some (String s) -> Some s | _ -> None
@@ -181,4 +179,4 @@ let load (module F : FILE) path =
   let* text = F.read_file path in
   let* tree = of_yaml_string ~path text in
   let path = normalize path in
-  resolve (module F : FILE) ~base:(`File path) ~stack:[ path ] tree
+  resolve (module F) ~base:(`File path) ~stack:[ path ] tree

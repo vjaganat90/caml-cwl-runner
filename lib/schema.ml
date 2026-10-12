@@ -85,8 +85,7 @@ let diagnostics_for_keys ~implemented ~known ~json_path kvs =
       else Some (diag ("unknown field " ^ k) (child json_path k)))
     kvs
 
-let rec parse_binding ~json_path v :
-    (binding * Error.diagnostic list, Error.t) result =
+let rec parse_binding ~json_path v =
   match v with
   | Untyped_tree.Object kvs ->
       let diags =
@@ -119,8 +118,7 @@ let rec parse_binding ~json_path v :
         (Format.asprintf "expected inputBinding object, got %a" Untyped_tree.pp
            other)
 
-and parse_cwl_type ~json_path v :
-    (cwl_type * Error.diagnostic list, Error.t) result =
+and parse_cwl_type ~json_path v =
   match v with
   | Untyped_tree.String s -> parse_type_dsl ~json_path s
   | Untyped_tree.Array parts ->
@@ -196,10 +194,7 @@ and parse_type_object ~json_path kvs =
   | Some t -> parse_cwl_type ~json_path t
   | None -> Error.schema json_path "type object missing 'type' field"
 
-let parse_default ~param ~ty v = Ty.value_of_tree param ty v
-
-let parse_input ~json_path ~id_opt v :
-    (input * Error.diagnostic list, Error.t) result =
+let parse_input ~json_path ~id_opt v =
   match v with
   | Untyped_tree.String s ->
       let id = match id_opt with Some id -> id | None -> "" in
@@ -235,7 +230,7 @@ let parse_input ~json_path ~id_opt v :
         match List.assoc_opt "default" kvs with
         | None -> Ok None
         | Some d ->
-            let+ v = parse_default ~param:id ~ty d in
+            let+ v = Ty.value_of_tree id ty d in
             Some v
       in
       let* input_binding, bind_diags =
@@ -259,8 +254,7 @@ let parse_input ~json_path ~id_opt v :
         (Format.asprintf "expected input parameter, got %a" Untyped_tree.pp
            other)
 
-let parse_inputs ~json_path v :
-    (input list * Error.diagnostic list, Error.t) result =
+let parse_inputs ~json_path v =
   match v with
   | Untyped_tree.Array xs ->
       map_i
@@ -296,8 +290,7 @@ let parse_resource ~json_path ~in_requirements kvs =
   in
   (Resource { cores_min }, extra)
 
-let parse_requirement ~json_path ~in_requirements v :
-    (requirement * Error.diagnostic list, Error.t) result =
+let parse_requirement ~json_path ~in_requirements v =
   match v with
   | Untyped_tree.Object kvs -> (
       match List.assoc_opt "class" kvs with
@@ -406,8 +399,7 @@ let one_docker json_path (reqs, diags) =
       "DockerRequirement is repeated; the mount target would be ambiguous"
   else Ok (reqs, diags)
 
-let parse_req_list ~json_path ~in_requirements v :
-    (requirement list * Error.diagnostic list, Error.t) result =
+let parse_req_list ~json_path ~in_requirements v =
   match v with
   | Untyped_tree.Null -> Ok ([], [])
   | Untyped_tree.Array xs ->
@@ -460,8 +452,7 @@ let parse_glob_list ~json_path v =
         (Format.asprintf "expected glob string or array, got %a" Untyped_tree.pp
            other)
 
-let parse_output_binding ~json_path v :
-    (output_binding * Error.diagnostic list, Error.t) result =
+let parse_output_binding ~json_path v =
   match v with
   | Untyped_tree.Object kvs ->
       let diags =
@@ -488,8 +479,7 @@ let parse_output_type ~json_path v =
       let+ t, d = parse_cwl_type ~json_path v in
       (t, No_stream, d)
 
-let parse_output ~json_path ~id_opt v :
-    (output * Error.diagnostic list, Error.t) result =
+let parse_output ~json_path ~id_opt v =
   match v with
   | Untyped_tree.String s ->
       let id = match id_opt with Some id -> id | None -> "" in
@@ -546,8 +536,7 @@ let parse_output ~json_path ~id_opt v :
         (Format.asprintf "expected output parameter, got %a" Untyped_tree.pp
            other)
 
-let parse_outputs ~json_path v :
-    (output list * Error.diagnostic list, Error.t) result =
+let parse_outputs ~json_path v =
   match v with
   | Untyped_tree.Null -> Ok ([], [])
   | Untyped_tree.Array xs ->

@@ -114,7 +114,7 @@ let rec collect (module FS : FS) ~roots ~depth dir parts =
         let* zero = collect (module FS : FS) ~roots ~depth dir rest in
         if not (FS.is_dir dir) then Ok zero
         else
-          let* list = may_list (module FS : FS) ~roots dir in
+          let* list = may_list (module FS) ~roots dir in
           if not list then Ok zero
           else
             let* names = FS.read_dir dir in
@@ -133,7 +133,7 @@ let rec collect (module FS : FS) ~roots ~depth dir parts =
     | comp :: rest ->
         if not (FS.is_dir dir) then Ok []
         else
-          let* list = may_list (module FS : FS) ~roots dir in
+          let* list = may_list (module FS) ~roots dir in
           if not list then Ok []
           else if is_literal comp then
             let p = join dir comp in
@@ -172,5 +172,5 @@ let glob (module FS : FS) ?roots root pattern =
   if List.exists (fun p -> p = "..") parts then
     Error.runtime "glob pattern must not contain '..'"
   else
-    let+ hits = collect (module FS : FS) ~roots ~depth:0 root parts in
+    let+ hits = collect (module FS) ~roots ~depth:0 root parts in
     sort_unique hits

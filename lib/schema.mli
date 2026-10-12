@@ -33,7 +33,7 @@ val diagnostics_for_keys :
 val parse_binding :
   json_path:string ->
   Untyped_tree.value ->
-  (binding * Error.diagnostic list, Error.t) result
+  (Ty.binding * Error.diagnostic list, Error.t) result
 
 val parse_inputs :
   json_path:string ->

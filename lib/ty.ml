@@ -15,7 +15,7 @@ let default_binding =
     value_from = None;
   }
 
-let rec is_optional : t -> bool = function
+let rec is_optional = function
   | Null -> true
   | Union ts -> List.exists is_optional ts
   | _ -> false

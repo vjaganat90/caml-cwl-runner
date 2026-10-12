@@ -91,15 +91,11 @@ module Type = struct
 end
 
 module Schema = struct
-  type binding = Type.binding
-  type position = Type.position
-  type cwl_type = Type.t
-
   type input = {
     id : string;
-    ty : cwl_type;
+    ty : Type.t;
     default : Type.value option;
-    input_binding : binding option;
+    input_binding : Type.binding option;
     unimplemented : Error.diagnostic list;
   }
 
@@ -159,7 +155,7 @@ module Schema = struct
 
   type output = {
     id : string;
-    ty : cwl_type;
+    ty : Type.t;
     output_binding : output_binding option;
     stream : stream;
     unimplemented : Error.diagnostic list;
@@ -167,9 +163,9 @@ module Schema = struct
 end
 
 module Command_line_tool = struct
-  type argument = Literal of string | Binding of Schema.binding
+  type argument = Literal of string | Binding of Type.binding
 
-  type command_line_tool = {
+  type t = {
     cwl_version : string;
     base_command : string list;
     arguments : argument list;
@@ -182,20 +178,16 @@ module Command_line_tool = struct
     requirements : Schema.requirement list;
     hints : Schema.requirement list;
   }
-
-  type t = command_line_tool
 end
 
 module Workflow = struct
-  type workflow = {
+  type t = {
     cwl_version : string;
     inputs : Schema.input list;
     outputs : Schema.output list;
     requirements : Schema.requirement list;
     hints : Schema.requirement list;
   }
-
-  type t = workflow
 end
 
 module Document = struct
