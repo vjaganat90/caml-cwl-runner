@@ -58,7 +58,8 @@ let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
                  })
         | Error _ as e -> e)
   in
-  let rec collect ctx ~lead ~name ~ty ~binding_opt value acc =
+  let rec collect ctx ~lead ~name ~ty ~(binding_opt : Ty.binding option) value
+      acc =
     match value with
     | Ty.Vnull -> Ok acc
     | _ -> (
@@ -91,17 +92,17 @@ let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
               match binding_opt with
               | None -> Ok lead
               | Some b ->
-                  let+ p = resolve_position ctx b.Ty.position in
+                  let+ p = resolve_position ctx b.position in
                   append_pos lead p
             in
             let parent_key = append_name parent_key name in
             let acc =
               match binding_opt with
-              | Some b when b.Ty.item_separator <> None ->
+              | Some b when b.item_separator <> None ->
                   { key = parent_key; binding = b; payload = Value value; name }
                   :: acc
               | Some b -> (
-                  match b.Ty.prefix with
+                  match b.prefix with
                   | Some p ->
                       {
                         key = parent_key;
@@ -115,7 +116,7 @@ let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
             in
             if
               match binding_opt with
-              | Some b when b.Ty.item_separator <> None -> true
+              | Some b when b.item_separator <> None -> true
               | _ -> false
             then Ok acc
             else
@@ -140,7 +141,7 @@ let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
             match binding_opt with
             | None -> Ok acc
             | Some b ->
-                let* p = resolve_position ctx b.Ty.position in
+                let* p = resolve_position ctx b.position in
                 let key = append_name (append_pos lead p) name in
                 Ok ({ key; binding = b; payload = Value value; name } :: acc)))
   in
@@ -157,7 +158,7 @@ let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
         in
         collect_arguments ctx (i + 1) (item :: acc) rest
     | Command_line_tool.Binding b :: rest ->
-        let* p = resolve_position ctx b.Ty.position in
+        let* p = resolve_position ctx b.position in
         let item =
           {
             key = [ I p; I i ];

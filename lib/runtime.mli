@@ -23,7 +23,7 @@ type docker_spec = {
   user : string;
   cwd : string;
   workdir : string;
-  image : string;
+  tag : string;
   mounts : (string * string) list;  (** Extra [-v source:target] pairs. *)
   container_env : string list;  (** [NAME=value] set inside the container. *)
 }

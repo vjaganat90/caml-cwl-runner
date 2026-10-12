@@ -11,14 +11,14 @@ let runtime_setup (module R : Cwl.Runtime.RUNTIME) =
   (parent, root)
 
 let confined_inside () =
-  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  with_runtime @@ fun (module R) ->
   let _parent, root = runtime_setup (module R) in
   let file = Filename.concat root "a.txt" in
   expect_ok (R.write_file file "x");
   expect_ok (R.confined [ root ] file)
 
 let confined_rejects_sibling () =
-  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  with_runtime @@ fun (module R) ->
   let parent, root = runtime_setup (module R) in
   let evil = Filename.concat parent "out-evil" in
   expect_ok (R.mkdir_p evil);
@@ -27,7 +27,7 @@ let confined_rejects_sibling () =
   expect_runtime (R.confined [ root ] file)
 
 let confined_rejects_dotdot () =
-  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  with_runtime @@ fun (module R) ->
   let parent, root = runtime_setup (module R) in
   let other = Filename.concat parent "other" in
   expect_ok (R.mkdir_p other);
@@ -45,7 +45,7 @@ let process_env_table () =
   let cwd_seen = ref "" in
   let result =
     Eio_main.run @@ fun env ->
-    let (module Local : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+    let (module Local) = Cwl.Runtime.local env in
     let module R = struct
       include Local
 
@@ -92,7 +92,7 @@ let documents_load_through_runtime () =
   let read = ref [] in
   let result =
     Eio_main.run @@ fun env ->
-    let (module Local : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+    let (module Local) = Cwl.Runtime.local env in
     let module R = struct
       include Local
 
@@ -110,7 +110,7 @@ let documents_load_through_runtime () =
 (* A runtime call made in a cancelled fiber stops the fiber. It must not
    come back as an [Error] the caller could carry on from. *)
 let cancellation_passes_through () =
-  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  with_runtime @@ fun (module R) ->
   let _, root = runtime_setup (module R) in
   let file = Filename.concat root "a.txt" in
   expect_ok (R.write_file file "x");
@@ -130,7 +130,7 @@ let local_env_inherits_only_path () =
   let out = Filename.concat dir "env.txt" in
   let code =
     Eio_main.run @@ fun env ->
-    let (module R : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+    let (module R) = Cwl.Runtime.local env in
     R.spawn
       { home = dir; tmpdir = dir }
       dir
@@ -181,7 +181,7 @@ let uncaptured_output_reaches_console () =
   Alcotest.(check bool) "stderr" true (contains ~sub:"to-err" seen)
 
 let sha1_vectors () =
-  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  with_runtime @@ fun (module R) ->
   let dir = expect_ok (R.mkdtemp "ccr-sha1-") in
   List.iter
     (fun (name, body, hex) ->
@@ -255,7 +255,7 @@ let leave_tmpdir () =
   Alcotest.(check bool)
     "tmpdir kept" true
     (Sys.file_exists (Filename.concat tmpdir "scratch"));
-  ignore (Sys.command ("rm -rf " ^ Filename.quote tmpdir) : int)
+  ignore (Sys.command ("rm -rf " ^ Filename.quote tmpdir))
 
 let tests =
   [

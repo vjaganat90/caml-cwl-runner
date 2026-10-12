@@ -8,7 +8,7 @@ let prop_integral_yaml =
   Test.make ~name:"integral YAML is Int" ~count:100
     Gen.(int_range (-10_000) 10_000)
     (fun n ->
-      match Cwl.Untyped_tree.load_string (string_of_int n) with
+      match Cwl.Untyped_tree.of_yaml_string (string_of_int n) with
       | Ok (Cwl.Untyped_tree.Int m) -> Int64.to_int m = n
       | _ -> false)
 

@@ -467,8 +467,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
       let* tmpdir = R.mkdtemp "ccr-tmp-" in
       let* tmpdir = R.realpath tmpdir in
       Fun.protect ~finally:(fun () ->
-          if rm_tmpdir then
-            ignore (R.remove_tree tmpdir : (unit, Error.t) result))
+          if rm_tmpdir then ignore (R.remove_tree tmpdir))
       @@ fun () ->
       let* job_dir, job_raw =
         match job with
@@ -539,7 +538,7 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
         let* outputs =
           if R.exists json_path then
             let* s = R.read_file json_path in
-            let* tree = Untyped_tree.load_string ~path:json_path s in
+            let* tree = Untyped_tree.of_yaml_string ~path:json_path s in
             let* obj = Type.object_of_tree tree in
             let obj =
               List.map

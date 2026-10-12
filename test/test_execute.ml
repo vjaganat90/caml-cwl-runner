@@ -201,7 +201,7 @@ let execute_edges =
              paths));
   ]
 
-let run_edge (e : edge) () =
+let run_edge e () =
   if e.docker then require_docker ();
   let result =
     if not e.docker then run_tool e.tool e.job
@@ -253,7 +253,7 @@ let edge_cases =
     execute_edges
 
 let planted_symlink_runtime ~prefix ~link_name ~tool ~job () =
-  with_runtime @@ fun (module R : Cwl.Runtime.RUNTIME) ->
+  with_runtime @@ fun (module R) ->
   let parent = expect_ok (R.mkdtemp prefix) in
   let parent = expect_ok (R.abspath parent) in
   let outdir = Filename.concat parent "out" in
@@ -286,7 +286,7 @@ let output_under_outdir =
     `Quick,
     fun () ->
       Eio_main.run @@ fun env ->
-      let (module R : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
+      let (module R) = Cwl.Runtime.local env in
       let outdir = expect_ok (R.mkdtemp "ccr-under-") in
       let outdir = expect_ok (R.abspath outdir) in
       match

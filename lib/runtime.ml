@@ -69,8 +69,8 @@ let temp_file prefix suffix =
 let is_file eio path =
   try Eio.Path.is_file (path_of eio path) with Eio.Io _ -> false
 
-let run_process eio (console : console) { cwd; argv; env }
-    ({ stdin_file; stdout_file; stderr_file } : stdio) =
+let run_process eio console { cwd; argv; env }
+    { stdin_file; stdout_file; stderr_file } =
   wrap (fun () ->
       Eio.Switch.run @@ fun sw ->
       let p = path_of eio in
@@ -94,7 +94,7 @@ let run_process eio (console : console) { cwd; argv; env }
       | `Exited n -> n
       | `Signaled s -> failwith (Printf.sprintf "process killed by signal %d" s))
 
-let filesystem eio (console : console) launch =
+let filesystem eio console launch =
   let p = path_of eio in
   let native s =
     match Eio.Path.native (p s) with
@@ -174,7 +174,7 @@ let filesystem eio (console : console) launch =
               Error.runtime (Printf.sprintf "%s destination is a symlink" label)
           | _ -> Ok ())
 
-    let spawn env cwd (stdio : stdio) argv =
+    let spawn env cwd stdio argv =
       if argv = [] then Error.runtime "empty argv"
       else
         let* () = reject_stdio_symlink "stdin" stdio.stdin_file in
@@ -211,7 +211,7 @@ type docker_spec = {
   user : string;
   cwd : string;
   workdir : string;
-  image : string;
+  tag : string;
   mounts : (string * string) list;
   container_env : string list;
 }
@@ -239,7 +239,7 @@ let docker_run_argv spec argv =
   ]
   @ List.concat_map (fun (src, dst) -> [ "-v"; src ^ ":" ^ dst ]) spec.mounts
   @ List.concat_map (fun e -> [ "--env"; e ]) spec.container_env
-  @ [ "-w"; spec.workdir; spec.image ]
+  @ [ "-w"; spec.workdir; spec.tag ]
   @ argv
 
 (* The docker client runs with the invoking environment: its config,
@@ -271,7 +271,7 @@ let run_docker eio console argv =
     let+ text = wrap (fun () -> Eio.Path.load (path_of eio out)) in
     (code, text)
   in
-  ignore (wrap (fun () -> Eio.Path.unlink (path_of eio out)) : (unit, _) result);
+  ignore (wrap (fun () -> Eio.Path.unlink (path_of eio out)));
   let* code, text = captured in
   if code <> 0 then
     Error.runtime
@@ -368,7 +368,7 @@ let prepare_image env console image =
 
 let docker ?console env (req : Schema.docker) =
   let console = Option.value console ~default:(default_console env) in
-  filesystem env console (fun (tool : tool_env) cwd argv ->
+  filesystem env console (fun tool cwd argv ->
       let* tag = prepare_image env console req.image in
       let user = Printf.sprintf "%d:%d" (Unix.getuid ()) (Unix.getgid ()) in
       let bin = docker_executable env in
@@ -386,11 +386,9 @@ let docker ?console env (req : Schema.docker) =
           user;
           cwd = source;
           workdir;
-          image = tag;
+          tag;
           mounts = [ tmp ];
           container_env;
         }
       in
-      Ok
-        ({ cwd = "/"; argv = docker_run_argv spec argv; env = client_env bin }
-          : launch))
+      Ok { cwd = "/"; argv = docker_run_argv spec argv; env = client_env bin })

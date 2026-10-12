@@ -31,8 +31,7 @@ let known_tool_keys =
   implemented_tool_keys
   @ [ "intent"; "temporaryFailCodes"; "permanentFailCodes" ]
 
-let parse_arguments ~json_path v :
-    (argument list * Error.diagnostic list, Error.t) result =
+let parse_arguments ~json_path v =
   match v with
   | Untyped_tree.Null -> Ok ([], [])
   | Untyped_tree.Array xs ->

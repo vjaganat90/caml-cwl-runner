@@ -37,7 +37,7 @@ let prop_docker_argv_suffix =
           user = "1:1";
           cwd = "/host-out";
           workdir;
-          image = "alpine";
+          tag = "alpine";
           mounts = [];
           container_env = [];
         }
@@ -56,7 +56,7 @@ let prop_docker_argv_suffix =
       let vol = spec.cwd ^ ":" ^ spec.workdir in
       pre_len > 0
       && List.drop pre_len got = argv
-      && List.nth got (pre_len - 1) = spec.image
+      && List.nth got (pre_len - 1) = spec.tag
       && flag "-w" = Some spec.workdir
       && flag "-v" = Some vol
       && String.split_on_char ':' vol = [ spec.cwd; spec.workdir ])
@@ -142,7 +142,7 @@ let container_outdir_table () =
     container_outdir_cases
 
 let parse_src src =
-  match Cwl.Untyped_tree.load_string src with
+  match Cwl.Untyped_tree.of_yaml_string src with
   | Error _ as e -> e
   | Ok tree -> Cwl.Command_line_tool.of_tree tree
 
@@ -317,8 +317,7 @@ let designated_outdir_table () =
       let argv_ok = ref false in
       let result =
         Eio_main.run @@ fun env ->
-        let (module Local : Cwl.Runtime.RUNTIME) = Cwl.Runtime.local env in
-        let module Local = (val (module Local) : Cwl.Runtime.RUNTIME) in
+        let (module Local) = Cwl.Runtime.local env in
         let module R = struct
           include Local
 
@@ -355,10 +354,7 @@ let designated_outdir_table () =
                     | Ok () -> Ok 0
                     | Error _ as e -> e))
         end in
-        Cwl.run
-          (module Local)
-          ~docker:(fun _req -> (module R : Cwl.Runtime.RUNTIME))
-          tool (Some job)
+        Cwl.run (module Local) ~docker:(fun _req -> (module R)) tool (Some job)
       in
       if not !argv_ok then
         Alcotest.failf "%s: $(runtime.outdir) was not the designated directory"
@@ -480,7 +476,7 @@ let docker_run_argv_env_and_mounts () =
       user = "501:20";
       cwd = "/host/out";
       workdir = "/out";
-      image = "alpine";
+      tag = "alpine";
       mounts = [ ("/host/tmp", "/host/tmp") ];
       container_env = [ "HOME=/out"; "TMPDIR=/host/tmp" ];
     }
