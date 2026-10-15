@@ -465,3 +465,16 @@ let parse_output what ~json_path id_opt v =
     ty_diags @ bind_diags @ unimplemented )
 
 let parse_outputs = parse_params "output" parse_output
+
+(* The fields every process class has. Diagnostics come in reading order. *)
+let parse_process kvs =
+  let* inputs, in_diags = parse_opt parse_inputs "inputs" kvs in
+  let* outputs, out_diags = parse_opt parse_outputs "outputs" kvs in
+  let* requirements, req_diags =
+    parse_opt (parse_req_list ~in_requirements:true) "requirements" kvs
+  in
+  let+ hints, hint_diags =
+    parse_opt (parse_req_list ~in_requirements:false) "hints" kvs
+  in
+  ( (inputs, outputs, requirements, hints),
+    in_diags @ out_diags @ req_diags @ hint_diags )
