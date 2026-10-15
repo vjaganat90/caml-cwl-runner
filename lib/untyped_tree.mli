@@ -12,6 +12,9 @@ val load : (module FILE) -> string -> (value, Error.t) result
 
 val pp : Format.formatter -> value -> unit
 
+val expected : string -> value -> string
+(** [expected what value] is the sentence [expected what, got value]. *)
+
 val child : string -> string -> string
 (** [child path key] is the JSON path of [key] under [path]. [""] is the
     document root. *)
