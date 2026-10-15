@@ -31,7 +31,4 @@ let of_tree tree =
             [ Error.unimplemented "Workflow" "class" ]
             @ in_diags @ out_diags @ req_diags @ hint_diags;
         }
-  | other ->
-      Error.schema "/"
-        (Format.asprintf "expected a CWL document object, got %a"
-           Untyped_tree.pp other)
+  | other -> Schema.expected ~json_path:"/" ~what:"a CWL document object" other
