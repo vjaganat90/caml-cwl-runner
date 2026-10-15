@@ -97,21 +97,22 @@ let parse_param_ref s =
         segs i []
 
 let or_null f = function Some x -> Some (f x) | None -> Some Ty.Vnull
+let str field = or_null (fun s -> Ty.Vstring s) field
 
 let file_field (f : Ty.file) = function
-  | "location" -> or_null (fun s -> Ty.Vstring s) f.location
-  | "path" -> or_null (fun s -> Ty.Vstring s) f.path
-  | "basename" -> or_null (fun s -> Ty.Vstring s) f.basename
-  | "nameroot" -> or_null (fun s -> Ty.Vstring s) f.nameroot
-  | "nameext" -> or_null (fun s -> Ty.Vstring s) f.nameext
-  | "checksum" -> or_null (fun s -> Ty.Vstring s) f.checksum
+  | "location" -> str f.location
+  | "path" -> str f.path
+  | "basename" -> str f.basename
+  | "nameroot" -> str f.nameroot
+  | "nameext" -> str f.nameext
+  | "checksum" -> str f.checksum
   | "size" -> or_null (fun n -> Ty.Vint n) f.size
   | "class" -> Some (Ty.Vstring "File")
   | _ -> None
 
 let dir_field (d : Ty.directory) = function
-  | "location" -> or_null (fun s -> Ty.Vstring s) d.location
-  | "path" -> or_null (fun s -> Ty.Vstring s) d.path
+  | "location" -> str d.location
+  | "path" -> str d.path
   | "class" -> Some (Ty.Vstring "Directory")
   | _ -> None
 
@@ -142,30 +143,26 @@ let eval_path ctx root segs =
         let key =
           match seg with Dot k | Quote k -> k | Index i -> string_of_int i
         in
+        let descend found missing =
+          match found with Some v -> step v rest | None -> Error.expr missing
+        in
         match (current, seg) with
         | Ty.Vnull, _ ->
             Error.expr (Printf.sprintf "cannot look up '%s' on null" key)
-        | Ty.Vrecord kvs, (Dot k | Quote k) -> (
-            match List.assoc_opt k kvs with
-            | Some v -> step v rest
-            | None ->
-                Error.expr (Printf.sprintf "missing field '%s' in object" k))
-        | Ty.Vfile f, (Dot k | Quote k) -> (
-            match file_field f k with
-            | Some v -> step v rest
-            | None -> Error.expr (Printf.sprintf "unknown File field '%s'" k))
-        | Ty.Vdir d, (Dot k | Quote k) -> (
-            match dir_field d k with
-            | Some v -> step v rest
-            | None ->
-                Error.expr (Printf.sprintf "unknown Directory field '%s'" k))
+        | Ty.Vrecord kvs, (Dot k | Quote k) ->
+            descend (List.assoc_opt k kvs)
+              (Printf.sprintf "missing field '%s' in object" k)
+        | Ty.Vfile f, (Dot k | Quote k) ->
+            descend (file_field f k)
+              (Printf.sprintf "unknown File field '%s'" k)
+        | Ty.Vdir d, (Dot k | Quote k) ->
+            descend (dir_field d k)
+              (Printf.sprintf "unknown Directory field '%s'" k)
         | Ty.Varray xs, (Dot "length" | Quote "length") when rest = [] ->
             Ok (Ty.Vint (Int64.of_int (List.length xs)))
-        | Ty.Varray xs, Index i -> (
-            match List.nth_opt xs i with
-            | Some v -> step v rest
-            | None ->
-                Error.expr (Printf.sprintf "array index %d out of range" i))
+        | Ty.Varray xs, Index i ->
+            descend (List.nth_opt xs i)
+              (Printf.sprintf "array index %d out of range" i)
         | Ty.Vstring s, Index i ->
             if i >= 0 && i < String.length s then
               step (Ty.Vstring (String.make 1 s.[i])) rest

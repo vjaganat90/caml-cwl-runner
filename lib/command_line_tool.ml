@@ -54,14 +54,7 @@ let parse_base_command v =
   match v with
   | Untyped_tree.String s -> Ok [ s ]
   | Untyped_tree.Array xs ->
-      let rec go acc = function
-        | [] -> Ok (List.rev acc)
-        | Untyped_tree.String s :: xs -> go (s :: acc) xs
-        | other :: _ ->
-            Error.schema "baseCommand"
-              (Format.asprintf "expected string, got %a" Untyped_tree.pp other)
-      in
-      go [] xs
+      Schema.strings ~json_path:"baseCommand" ~expected:"string" xs
   | Untyped_tree.Null -> Ok []
   | other ->
       Error.schema "baseCommand"
@@ -83,13 +76,14 @@ let parse_success_codes v =
       let+ n = one "successCodes" v in
       [ n ]
   | Untyped_tree.Array xs ->
-      let rec go i acc = function
-        | [] -> Ok (List.rev acc)
-        | x :: xs ->
-            let* n = one (Schema.nth "successCodes" i) x in
-            go (i + 1) (n :: acc) xs
+      let+ ns, _ =
+        Schema.map_i
+          (fun i x ->
+            let+ n = one (Schema.nth "successCodes" i) x in
+            (n, []))
+          xs
       in
-      go 0 [] xs
+      ns
   | other ->
       Error.schema "successCodes"
         (Format.asprintf "expected int or array of int, got %a" Untyped_tree.pp

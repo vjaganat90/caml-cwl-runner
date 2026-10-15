@@ -30,6 +30,16 @@ let map_i f xs =
   in
   go 0 [] [] xs
 
+let strings ~json_path ~expected xs =
+  let rec go acc = function
+    | [] -> Ok (List.rev acc)
+    | Untyped_tree.String s :: rest -> go (s :: acc) rest
+    | other :: _ ->
+        Error.schema json_path
+          (Format.asprintf "expected %s, got %a" expected Untyped_tree.pp other)
+  in
+  go [] xs
+
 let map_assoc f kvs =
   let rec go acc diags = function
     | [] -> Ok (List.rev acc, diags)
@@ -122,14 +132,8 @@ and parse_cwl_type ~json_path v =
   match v with
   | Untyped_tree.String s -> parse_type_dsl ~json_path s
   | Untyped_tree.Array parts ->
-      let rec go acc diags = function
-        | [] -> Ok (Ty.Union (List.rev acc), diags)
-        | x :: xs -> (
-            match parse_cwl_type ~json_path x with
-            | Error _ as e -> e
-            | Ok (t, d) -> go (t :: acc) (diags @ d) xs)
-      in
-      go [] [] parts
+      let+ ts, diags = map_i (fun _i x -> parse_cwl_type ~json_path x) parts in
+      (Ty.Union ts, diags)
   | Untyped_tree.Object kvs -> parse_type_object ~json_path kvs
   | other ->
       Error.schema json_path
@@ -444,16 +448,7 @@ let parse_glob_list ~json_path v =
   match v with
   | Untyped_tree.Null -> Ok []
   | Untyped_tree.String s -> Ok [ s ]
-  | Untyped_tree.Array xs ->
-      let rec go acc = function
-        | [] -> Ok (List.rev acc)
-        | Untyped_tree.String s :: rest -> go (s :: acc) rest
-        | other :: _ ->
-            Error.schema json_path
-              (Format.asprintf "expected glob string, got %a" Untyped_tree.pp
-                 other)
-      in
-      go [] xs
+  | Untyped_tree.Array xs -> strings ~json_path ~expected:"glob string" xs
   | other ->
       Error.schema json_path
         (Format.asprintf "expected glob string or array, got %a" Untyped_tree.pp

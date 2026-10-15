@@ -75,23 +75,25 @@ let rec fold f acc = function
   | Vrecord kvs -> List.fold_left (fun acc (_, v) -> fold f acc v) acc kvs
   | v -> f acc v
 
+let rec map_state f acc ys = function
+  | [] -> Ok (List.rev ys, acc)
+  | x :: xs ->
+      let* y, acc = f acc x in
+      map_state f acc (y :: ys) xs
+
 let rec fold_map f acc = function
   | Varray xs ->
-      let rec go acc acc_xs = function
-        | [] -> Ok (Varray (List.rev acc_xs), acc)
-        | x :: xs ->
-            let* x, acc = fold_map f acc x in
-            go acc (x :: acc_xs) xs
-      in
-      go acc [] xs
+      let+ xs, acc = map_state (fold_map f) acc [] xs in
+      (Varray xs, acc)
   | Vrecord kvs ->
-      let rec go acc acc_kvs = function
-        | [] -> Ok (Vrecord (List.rev acc_kvs), acc)
-        | (k, v) :: rest ->
-            let* v, acc = fold_map f acc v in
-            go acc ((k, v) :: acc_kvs) rest
+      let+ kvs, acc =
+        map_state
+          (fun acc (k, v) ->
+            let+ v, acc = fold_map f acc v in
+            ((k, v), acc))
+          acc [] kvs
       in
-      go acc [] kvs
+      (Vrecord kvs, acc)
   | v -> f acc v
 
 let file_basename_of location_or_path =
