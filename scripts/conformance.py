@@ -13,6 +13,7 @@ Only the summary is printed. Full logs are under _build/conformance/:
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -73,16 +74,29 @@ def warn_if_unpinned():
               "results may differ from CI", file=sys.stderr)
 
 
-def statuses(junit):
-    """Map test id to (status, tags) from cwltest's JUnit report."""
+def failed_numbers(log):
+    """Test numbers cwltest logged as "Test N failed".
+
+    The JUnit report alone undercounts: a should_fail test whose tool exits 0
+    is a failure with an empty message, and junit_xml writes no <failure> for
+    that. The log line is cwltest's own verdict.
+    """
+    with open(log) as f:
+        return {int(n) for n in re.findall(r"^Test (\d+) failed:", f.read(), re.M)}
+
+
+def statuses(junit, log):
+    """Map test id to (status, tags) from cwltest's JUnit report and log."""
+    failed = failed_numbers(log)
     out = {}
     for case in ET.parse(junit).getroot().iter("testcase"):
         tid = case.get("file")
+        number = int(case.get("url").rsplit("#", 1)[1])
         tags = [t.strip() for t in (case.get("class") or "").split(",") if t.strip()]
-        if case.find("failure") is not None:
-            status = "fail"
-        elif case.find("skipped") is not None:
+        if case.find("skipped") is not None:
             status = "unsupported"
+        elif case.find("failure") is not None or number in failed:
+            status = "fail"
         else:
             status = "pass"
         out[tid] = (status, tags)
@@ -100,7 +114,7 @@ def run_suite(args, tool, name):
         cmd += ["--exclude-tags", args.exclude_tags]
     with open(log, "w") as f:
         subprocess.run(cmd, cwd=ROOT, stdout=f, stderr=subprocess.STDOUT)
-    got = statuses(junit)
+    got = statuses(junit, log)
     with open(os.path.join(WORK, f"{name}.status"), "w") as f:
         for tid in sorted(got):
             status, tags = got[tid]
