@@ -79,7 +79,4 @@ let of_tree ?fragment tree =
               diagnostics = clt.diagnostics;
             }
       | class_ -> Error.unsupported class_)
-  | other ->
-      Error.schema "/"
-        (Format.asprintf "expected a CWL document object, got %a"
-           Untyped_tree.pp other)
+  | other -> Schema.expected ~json_path:"/" ~what:"a CWL document object" other
