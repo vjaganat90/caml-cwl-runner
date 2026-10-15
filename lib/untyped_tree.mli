@@ -10,7 +10,31 @@ val load : (module FILE) -> string -> (value, Error.t) result
 (** Reads the document and everything it [$import]s or [$include]s through the
     given [FILE]. A [Runtime.READ] is one. *)
 
-val string_field : (string * value) list -> string -> string option
-val bool_field : (string * value) list -> string -> bool option
-val int_field : (string * value) list -> string -> int64 option
 val pp : Format.formatter -> value -> unit
+
+val child : string -> string -> string
+(** [child path key] is the JSON path of [key] under [path]. [""] is the
+    document root. *)
+
+val string_field :
+  json_path:string ->
+  (string * value) list ->
+  string ->
+  (string option, Error.t) result
+(** [string_field ~json_path kvs key] is [Ok None] when [key] is missing or
+    [null], and [Ok (Some s)] when it is a string. Any other value is a schema
+    error at [child json_path key]. *)
+
+val bool_field :
+  json_path:string ->
+  (string * value) list ->
+  string ->
+  (bool option, Error.t) result
+(** Like [string_field], for a boolean. *)
+
+val int_field :
+  json_path:string ->
+  (string * value) list ->
+  string ->
+  (int64 option, Error.t) result
+(** Like [string_field], for an int or a float that is an integer. *)
