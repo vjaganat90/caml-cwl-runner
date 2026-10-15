@@ -109,21 +109,8 @@ let of_tree doc =
       let* arguments, arg_diags =
         Schema.parse_opt parse_arguments "arguments" kvs
       in
-      let* inputs, in_diags =
-        Schema.parse_opt Schema.parse_inputs "inputs" kvs
-      in
-      let* outputs, out_diags =
-        Schema.parse_opt Schema.parse_outputs "outputs" kvs
-      in
-      let* requirements, req_diags =
-        Schema.parse_opt
-          (Schema.parse_req_list ~in_requirements:true)
-          "requirements" kvs
-      in
-      let* hints, hint_diags =
-        Schema.parse_opt
-          (Schema.parse_req_list ~in_requirements:false)
-          "hints" kvs
+      let* (inputs, outputs, requirements, hints), process_diags =
+        Schema.parse_process kvs
       in
       let* stdout = Untyped_tree.string_field ~json_path:"" kvs "stdout" in
       let* stdin = Untyped_tree.string_field ~json_path:"" kvs "stdin" in
@@ -147,10 +134,7 @@ let of_tree doc =
           hints;
         }
       in
-      let diagnostics =
-        top_diags @ class_diag @ arg_diags @ in_diags @ out_diags @ req_diags
-        @ hint_diags
-      in
+      let diagnostics = top_diags @ class_diag @ arg_diags @ process_diags in
       Ok { Error.value = tool; diagnostics }
   | other -> Schema.expected ~json_path:"/" ~what:"a CWL document object" other
 

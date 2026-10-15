@@ -51,21 +51,14 @@ val parse_binding :
   Untyped_tree.value ->
   (Ty.binding * Error.diagnostic list, Error.t) result
 
-val parse_inputs :
-  json_path:string ->
-  Untyped_tree.value ->
-  (input list * Error.diagnostic list, Error.t) result
-
-val parse_outputs :
-  json_path:string ->
-  Untyped_tree.value ->
-  (output list * Error.diagnostic list, Error.t) result
-
-val parse_req_list :
-  json_path:string ->
-  in_requirements:bool ->
-  Untyped_tree.value ->
-  (requirement list * Error.diagnostic list, Error.t) result
+val parse_process :
+  (string * Untyped_tree.value) list ->
+  ( (input list * output list * requirement list * requirement list)
+    * Error.diagnostic list,
+    Error.t )
+  result
+(** The fields every process class has: [inputs], [outputs], [requirements] and
+    [hints], in that order. A missing or [null] field is empty. *)
 
 val first_unimplemented : requirement list -> string option
 (** The first requirement class that is not implemented. A hint keeps
