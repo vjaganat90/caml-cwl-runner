@@ -48,10 +48,11 @@ let parse_position ~json_path = function
       | Ok n -> Ok (Ty.Pos n)
       | Error _ -> expected ~json_path ~what:"int or expression" other)
 
-let field ~json_path parse = function
+let field parse ~json_path kvs key =
+  match List.assoc_opt key kvs with
   | None -> Ok (None, [])
   | Some v ->
-      let+ x, diags = parse ~json_path v in
+      let+ x, diags = parse ~json_path:(child json_path key) v in
       (Some x, diags)
 
 let strings ~json_path ~expected:what xs =
@@ -182,10 +183,7 @@ and parse_type_object ~json_path kvs =
         | Some v -> parse_cwl_type ~json_path:(json_path ^ ".items") v
       in
       let* item_binding, bind_diags =
-        field
-          ~json_path:(json_path ^ ".inputBinding")
-          parse_binding
-          (List.assoc_opt "inputBinding" kvs)
+        field parse_binding ~json_path kvs "inputBinding"
       in
       let extra =
         List.filter_map
@@ -247,10 +245,7 @@ let parse_input what ~json_path id_opt v =
       (List.assoc_opt "default" kvs)
   in
   let+ input_binding, bind_diags =
-    field
-      ~json_path:(child json_path "inputBinding")
-      parse_binding
-      (List.assoc_opt "inputBinding" kvs)
+    field parse_binding ~json_path kvs "inputBinding"
   in
   let unimplemented =
     diagnostics_for_keys ~implemented:implemented_input_keys
@@ -460,10 +455,7 @@ let parse_output what ~json_path id_opt v =
   let* id, t, type_path, kvs = parse_param what ~json_path id_opt v in
   let* ty, stream, ty_diags = parse_output_type ~json_path:type_path t in
   let+ output_binding, bind_diags =
-    field
-      ~json_path:(child json_path "outputBinding")
-      parse_output_binding
-      (List.assoc_opt "outputBinding" kvs)
+    field parse_output_binding ~json_path kvs "outputBinding"
   in
   let unimplemented =
     diagnostics_for_keys ~implemented:implemented_output_keys
