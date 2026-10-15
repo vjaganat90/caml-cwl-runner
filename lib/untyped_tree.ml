@@ -47,6 +47,7 @@ let rec pp fmt = function
         kvs
 
 let child path key = if path = "" then key else path ^ "." ^ key
+let expected what value = Format.asprintf "expected %s, got %a" what pp value
 
 (* A missing key and [null] are both absent. A present value that [read] does
    not accept is a schema error at the key's path, never [None]. *)
@@ -56,9 +57,7 @@ let field what read ~json_path kvs key =
   | Some v -> (
       match read v with
       | Some x -> Ok (Some x)
-      | None ->
-          Error.schema (child json_path key)
-            (Format.asprintf "expected %s, got %a" what pp v))
+      | None -> Error.schema (child json_path key) (expected what v))
 
 let string_field = field "string" (function String s -> Some s | _ -> None)
 let bool_field = field "boolean" (function Bool b -> Some b | _ -> None)
@@ -141,9 +140,7 @@ let resolve (module F : FILE) ~base ~stack tree =
           let* path = locate ~feature:"remote $base" ~base raw in
           if String.ends_with ~suffix:"/" (strip_file raw) then Ok (`Dir path)
           else Ok (`File path)
-      | Some other ->
-          Error.schema "$base"
-            (Format.asprintf "expected string, got %a" pp other)
+      | Some other -> Error.schema "$base" (expected "string" other)
     in
     match (List.assoc_opt "$import" kvs, List.assoc_opt "$include" kvs) with
     | Some _, Some _ ->

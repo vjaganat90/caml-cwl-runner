@@ -21,8 +21,7 @@ let map_i f xs =
   go 0 [] [] xs
 
 let expected ~json_path ~what value =
-  Error.schema json_path
-    (Format.asprintf "expected %s, got %a" what Untyped_tree.pp value)
+  Error.schema json_path (Untyped_tree.expected what value)
 
 let parse_string ~json_path = function
   | Untyped_tree.String s -> Ok s
