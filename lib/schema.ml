@@ -73,7 +73,7 @@ let map_assoc f kvs =
 
 let parse_opt parse key kvs =
   match List.assoc_opt key kvs with
-  | None -> Ok ([], [])
+  | None | Some Untyped_tree.Null -> Ok ([], [])
   | Some v -> parse ~json_path:key v
 
 let shortname id =
@@ -518,7 +518,6 @@ let parse_output ~json_path ~id_opt v =
 
 let parse_outputs ~json_path v =
   match v with
-  | Untyped_tree.Null -> Ok ([], [])
   | Untyped_tree.Array xs ->
       map_i
         (fun i x -> parse_output ~json_path:(nth json_path i) ~id_opt:None x)
