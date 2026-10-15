@@ -67,6 +67,7 @@ flowchart TB
   Facade --> Expr
   Facade --> Bind
   Facade --> Glob
+  Facade --> Workdir
   Facade --> Runtime
   Schema --> Type
   Command_line_tool --> Schema
@@ -77,6 +78,8 @@ flowchart TB
   Bind --> Type
   Document --> Command_line_tool
   Document --> Workflow
+  Workdir --> Type
+  Workdir --> Runtime
   Runtime --> Glob
   Untyped_tree --> Error
   Command_line_tool --> Error
@@ -84,6 +87,7 @@ flowchart TB
   Expr --> Error
   Bind --> Error
   Glob --> Error
+  Workdir --> Error
   Runtime --> Error
 ```
 
@@ -99,8 +103,9 @@ flowchart TB
 | `Expr` | Parameter-reference `ENGINE`. JavaScript is a second `ENGINE`, not a new Bind parameter. |
 | `Bind` | `inputBinding` → argv. Does not open files. |
 | `Glob` | POSIX/Python glob against `(module FS)`. Does not spawn. |
-| `Runtime` | Stage, temp dirs, spawn, confinement. Local body is Eio. |
-| `Cwl` | Facade: `command_line` and `run`. |
+| `Workdir` | File and Directory values against a work directory: stage, relocate, confine, checksum. Does not glob or spawn. |
+| `Runtime` | Temp dirs, copy, spawn, the `confined` check. Local body is Eio. |
+| `Cwl` | Facade: `command_line` and `run`. Glob and `cwl.output.json` stay here. |
 
 `Type` does not depend on `Command_line_tool`. `Glob` does not depend on `Runtime`;
 Runtime implements `Glob.FS`.
@@ -128,19 +133,21 @@ sequenceDiagram
   participant Cwl
   participant Document
   participant Runtime
+  participant Workdir
   participant Bind
   participant Glob
   CLI->>Cwl: run (module R)
   Cwl->>Document: of_tree
   Note over Cwl: unimplemented requirements → Unsupported
   Cwl->>Runtime: outdir / tmpdir
-  Cwl->>Runtime: copy File inputs as basename
+  Cwl->>Workdir: stage inputs
   Cwl->>Bind: argv (module Param_ref)
   Cwl->>Runtime: spawn ~cwd:outdir
   alt cwl.output.json exists
-    Cwl->>Cwl: load JSON, confine to outdir
+    Cwl->>Workdir: relocate, confine, checksum
   else
     Cwl->>Glob: glob per output
+    Cwl->>Workdir: confine, checksum
   end
   CLI->>CLI: JSON on stdout
 ```
@@ -149,7 +156,7 @@ Load process (`Untyped_tree` → `Document`) and job (`Untyped_tree` →
 `Type.object_`). `Workflow` is `Unsupported` until `Cwl.Wf`. Other
 `class` → `Unsupported`. A requirement that is unimplemented is
 `Unsupported` at execute; the same class in hints is a diagnostic.
-Create `outdir` and `tmpdir`. Type-check the job, then stage: File
+Create `outdir` and `tmpdir`. Type-check the job, then `Workdir.stage`: File
 inputs are **copied** into `outdir` under `basename` (`path` becomes that
 basename so argv matches cwd). Directory inputs keep the resolved source
 path and are not copied. Basename collision is `Error.Runtime`. Copies

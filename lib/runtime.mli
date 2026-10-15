@@ -1,5 +1,6 @@
-(** Stage files and spawn processes. The local body is Eio; tests pack a fake.
-    Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
+(** Copy files, make directories, and spawn processes. The local body is Eio;
+    tests pack a fake. Child cwd is the CWL outdir. Does not parse CWL or build
+    argv. *)
 
 include module type of Data.Runtime
 

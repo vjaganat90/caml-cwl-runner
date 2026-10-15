@@ -50,3 +50,7 @@ val parse_req_list :
   in_requirements:bool ->
   Untyped_tree.value ->
   (requirement list * Error.diagnostic list, Error.t) result
+
+val first_unimplemented : requirement list -> string option
+(** The first requirement class that is not implemented. A hint keeps
+    [in_requirements = false] and is not returned. *)

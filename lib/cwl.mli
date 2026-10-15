@@ -12,6 +12,7 @@ module Type : module type of Ty
 module Expr : module type of Expr
 module Bind : module type of Bind
 module Glob : module type of Glob
+module Workdir : module type of Workdir
 module Runtime : module type of Runtime
 
 val command_line :

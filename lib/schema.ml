@@ -433,6 +433,13 @@ let parse_req_list ~json_path ~in_requirements v =
         (Format.asprintf "expected requirements/hints list or map, got %a"
            Untyped_tree.pp other)
 
+let first_unimplemented reqs =
+  List.find_map
+    (function
+      | Unimplemented { class_; in_requirements = true } -> Some class_
+      | _ -> None)
+    reqs
+
 let parse_glob_list ~json_path v =
   match v with
   | Untyped_tree.Null -> Ok []
