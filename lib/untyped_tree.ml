@@ -109,71 +109,70 @@ let only_keys kvs allowed =
   | None -> Ok ()
   | Some (k, _) -> Error.schema k "unexpected field next to $import or $include"
 
-let rec resolve (module F : FILE) ~base ~stack = function
-  | Array xs ->
-      let rec go acc = function
-        | [] -> Ok (Array (List.rev acc))
-        | x :: xs -> (
-            match resolve (module F : FILE) ~base ~stack x with
-            | Error _ as e -> e
-            | Ok v -> go (v :: acc) xs)
-      in
-      go [] xs
-  | Object kvs -> resolve_object (module F : FILE) ~base ~stack kvs
-  | other -> Ok other
-
-and resolve_object (module F : FILE) ~base ~stack kvs =
-  let* base =
-    match List.assoc_opt "$base" kvs with
-    | None -> Ok base
-    | Some (String raw) ->
-        let* path = locate ~feature:"remote $base" ~base raw in
-        if String.ends_with ~suffix:"/" (strip_file raw) then Ok (`Dir path)
-        else Ok (`File path)
-    | Some other ->
-        Error.schema "$base"
-          (Format.asprintf "expected string, got %a" pp other)
+let resolve (module F : FILE) ~base ~stack tree =
+  let rec resolve ~base ~stack = function
+    | Array xs ->
+        let rec go acc = function
+          | [] -> Ok (Array (List.rev acc))
+          | x :: xs -> (
+              match resolve ~base ~stack x with
+              | Error _ as e -> e
+              | Ok v -> go (v :: acc) xs)
+        in
+        go [] xs
+    | Object kvs -> resolve_object ~base ~stack kvs
+    | other -> Ok other
+  and resolve_object ~base ~stack kvs =
+    let* base =
+      match List.assoc_opt "$base" kvs with
+      | None -> Ok base
+      | Some (String raw) ->
+          let* path = locate ~feature:"remote $base" ~base raw in
+          if String.ends_with ~suffix:"/" (strip_file raw) then Ok (`Dir path)
+          else Ok (`File path)
+      | Some other ->
+          Error.schema "$base"
+            (Format.asprintf "expected string, got %a" pp other)
+    in
+    match (List.assoc_opt "$import" kvs, List.assoc_opt "$include" kvs) with
+    | Some _, Some _ ->
+        Error.schema "$import" "$import and $include are both set"
+    | Some (String uri), None ->
+        let* () = only_keys kvs [ "$import"; "$base" ] in
+        splice ~base ~stack ~feature:"remote $import" uri
+    | None, Some (String uri) -> (
+        let* () = only_keys kvs [ "$include"; "$base" ] in
+        let* path = locate ~feature:"remote $include" ~base uri in
+        if List.mem path stack then
+          Error.schema path ("import cycle involving " ^ path)
+        else
+          match F.read_file path with
+          | Error _ as e -> e
+          | Ok text -> Ok (String text))
+    | Some _, None | None, Some _ ->
+        Error.schema "$import" "$import and $include must be strings"
+    | None, None ->
+        let rec go acc = function
+          | [] -> Ok (Object (List.rev acc))
+          | (k, v) :: rest -> (
+              match resolve ~base ~stack v with
+              | Error _ as e -> e
+              | Ok v -> go ((k, v) :: acc) rest)
+        in
+        go [] kvs
+  and splice ~base ~stack ~feature uri =
+    let* path = locate ~feature ~base uri in
+    if List.mem path stack then
+      Error.schema path ("import cycle involving " ^ path)
+    else
+      match F.read_file path with
+      | Error _ as e -> e
+      | Ok text -> (
+          match of_yaml_string ~path text with
+          | Error _ as e -> e
+          | Ok tree -> resolve ~base:(`File path) ~stack:(path :: stack) tree)
   in
-  match (List.assoc_opt "$import" kvs, List.assoc_opt "$include" kvs) with
-  | Some _, Some _ -> Error.schema "$import" "$import and $include are both set"
-  | Some (String uri), None ->
-      let* () = only_keys kvs [ "$import"; "$base" ] in
-      splice (module F : FILE) ~base ~stack ~feature:"remote $import" uri
-  | None, Some (String uri) -> (
-      let* () = only_keys kvs [ "$include"; "$base" ] in
-      let* path = locate ~feature:"remote $include" ~base uri in
-      if List.mem path stack then
-        Error.schema path ("import cycle involving " ^ path)
-      else
-        match F.read_file path with
-        | Error _ as e -> e
-        | Ok text -> Ok (String text))
-  | Some _, None | None, Some _ ->
-      Error.schema "$import" "$import and $include must be strings"
-  | None, None ->
-      let rec go acc = function
-        | [] -> Ok (Object (List.rev acc))
-        | (k, v) :: rest -> (
-            match resolve (module F : FILE) ~base ~stack v with
-            | Error _ as e -> e
-            | Ok v -> go ((k, v) :: acc) rest)
-      in
-      go [] kvs
-
-and splice (module F : FILE) ~base ~stack ~feature uri =
-  let* path = locate ~feature ~base uri in
-  if List.mem path stack then
-    Error.schema path ("import cycle involving " ^ path)
-  else
-    match F.read_file path with
-    | Error _ as e -> e
-    | Ok text -> (
-        match of_yaml_string ~path text with
-        | Error _ as e -> e
-        | Ok tree ->
-            resolve
-              (module F : FILE)
-              ~base:(`File path) ~stack:(path :: stack) tree)
+  resolve ~base ~stack tree
 
 let load (module F : FILE) path =
   let* text = F.read_file path in

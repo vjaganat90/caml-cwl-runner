@@ -191,21 +191,24 @@ let rec is_dir_ty = function
   | Ty.Union ts -> List.exists is_dir_ty ts
   | _ -> false
 
-let rec value_of_hit (module R : Runtime.READ) ty path =
-  let dir = R.is_dir path in
-  match ty with
-  | Ty.Array { items; _ } -> value_of_hit (module R : Runtime.READ) items path
-  | _ ->
-      if dir && is_dir_ty ty then Ok (dir_of path)
-      else if (not dir) && is_file_ty ty then file_of (module R) path
-      else if dir && is_file_ty ty && not (is_dir_ty ty) then
-        Error
-          (Error.Type { param = path; expected = "File"; got = "Directory" })
-      else if (not dir) && is_dir_ty ty && not (is_file_ty ty) then
-        Error
-          (Error.Type { param = path; expected = "Directory"; got = "File" })
-      else if dir then Ok (dir_of path)
-      else file_of (module R) path
+let value_of_hit (module R : Runtime.READ) ty path =
+  let rec go ty path =
+    let dir = R.is_dir path in
+    match ty with
+    | Ty.Array { items; _ } -> go items path
+    | _ ->
+        if dir && is_dir_ty ty then Ok (dir_of path)
+        else if (not dir) && is_file_ty ty then file_of (module R) path
+        else if dir && is_file_ty ty && not (is_dir_ty ty) then
+          Error
+            (Error.Type { param = path; expected = "File"; got = "Directory" })
+        else if (not dir) && is_dir_ty ty && not (is_file_ty ty) then
+          Error
+            (Error.Type { param = path; expected = "Directory"; got = "File" })
+        else if dir then Ok (dir_of path)
+        else file_of (module R) path
+  in
+  go ty path
 
 let pack_hits (module R : Runtime.READ) id ty hits =
   let optional = Ty.is_optional ty in
