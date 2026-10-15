@@ -104,57 +104,54 @@ let may_list (module FS : FS) ~roots dir =
   | Error _ -> Ok false
   | Ok rp -> Ok (in_roots ~roots rp)
 
-let rec collect (module FS : FS) ~roots ~depth dir parts =
-  if depth > max_glob_depth then Error.runtime "glob exceeded directory depth"
-  else
-    match parts with
-    | [] -> if FS.exists dir then Ok [ dir ] else Ok []
-    | ".." :: _ -> Error.runtime "glob pattern must not contain '..'"
-    | "**" :: rest ->
-        let* zero = collect (module FS : FS) ~roots ~depth dir rest in
-        if not (FS.is_dir dir) then Ok zero
-        else
-          let* list = may_list (module FS) ~roots dir in
-          if not list then Ok zero
+let collect (module FS : FS) ~roots ~depth dir parts =
+  let rec go ~depth dir parts =
+    if depth > max_glob_depth then Error.runtime "glob exceeded directory depth"
+    else
+      match parts with
+      | [] -> if FS.exists dir then Ok [ dir ] else Ok []
+      | ".." :: _ -> Error.runtime "glob pattern must not contain '..'"
+      | "**" :: rest ->
+          let* zero = go ~depth dir rest in
+          if not (FS.is_dir dir) then Ok zero
           else
-            let* names = FS.read_dir dir in
-            let names =
-              List.filter (fun n -> n <> "." && n <> ".." && n <> "") names
-            in
-            let* nested =
-              Error.map_list
-                (fun name ->
-                  collect
-                    (module FS : FS)
-                    ~roots ~depth:(depth + 1) (join dir name) parts)
-                names
-            in
-            Ok (zero @ List.concat nested)
-    | comp :: rest ->
-        if not (FS.is_dir dir) then Ok []
-        else
-          let* list = may_list (module FS) ~roots dir in
-          if not list then Ok []
-          else if is_literal comp then
-            let p = join dir comp in
-            collect (module FS : FS) ~roots ~depth:(depth + 1) p rest
+            let* list = may_list (module FS) ~roots dir in
+            if not list then Ok zero
+            else
+              let* names = FS.read_dir dir in
+              let names =
+                List.filter (fun n -> n <> "." && n <> ".." && n <> "") names
+              in
+              let* nested =
+                Error.map_list
+                  (fun name -> go ~depth:(depth + 1) (join dir name) parts)
+                  names
+              in
+              Ok (zero @ List.concat nested)
+      | comp :: rest ->
+          if not (FS.is_dir dir) then Ok []
           else
-            let* re = compile_component comp in
-            let* names = FS.read_dir dir in
-            let matched =
-              List.filter
-                (fun n -> n <> "." && n <> ".." && n <> "" && Re.execp re n)
-                names
-            in
-            let* groups =
-              Error.map_list
-                (fun name ->
-                  collect
-                    (module FS : FS)
-                    ~roots ~depth:(depth + 1) (join dir name) rest)
-                matched
-            in
-            Ok (List.concat groups)
+            let* list = may_list (module FS) ~roots dir in
+            if not list then Ok []
+            else if is_literal comp then
+              let p = join dir comp in
+              go ~depth:(depth + 1) p rest
+            else
+              let* re = compile_component comp in
+              let* names = FS.read_dir dir in
+              let matched =
+                List.filter
+                  (fun n -> n <> "." && n <> ".." && n <> "" && Re.execp re n)
+                  names
+              in
+              let* groups =
+                Error.map_list
+                  (fun name -> go ~depth:(depth + 1) (join dir name) rest)
+                  matched
+              in
+              Ok (List.concat groups)
+  in
+  go ~depth dir parts
 
 let glob (module FS : FS) ?roots root pattern =
   let root = trim_slash root in
