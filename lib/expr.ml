@@ -96,8 +96,9 @@ let parse_param_ref s =
         in
         segs i []
 
-let or_null f = function Some x -> Some (f x) | None -> Some Ty.Vnull
-let str field = or_null (fun s -> Ty.Vstring s) field
+let opt conv = function None -> Some Ty.Vnull | Some x -> Some (conv x)
+let str = opt (fun s -> Ty.Vstring s)
+let long = opt (fun n -> Ty.Vint n)
 
 let file_field (f : Ty.file) = function
   | "location" -> str f.location
@@ -106,7 +107,7 @@ let file_field (f : Ty.file) = function
   | "nameroot" -> str f.nameroot
   | "nameext" -> str f.nameext
   | "checksum" -> str f.checksum
-  | "size" -> or_null (fun n -> Ty.Vint n) f.size
+  | "size" -> long f.size
   | "class" -> Some (Ty.Vstring "File")
   | _ -> None
 
