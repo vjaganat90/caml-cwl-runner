@@ -92,32 +92,29 @@ let file_of (module R : Runtime.READ) path =
 
 let dir_of path = Ty.Vdir { location = Some path; path = Some path }
 
-let rec is_file_ty = function
-  | Ty.File -> true
-  | Ty.Union ts -> List.exists is_file_ty ts
-  | _ -> false
-
-let rec is_dir_ty = function
-  | Ty.Directory -> true
-  | Ty.Union ts -> List.exists is_dir_ty ts
-  | _ -> false
+let rec contains target = function
+  | Ty.Union ts -> List.exists (contains target) ts
+  | t -> t = target
 
 let value_of_hit (module R : Runtime.READ) ty path =
   let rec go ty path =
-    let dir = R.is_dir path in
     match ty with
     | Ty.Array { items; _ } -> go items path
-    | _ ->
-        if dir && is_dir_ty ty then Ok (dir_of path)
-        else if (not dir) && is_file_ty ty then file_of (module R) path
-        else if dir && is_file_ty ty && not (is_dir_ty ty) then
-          Error
-            (Error.Type { param = path; expected = "File"; got = "Directory" })
-        else if (not dir) && is_dir_ty ty && not (is_file_ty ty) then
-          Error
-            (Error.Type { param = path; expected = "Directory"; got = "File" })
-        else if dir then Ok (dir_of path)
-        else file_of (module R) path
+    | _ -> (
+        let dir = R.is_dir path in
+        let file_ty = contains Ty.File ty in
+        let dir_ty = contains Ty.Directory ty in
+        match (dir, dir_ty, file_ty) with
+        | true, true, _ -> Ok (dir_of path)
+        | false, _, true -> file_of (module R) path
+        | true, false, true ->
+            Error
+              (Error.Type { param = path; expected = "File"; got = "Directory" })
+        | false, true, false ->
+            Error
+              (Error.Type { param = path; expected = "Directory"; got = "File" })
+        | true, false, false -> Ok (dir_of path)
+        | false, false, false -> file_of (module R) path)
   in
   go ty path
 
