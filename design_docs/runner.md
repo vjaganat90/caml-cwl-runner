@@ -118,17 +118,19 @@ What the diagram leaves out:
   tmpdir is a new `ccr-tmp-…` directory (its `realpath`), the tool's `TMPDIR`,
   removed when the run ends, success or failure, unless `--leave-tmpdir`
   (cwltool's flag and default).
-- **Inputs.** `Type.apply_defaults_and_check` fills missing or null inputs from
-  their defaults and checks types (`Error.Missing`, `Error.Type`). A relative
-  `location`, one in a default included, is taken from the job file's directory
-  (the tool's without a job).
+- **Inputs.** `Workdir.locate` turns each File and Directory `location` into
+  an absolute host path: a job value's is taken from the job file's directory,
+  and a default's from the tool's, as Process.yml resolves a relative reference
+  against the document it appears in; a scheme other than `file` is
+  `Error.Runtime`. `Type.apply_defaults_and_check` then
+  fills missing or null inputs from their defaults and checks types
+  (`Error.Missing`, `Error.Type`).
 - **Staging.** `Workdir.stage` copies each File into the outdir under its
   basename. The copy's `path` is that basename, so the tool finds it from its
   working directory; its `location` is the path under the designated output
-  directory. A File that is not a regular file once symlinks are followed, two
-  Files with one basename, and a `location` with a scheme other than `file` are
-  `Error.Runtime`. A Directory is not copied: its `path` and `location` become
-  its resolved source path. Known differences from the spec or cwltool, each an
+  directory. A File that is not a regular file once symlinks are followed and
+  two Files with one basename are `Error.Runtime`. A Directory is not copied:
+  its `path` and `location` stay the host path `Workdir.locate` gave it. Known differences from the spec or cwltool, each an
   oracle case: the `path` and `location` of a staged File, Files with one
   basename, and staged Files that a `glob` can match.
 - **Argv.** `Bind.argv` follows the "Input binding" section of invocation.md: it

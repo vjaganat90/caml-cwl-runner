@@ -71,6 +71,12 @@ let execute_edges =
       (Expect_ok (lookup_bytes "out" "hello from file\n"));
     edge "stdin_cat_percent" "stdin-cat.cwl" ~job:"percent-job.json"
       (Expect_ok (lookup_bytes "out" "hello from file\n"));
+    edge "default_tool_relative" "default-loc/tool.cwl"
+      (Expect_ok (lookup_bytes "out" "hello from tool dir\n"));
+    edge "directory_from_tool_cwd" "dir-ls.cwl" ~job:"dir-in-job.json"
+      (Expect_ok (fun _ -> ()));
+    edge "undeclared_file_ignored" "file-in.cwl" ~job:"undeclared-job.json"
+      (Expect_ok (fun _ -> ()));
     edge "stderr_stream" "stderr-stream.cwl"
       (Expect_ok (lookup_bytes "err" "err\n"));
     edge "dir_glob" "dir-glob.cwl" (Expect_ok (lookup_dir "d"));
