@@ -6,9 +6,7 @@
     path; it is the tool's working directory. {!relocate} and {!resolve_paths}
     call it [host]. [container] is the path the tool sees for it: [outdir]
     itself, or the [dockerOutputDirectory] when the tool's [requirements] hold a
-    [DockerRequirement] that sets one. [job_dir] is the directory that a
-    relative input location is relative to: that of the job file, or of the tool
-    file when there is no job file. The locations these functions produce are
+    [DockerRequirement] that sets one. The locations these functions produce are
     plain paths; [Ty.to_json] adds [file://] when it prints a [location].
 
     Follows the File and Directory rules of the Process spec and "Output
@@ -17,7 +15,8 @@
     [location]. (An input is the other way round: {!stage} reads [location]
     first.)
 
-    Only {!stage}, {!confine} and {!checksum} touch files, and only through the
+    {!locate} reads an input's location before {!stage} copies it. Only
+    {!stage}, {!confine} and {!checksum} touch files, and only through the
     [Runtime] module they are given. Does not glob, spawn, or build argv. *)
 
 val safe_leaf : what:string -> string -> (string, Error.t) result
@@ -27,29 +26,38 @@ val safe_leaf : what:string -> string -> (string, Error.t) result
     runner joins onto [outdir] (File basenames and the [stdin], [stdout] and
     [stderr] file names), so none can point outside it. *)
 
+val locate : string -> Ty.value -> (Ty.value, Error.t) result
+(** [locate dir v] is [v] with the [location] of each File and Directory (also
+    inside arrays and records) set to the host path it names, relative to the
+    directory [dir]. The source is the [location], read as a path by
+    [Location.to_path] ([file://] dropped, percent escapes decoded), else the
+    [path] as it is; a relative one is put under [dir], so an absolute [dir]
+    gives an absolute source. A Directory's [path] becomes that source too; it
+    is not checked to exist. Pass the directory of the document that holds [v]
+    (Process.yml, File and Directory [location]): the job file's for a job
+    value, the tool's for a [default].
+
+    Fails with [Error.Runtime] when a File or Directory has neither [location]
+    nor [path], or its location has a scheme other than [file]. *)
+
 val stage :
   (module Runtime.WRITE) ->
   container:string ->
   outdir:string ->
-  job_dir:string ->
   Ty.object_ ->
   (Ty.object_, Error.t) result
-(** [stage (module R) ~container ~outdir ~job_dir inputs] is [inputs] with every
-    File (also inside arrays and records) copied to [outdir/b], where [b] is its
-    [basename], else the last segment of its source. The copy's [path] and
+(** [stage (module R) ~container ~outdir inputs] is [inputs] with every File
+    (also inside arrays and records) copied to [outdir/b], where [b] is its
+    [basename], else the last segment of its source, the host path in its
+    [location] (see {!locate}, which must come first). The copy's [path] and
     [basename] are [b], a bare name that resolves from the tool's working
     directory, and its [location] is [container/b]; its other fields are kept. A
-    Directory is neither copied nor checked to exist; its [path] and [location]
-    both become its resolved source. A source is the [location], read as a path
-    by [Location.to_path] ([file://] dropped, percent escapes decoded), else the
-    [path] as it is; a relative one is put under [job_dir] as it is given, so a
-    relative [job_dir] leaves a relative source (and a relative Directory path).
+    File without a [location] and a Directory are left as they are.
 
-    Fails with [Error.Runtime] when a File or Directory has neither [location]
-    nor [path], a location has a scheme other than [file], a basename is not a
-    {!safe_leaf}, two Files share a basename (even when they are the same file),
-    or a File cannot be copied: its source is missing or not a regular file, or
-    [outdir] does not exist. *)
+    Fails with [Error.Runtime] when a basename is not a {!safe_leaf}, two Files
+    share a basename (even when they are the same file), or a File cannot be
+    copied: its source is missing or not a regular file, or [outdir] does not
+    exist. *)
 
 val relocate : container:string -> host:string -> string -> string
 (** [relocate ~container ~host p] moves [p] from under [container] to under
