@@ -70,6 +70,16 @@ let rules =
       "inputs: {xs: 'string[]'}",
       [ ("xs", strings [ "a" ]) ],
       [ "echo" ] );
+    ( "valueFrom on an array binding replaces the array",
+      "inputs: {xs: {type: 'string[]', inputBinding: {valueFrom: \
+       $(self.length)}}}",
+      [ ("xs", strings [ "a"; "b" ]) ],
+      [ "echo"; "2" ] );
+    ( "an array from valueFrom is its prefix, then its elements",
+      "inputs: {xs: 'string[]'}\n\
+       arguments: [{prefix: -x, valueFrom: $(inputs.xs)}]",
+      [ ("xs", strings [ "a"; "b" ]) ],
+      [ "echo"; "-x"; "a"; "b" ] );
   ]
 
 let rule (name, fields, job, expected) =
