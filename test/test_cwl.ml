@@ -4,4 +4,4 @@ let () =
   Alcotest.run "cwl"
     (Test_ty.tests @ Test_bind.tests @ Test_expr.tests @ Test_glob.tests
    @ Test_import.tests @ Test_docker.tests @ Test_runtime.tests
-   @ Test_execute.tests)
+   @ Test_execute.tests @ Test_location.tests)

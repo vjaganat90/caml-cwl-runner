@@ -27,16 +27,43 @@ let normalize path =
   let body = String.concat "/" (go [] segs) in
   if String.starts_with ~prefix:"/" path then "/" ^ body else body
 
+(* RFC 3986, 2.1: [%] and two hex digits stand for that byte. A [%] without
+   them is kept as it is. *)
+let percent_decode s =
+  let n = String.length s in
+  let hex i =
+    match if i < n then s.[i] else ' ' with
+    | '0' .. '9' as c -> Some (Char.code c - Char.code '0')
+    | ('a' .. 'f' | 'A' .. 'F') as c ->
+        Some (Char.code (Char.lowercase_ascii c) - Char.code 'a' + 10)
+    | _ -> None
+  in
+  let buf = Buffer.create n in
+  let rec go i =
+    if i >= n then Buffer.contents buf
+    else
+      match (s.[i], hex (i + 1), hex (i + 2)) with
+      | '%', Some h, Some l ->
+          (* cannot raise: two hex digits make at most 255 *)
+          Buffer.add_char buf (Char.chr ((16 * h) + l));
+          go (i + 3)
+      | c, _, _ ->
+          Buffer.add_char buf c;
+          go (i + 1)
+  in
+  go 0
+
 let to_path s =
   let prefix = "file://" in
-  if not (String.starts_with ~prefix s) then s
-  else
-    (* cannot raise: s starts with the 7 bytes of prefix *)
-    let rest = String.sub s 7 (String.length s - 7) in
-    match String.index_opt rest '/' with
-    | None -> rest
-    (* cannot raise: i is an index of rest *)
-    | Some i -> String.sub rest i (String.length rest - i)
+  percent_decode
+    (if not (String.starts_with ~prefix s) then s
+     else
+       (* cannot raise: s starts with the 7 bytes of prefix *)
+       let rest = String.sub s 7 (String.length s - 7) in
+       match String.index_opt rest '/' with
+       | None -> rest
+       (* cannot raise: i is an index of rest *)
+       | Some i -> String.sub rest i (String.length rest - i))
 
 let to_uri loc =
   if String.starts_with ~prefix:"file:" loc then loc else "file://" ^ loc
