@@ -156,28 +156,23 @@ let require_class param expected kvs =
 
 let rec parse_file_object param kvs =
   let* () = require_class param "File" kvs in
-  Ok
-    (Vfile
-       (fill_file
-          {
-            location = Untyped_tree.string_field kvs "location";
-            path = Untyped_tree.string_field kvs "path";
-            basename = Untyped_tree.string_field kvs "basename";
-            nameroot = Untyped_tree.string_field kvs "nameroot";
-            nameext = Untyped_tree.string_field kvs "nameext";
-            checksum = Untyped_tree.string_field kvs "checksum";
-            size = Untyped_tree.int_field kvs "size";
-          }))
+  let string = Untyped_tree.string_field ~json_path:param kvs in
+  let* location = string "location" in
+  let* path = string "path" in
+  let* basename = string "basename" in
+  let* nameroot = string "nameroot" in
+  let* nameext = string "nameext" in
+  let* checksum = string "checksum" in
+  let+ size = Untyped_tree.int_field ~json_path:param kvs "size" in
+  Vfile
+    (fill_file { location; path; basename; nameroot; nameext; checksum; size })
 
 and parse_directory_object param kvs =
   let* () = require_class param "Directory" kvs in
-  Ok
-    (fill_file_paths
-       (Vdir
-          {
-            location = Untyped_tree.string_field kvs "location";
-            path = Untyped_tree.string_field kvs "path";
-          }))
+  let string = Untyped_tree.string_field ~json_path:param kvs in
+  let* location = string "location" in
+  let+ path = string "path" in
+  fill_file_paths (Vdir { location; path })
 
 and value_of_tree param ty doc =
   let fail expected =

@@ -1,5 +1,6 @@
-(** Document loading: integral YAML, [$import], [$include], and [$graph]. Reads
-    fixture files into an in-memory [FILE]. Does not spawn. *)
+(** Document loading: integral YAML, [$import], [$include], [$graph], and field
+    types. Reads fixture files into an in-memory [FILE], or parses inline YAML.
+    Does not spawn. *)
 
 open Harness
 open QCheck2
@@ -104,9 +105,42 @@ let import_table () =
       Alcotest.(check bool) "workflow" true (has_feature "Workflow" diagnostics)
   | other -> Alcotest.failf "workflow: %s" (show_doc other)
 
+let tool body =
+  "cwlVersion: v1.2\nclass: CommandLineTool\nbaseCommand: echo\noutputs: []\n"
+  ^ body
+
+(* A field of the wrong type is a schema error at its path: one row per reader
+   (string, boolean, int) and per document level. A [null] field is absent. *)
+let field_rows =
+  [
+    ( tool "inputs: {x: {type: string, inputBinding: {prefix: 5}}}",
+      "schema error at inputs.x.inputBinding.prefix: expected string, got 5" );
+    ( tool "inputs: [{id: x, type: string, inputBinding: {separate: 'no'}}]",
+      "schema error at inputs[0].inputBinding.separate: expected boolean, got \
+       \"no\"" );
+    ( tool
+        "inputs: {f: {type: File, default: {class: File, location: a, size: \
+         b}}}",
+      "schema error at f.size: expected int, got \"b\"" );
+    (tool "inputs: {x: {type: string, inputBinding: {prefix: null}}}", "ok");
+    ( "cwlVersion: v1.2\nclass: 5\n",
+      "schema error at class: expected string, got 5" );
+    ( "cwlVersion: v1.2\n$graph:\n- {id: 5, class: CommandLineTool}\n",
+      "schema error at $graph[0].id: expected string, got 5" );
+  ]
+
+let field_table () =
+  List.iter
+    (fun (text, want) ->
+      Result.bind (Cwl.Untyped_tree.of_yaml_string text) Cwl.Document.of_tree
+      |> Result.fold ~ok:(fun _ -> "ok") ~error:Cwl.Error.to_string
+      |> Alcotest.(check string) text want)
+    field_rows
+
 let tests =
   [
     ("imports", [ ("table", `Quick, import_table) ]);
+    ("fields", [ ("table", `Quick, field_table) ]);
     ( "yaml",
       List.map
         (QCheck_alcotest.to_alcotest ~speed_level:`Quick)
