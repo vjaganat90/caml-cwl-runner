@@ -105,7 +105,7 @@ and bound e ctx lead name ty (b : Ty.binding) v =
           (Option.value item_binding ~default:Ty.default_binding)
           v
       in
-      { key; name; words = flag b.prefix } :: tail
+      { key; name; words = words b v } :: tail
   | _ ->
       let+ v = value_from e ctx b v in
       [ { key; name; words = words b v } ]
