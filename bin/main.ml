@@ -1,3 +1,8 @@
+(** The [ccr] command. It reads the flags, starts the Eio scheduler, runs one
+    process through [Cwl.run], prints the output object as JSON on stdout, and
+    turns an error into an exit code: 33 for an unsupported feature, 1 for
+    anything else. No CWL logic lives here. *)
+
 open Cmdliner
 
 let version = "0.1.0"
