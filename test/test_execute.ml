@@ -69,6 +69,8 @@ let execute_edges =
       (Expect_ok (lookup_int "n" 1L));
     edge "stdin_cat" "stdin-cat.cwl" ~job:"stdin-job.json"
       (Expect_ok (lookup_bytes "out" "hello from file\n"));
+    edge "stdin_cat_percent" "stdin-cat.cwl" ~job:"percent-job.json"
+      (Expect_ok (lookup_bytes "out" "hello from file\n"));
     edge "stderr_stream" "stderr-stream.cwl"
       (Expect_ok (lookup_bytes "err" "err\n"));
     edge "dir_glob" "dir-glob.cwl" (Expect_ok (lookup_dir "d"));

@@ -1,0 +1,6 @@
+{
+  "file": "lib/location.ml",
+  "old": "Buffer.add_char buf (Char.chr ((16 * h) + l));",
+  "new": "Buffer.add_char buf (Char.chr ((16 * l) + h));",
+  "why": "a percent escape is the byte its two hex digits spell, high digit first"
+}

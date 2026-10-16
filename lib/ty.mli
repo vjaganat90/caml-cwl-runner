@@ -110,12 +110,13 @@ val fill_file_paths : value -> value
 (** [fill_file_paths v] sets the derived fields that a File or Directory in [v],
     at any depth, leaves unset, and keeps those already set. The spec has an
     implementation fill in [path], [basename], [nameroot] and [nameext]. A
-    missing [path] is the last component of [location] (a name, not a full
-    path), a File's missing [basename] is the last component of [path], and its
-    missing [nameroot] and [nameext] split [basename] at the last dot. So a
-    [location] of [file:///d/a.tar.gz] gives [path] and [basename] [a.tar.gz],
-    [nameroot] [a.tar] and [nameext] [.gz]; [.cshrc] has an empty [nameext].
-    [checksum] and [size] are not computed here. *)
+    missing [path] is the last component of [location] read as a path by
+    [Location.to_path] (a name, not a full path, with percent escapes decoded),
+    a File's missing [basename] is the last component of [path], and its missing
+    [nameroot] and [nameext] split [basename] at the last dot. So a [location]
+    of [file:///d/a.tar.gz] gives [path] and [basename] [a.tar.gz], [nameroot]
+    [a.tar] and [nameext] [.gz]; [.cshrc] has an empty [nameext]. [checksum] and
+    [size] are not computed here. *)
 
 val value_of_tree : string -> t -> Untyped_tree.value -> (value, Error.t) result
 (** [value_of_tree param ty doc] reads [doc] as a value of type [ty]; [Schema]

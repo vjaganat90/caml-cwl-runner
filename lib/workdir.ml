@@ -10,40 +10,37 @@ let safe_leaf ~what s =
       (Printf.sprintf "%s must be a single path segment, got %S" what s)
   else Ok s
 
-let strip_file_uri loc =
-  if String.starts_with ~prefix:"file://" loc then
-    let rest = String.sub loc 7 (String.length loc - 7) in
-    if String.starts_with ~prefix:"//" rest then
-      match String.index_from_opt rest 2 '/' with
-      | Some i -> String.sub rest i (String.length rest - i)
-      | None -> rest
-    else rest
-  else loc
+(* Only a [file] URI, or a reference with no scheme, names a local file. *)
+let local_path s =
+  let scheme =
+    match String.index_opt s ':' with
+    | Some i
+      when i > 0
+           && String.length s > i + 2
+           && s.[i + 1] = '/'
+           && s.[i + 2] = '/' ->
+        (* cannot raise: i is an index of s *)
+        String.lowercase_ascii (String.sub s 0 i)
+    | _ -> "file"
+  in
+  if scheme = "file" then Ok (Location.to_path s)
+  else Error.runtime (Printf.sprintf "unsupported location scheme %S" scheme)
 
-let ensure_local_path s =
-  match String.index_opt s ':' with
-  | Some i
-    when i > 0 && String.length s > i + 2 && s.[i + 1] = '/' && s.[i + 2] = '/'
-    ->
-      let scheme = String.lowercase_ascii (String.sub s 0 i) in
-      if scheme = "file" then Ok (strip_file_uri s)
-      else
-        Error.runtime (Printf.sprintf "unsupported location scheme %S" scheme)
-  | _ -> Ok s
-
-let resolve ~job_dir loc =
-  let loc = strip_file_uri loc in
-  if Filename.is_relative loc then Filename.concat job_dir loc else loc
-
-let source ~job_dir ~what loc =
-  match Option.map (resolve ~job_dir) loc with
-  | None -> Error.runtime (Printf.sprintf "%s input missing location" what)
-  | Some s -> ensure_local_path s
+(* A [location] is a URI reference and a [path] a plain path. *)
+let source ~job_dir ~what location path =
+  let+ src =
+    match (location, path) with
+    | Some loc, _ -> local_path loc
+    | None, Some path -> Ok path
+    | None, None ->
+        Error.runtime (Printf.sprintf "%s input missing location" what)
+  in
+  if Filename.is_relative src then Filename.concat job_dir src else src
 
 let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
   function
   | Ty.Vfile f ->
-      let* src = source ~job_dir ~what:"File" (Ty.file_loc f) in
+      let* src = source ~job_dir ~what:"File" f.location f.path in
       let raw_base = Option.value f.basename ~default:(Filename.basename src) in
       let* base = safe_leaf ~what:"File basename" raw_base in
       if List.mem base used then
@@ -62,7 +59,7 @@ let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
               },
             base :: used )
   | Ty.Vdir d ->
-      let* src = source ~job_dir ~what:"Directory" (Ty.dir_loc d) in
+      let* src = source ~job_dir ~what:"Directory" d.location d.path in
       Ok (Ty.Vdir { location = Some src; path = Some src }, used)
   | v -> Ok (v, used)
 
@@ -109,14 +106,15 @@ let map_paths_result f = function
 
 let resolve_paths ~container host v =
   let abs p =
-    let p = strip_file_uri p in
     let p = relocate ~container ~host p in
     if Filename.is_relative p then Filename.concat host p else p
   in
   let endpoints preferred location =
     let path = Option.map abs preferred in
     let location =
-      match Option.map abs location with Some _ as kept -> kept | None -> path
+      match Option.map (fun l -> abs (Location.to_path l)) location with
+      | Some _ as kept -> kept
+      | None -> path
     in
     (path, location)
   in
