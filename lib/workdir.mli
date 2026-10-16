@@ -40,10 +40,10 @@ val stage :
     [basename] are [b], a bare name that resolves from the tool's working
     directory, and its [location] is [container/b]; its other fields are kept. A
     Directory is neither copied nor checked to exist; its [path] and [location]
-    both become its resolved source. A source is the [location], else the
-    [path], with any [file://] dropped and a relative path put under [job_dir]
-    as it is given, so a relative [job_dir] leaves a relative source (and a
-    relative Directory path).
+    both become its resolved source. A source is the [location], read as a path
+    by [Location.to_path] ([file://] dropped, percent escapes decoded), else the
+    [path] as it is; a relative one is put under [job_dir] as it is given, so a
+    relative [job_dir] leaves a relative source (and a relative Directory path).
 
     Fails with [Error.Runtime] when a File or Directory has neither [location]
     nor [path], a location has a scheme other than [file], a basename is not a
@@ -64,8 +64,8 @@ val resolve_paths : container:string -> string -> Ty.value -> Ty.value
 (** [resolve_paths ~container host v] rewrites the [path] and [location] of each
     File and Directory in [v] as paths on the host, where [host] is the host
     [outdir]. The new [path] comes from the old [path], else the old [location];
-    the new [location] from the old [location], else the new [path]. Both lose a
-    [file://] prefix, move from under [container] to under [host] (see
+    the new [location] from the old [location], read by [Location.to_path], else
+    the new [path]. Both move from under [container] to under [host] (see
     {!relocate}), and, if still relative, are put under [host]. A value with
     neither field is left as it is. It reads no files and does not check that
     the result is inside [host]; {!confine} does that.

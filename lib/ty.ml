@@ -90,7 +90,7 @@ let file_basename_of location_or_path =
   match location_or_path with
   | None -> None
   | Some p ->
-      let base = Filename.basename p in
+      let base = Filename.basename (Location.to_path p) in
       if base = "" then None else Some base
 
 let split_name basename =

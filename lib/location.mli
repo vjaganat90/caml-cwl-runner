@@ -31,10 +31,12 @@ val normalize : string -> string
     ["x"]. *)
 
 val to_path : string -> string
-(** [to_path s] is the path a [location] or import name [s] stands for. A
-    [file://] URI loses its scheme and host: ["file:///a"] and ["file://h/a"]
-    are both ["/a"]. Any other [s] is returned as it is, so a relative reference
-    stays relative for {!locate} to resolve. *)
+(** [to_path s] is the path a [location] or import name [s] stands for. Both are
+    URI references, so a [%] followed by two hex digits is decoded to that byte
+    (RFC 3986, 2.1), and any other [%] is kept: ["A%3AB"] is ["A:B"]. A
+    [file://] URI also loses its scheme and host: ["file:///a"] and
+    ["file://h/a"] are both ["/a"]. Anything else stays as it is, so a relative
+    reference stays relative for {!locate} to resolve. *)
 
 val to_uri : string -> string
 (** [to_uri loc] is the [file://] URI of the path [loc], which is how a
