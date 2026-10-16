@@ -26,12 +26,12 @@
 include module type of Data.Schema
 
 val parse_cwl_version :
-  (string * Untyped_tree.value) list -> (string, Error.t) result
+  (string * Untyped_tree.value) list -> string Error.Annotated.t
 (** [parse_cwl_version kvs] is the [cwlVersion] among the fields [kvs] of a
     document object: [v1.0], [v1.1] or [v1.2], and [v1.2] if the field is
     missing, though the spec requires it at the document root. Any other
     version, or a value that is not a string ([null] too), is an [Error.Schema]
-    at [cwlVersion]. Nothing branches on the version. *)
+    at [cwlVersion]. Nothing branches on the version. It has no diagnostic. *)
 
 val diag : ?in_requirements:bool -> string -> string -> Error.diagnostic
 (** [diag feature json_path] is the diagnostic that [feature] is not implemented
@@ -46,14 +46,13 @@ val nth : string -> int -> string
     [Untyped_tree.child], which gives [path.key]. *)
 
 val map_i :
-  (int -> 'a -> ('b * Error.diagnostic list, Error.t) result) ->
+  (string -> 'a -> 'b Error.Annotated.t) ->
+  string ->
   'a list ->
-  ('b list * Error.diagnostic list, Error.t) result
-(** [map_i f xs] is [List.mapi f xs] for an [f] that can fail and report
-    diagnostics: [Ok (ys, diags)] holds the results and the diagnostics of every
-    element, in order. The first [Error] from [f] stops it and is returned;
-    earlier diagnostics are lost. The index lets [f] build the element's path
-    with [nth]. *)
+  'b list Error.Annotated.t
+(** [map_i read path xs] reads every element of the array [xs] found at [path],
+    the element [i] at its own path [path[i]], and returns the values with the
+    diagnostics of every element, in order, or the first error. *)
 
 val expected :
   json_path:string -> what:string -> Untyped_tree.value -> ('a, Error.t) result
@@ -62,55 +61,49 @@ val expected :
     [Untyped_tree.pp]. The result type is polymorphic, so it can end any match
     arm. *)
 
-val parse_int : string -> Untyped_tree.value -> (int, Error.t) result
+val field :
+  json_path:string ->
+  (string * Untyped_tree.value) list ->
+  string ->
+  (string -> Untyped_tree.value -> 'a Error.Annotated.t) ->
+  'a Error.Annotated.t ->
+  'a Error.Annotated.t
+(** [field ~json_path kvs key read absent] reads the field [key] of the object
+    [kvs] found at [json_path]: [read] gets the value, [null] included, and the
+    field's path [Untyped_tree.child json_path key]. A missing [key] is
+    [absent], which may be an error. This is how the readers here get a field
+    that [Untyped_tree.string_field] and its siblings cannot read. *)
+
+val parse_int : string -> Untyped_tree.value -> int Error.Annotated.t
 (** [parse_int json_path v] is the integer in [v]: an [Int]. Any other [v] is a
     schema error at [json_path]. A number outside the range of an OCaml [int] is
     not rejected: it wraps around. *)
 
 val strings :
-  json_path:string ->
-  expected:string ->
-  Untyped_tree.value list ->
-  (string list, Error.t) result
-(** [strings ~json_path ~expected xs] is [xs] as strings when every element is a
-    string. The first element that is not gives a schema error at [json_path],
-    not at the element, with the message [expected <expected>, got <element>];
-    [expected] is a noun such as ["string"]. *)
-
-val parse_opt :
-  (json_path:string ->
-  Untyped_tree.value ->
-  ('a list * 'b list, Error.t) result) ->
-  string ->
-  (string * Untyped_tree.value) list ->
-  ('a list * 'b list, Error.t) result
-(** [parse_opt parse key kvs] is [parse ~json_path:key v] for the value [v] of
-    field [key] in [kvs], where [parse] returns a list of items and a list of
-    diagnostics; an error of [parse] is returned as is. A missing or [null]
-    field is [Ok ([], [])]. [key] is also the json_path, because the fields this
-    serves ([inputs], [outputs], [requirements], [hints], [arguments]) are
-    top-level. *)
+  what:string -> string -> Untyped_tree.value -> string list Error.Annotated.t
+(** [strings ~what json_path v] is the list of strings that [v] gives: a string
+    is a list of one, an array of strings is itself, and [null] is empty. An
+    array with another element is a schema error at [json_path], not at the
+    element, with the message [expected <what>, got <element>]; any other [v] is
+    one with [expected <what> or array]. [what] is a noun such as ["string"]. *)
 
 val diagnostics_for_keys :
   implemented:string list ->
-  known:string list ->
-  json_path:string ->
+  unimplemented:string list ->
+  string ->
   (string * Untyped_tree.value) list ->
   Error.diagnostic list
-(** [diagnostics_for_keys ~implemented ~known ~json_path kvs] is one diagnostic
-    for each field of the object [kvs], found at [json_path], whose key is not
-    in [implemented]; an [implemented] key gets none even if ccr drops its value
-    (like [doc]). A key containing [':'] is reported as [extension <key>], one
-    in [known] (a CWL field ccr does not implement) under its own name, and any
-    other as [unknown field <key>]. The diagnostics are at
-    [Untyped_tree.child json_path key], in the order of [kvs], with
-    [in_requirements = false]. *)
+(** [diagnostics_for_keys ~implemented ~unimplemented json_path kvs] is one
+    diagnostic for each field of the object [kvs], found at [json_path], whose
+    key is not in [implemented]; an [implemented] key gets none even if ccr
+    drops its value (like [doc]). A key containing [':'] is reported as
+    [extension <key>], one in [unimplemented] (a CWL field ccr does not
+    implement) under its own name, and any other as [unknown field <key>]. The
+    diagnostics are at [Untyped_tree.child json_path key], in the order of
+    [kvs], with [in_requirements = false]. *)
 
-val parse_binding :
-  json_path:string ->
-  Untyped_tree.value ->
-  (Ty.binding * Error.diagnostic list, Error.t) result
-(** [parse_binding ~json_path v] reads the [CommandLineBinding] [v]
+val parse_binding : string -> Untyped_tree.value -> Ty.binding Error.Annotated.t
+(** [parse_binding json_path v] reads the [CommandLineBinding] [v]
     ([inputBinding] or an object in [arguments]) into a [Ty.binding]. [position]
     is an int ([Ty.Pos]) or a string kept unevaluated ([Ty.Expr]). A missing
     field takes the spec's default, and so does a [null] [prefix], [separate],
@@ -122,19 +115,17 @@ val parse_binding :
 
 val parse_process :
   (string * Untyped_tree.value) list ->
-  ( (input list * output list * requirement list * requirement list)
-    * Error.diagnostic list,
-    Error.t )
-  result
+  (input list * output list * requirement list * requirement list)
+  Error.Annotated.t
 (** [parse_process kvs] reads [inputs], [outputs], [requirements] and [hints]
     from the document object [kvs] and returns
-    [((inputs, outputs, requirements, hints), diagnostics)], the diagnostics in
-    that order. A missing or [null] field is empty. Each field may be an array
-    or the map form of the spec; in an [inputs] or [outputs] map a bare string
-    is the type (a bare list is not accepted), and every [id] is cut to the part
-    after its last [#] (or [/] if it has no [#]). An output of type [stdout] or
-    [stderr] is a [File] output with [stream] set. Of a [ResourceRequirement]
-    only a numeric [coresMin] is kept.
+    [(inputs, outputs, requirements, hints)], the diagnostics in that order. A
+    missing or [null] field is empty. Each field may be an array or the map form
+    of the spec; in an [inputs] or [outputs] map a bare string is the type (a
+    bare list is not accepted), and every [id] is cut to the part after its last
+    [#] (or [/] if it has no [#]). An output of type [stdout] or [stderr] is a
+    [File] output with [stream] set. Of a [ResourceRequirement] only a numeric
+    [coresMin] is kept.
 
     It stops at the first error, reading the four fields in that order. The
     error is an [Error.Schema] for a malformed field, a [DockerRequirement]

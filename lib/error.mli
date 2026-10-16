@@ -73,6 +73,40 @@ module Syntax : sig
       step, where [e] is a plain value that cannot fail. *)
 end
 
+(** Binding operators over a result that carries diagnostics: the readers of a
+    document return one, so a reader built from others collects their
+    diagnostics without passing them by hand. [open Error.Annotated] where a
+    whole module reads a document. *)
+module Annotated : sig
+  type nonrec 'a t = ('a annotated, t) result
+  (** A value with the diagnostics found while reading it, or the first error.
+  *)
+
+  val return : 'a -> 'a t
+  (** [return x] is [x] with no diagnostic. *)
+
+  val warn : diagnostic list -> 'a -> 'a t
+  (** [warn ds x] is [x] with the diagnostics [ds]. *)
+
+  val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
+  (** [let* x = r in body] runs [body] on the value of [r], for a read that
+      depends on an earlier one. The diagnostics of [r] come before those of
+      [body]; an [Error] of [r] is the result, and [body] does not run. *)
+
+  val ( let+ ) : 'a t -> ('a -> 'b) -> 'b t
+  (** [let+ x = r in e] is [r] with its value [x] replaced by [e], and the same
+      diagnostics. *)
+
+  val ( and+ ) : 'a t -> 'b t -> ('a * 'b) t
+  (** [let+ x = r and+ y = s in e] reads two independent things: the diagnostics
+      of [r] come before those of [s], and the error of [r] wins over that of
+      [s], so a chain of [and+] reports in the order it is written. *)
+
+  val all : 'a t list -> 'a list t
+  (** [all rs] is the list of the values of [rs] with all their diagnostics, in
+      order, or the first error among [rs]. *)
+end
+
 val runtime : string -> ('a, t) result
 (** [runtime message] is [Error (Runtime { message })]: a failure while running
     the tool (see the cases of [t] above). *)
