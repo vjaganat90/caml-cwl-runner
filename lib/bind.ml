@@ -123,15 +123,14 @@ and elements e ctx key name items b v =
   List.concat items
 
 (* The item of the [i]-th entry of [arguments]. *)
-let argument e ctx (i, arg) =
-  let name = Printf.sprintf "arguments[%d]" i in
-  match arg with
-  | Command_line_tool.Literal s ->
-      Ok { key = [ I 0; I i ]; name; words = [ s ] }
-  | Command_line_tool.Binding b ->
-      let* p = position e ctx b.position in
-      let+ v = value_from e ctx b Ty.Vnull in
-      { key = [ I p; I i ]; name; words = words b v }
+let argument e ctx (i, (b : Ty.binding)) =
+  let* p = position e ctx b.position in
+  let+ v = value_from e ctx b Ty.Vnull in
+  {
+    key = [ I p; I i ];
+    name = Printf.sprintf "arguments[%d]" i;
+    words = words b v;
+  }
 
 let argv e (tool : Command_line_tool.t) inputs runtime =
   let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in

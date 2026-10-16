@@ -9,11 +9,10 @@
     build the command line ([Bind] does), read files or spawn.
 
     [baseCommand] is a string or a list of strings, and empty when missing or
-    [null]. In [arguments], a string is a [Literal], kept as written ([Bind]
-    does not evaluate it either), and any other entry is read by
-    [Schema.parse_binding] into a [Binding]. [successCodes] is an int or a list
-    of ints, and means exit code 0 alone when missing or [null]; an empty list
-    accepts no exit code. *)
+    [null]. In [arguments], a string is the binding whose [valueFrom] is that
+    string, and any other entry is read by [Schema.parse_binding].
+    [successCodes] is an int or a list of ints, and means exit code 0 alone when
+    missing or [null]; an empty list accepts no exit code. *)
 
 include module type of Data.Command_line_tool
 
