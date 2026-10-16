@@ -61,7 +61,6 @@ let execute_edges =
     edge ~docker:true "docker_echo" "docker-req.cwl" (Expect_ok (fun _ -> ()));
     edge ~docker:true "docker_image_id" "docker-image-id.cwl"
       (Expect_ok (fun _ -> ()));
-    edge ~docker:true "docker_file" "docker-file.cwl" (Expect_ok (fun _ -> ()));
     edge ~docker:true "docker_json_escape" "docker-json-escape.cwl"
       Expect_runtime;
     edge "output_eval_no_json" "output-eval.cwl"

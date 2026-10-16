@@ -396,12 +396,16 @@ let docker_prefix () =
   in
   (prefix, q)
 
-let run_archive_tool ~dir ~template ~archive () =
-  let tool =
-    write_text
-      (Filename.concat dir "tool.cwl")
-      (substitute template "@ARCHIVE@" archive)
+(** Runs the tool [template] from [dir] after each [(placeholder, value)]
+    substitution. [@TAG@] always becomes the name of [dir], so the images of two
+    test runs on one machine never share a name. *)
+let run_template ~dir template substitutions =
+  let fill text (placeholder, value) = substitute text placeholder value in
+  let text =
+    List.fold_left fill template
+      (("@TAG@", Filename.basename dir) :: substitutions)
   in
+  let tool = write_text (Filename.concat dir "tool.cwl") text in
   let job = write_text (Filename.concat dir "job.json") "{}\n" in
   Eio_main.run @@ fun env ->
   let local = Cwl.Runtime.local env in
@@ -417,6 +421,11 @@ let gzip_to ~src ~dst =
          (Filename.quote dst))
     <> 0
   then Alcotest.fail "gzip failed"
+
+let remove_image tag =
+  let prefix, q = docker_prefix () in
+  ignore
+    (Sys.command (Printf.sprintf "%s%s rmi -f %s >/dev/null 2>&1" prefix q tag))
 
 let with_cwd dir f =
   let back = Sys.getcwd () in
@@ -438,14 +447,8 @@ let docker_load_saved =
              prefix q (Filename.quote tar))
       in
       if code <> 0 then Alcotest.fail "docker save failed";
-      run_archive_tool ~dir
-        ~template:(read_fixture "docker-load.cwl")
-        ~archive:tar () )
-
-let remove_image tag =
-  let prefix, q = docker_prefix () in
-  ignore
-    (Sys.command (Printf.sprintf "%s%s rmi -f %s >/dev/null 2>&1" prefix q tag))
+      run_template ~dir (read_fixture "docker-load.cwl") [ ("@ARCHIVE@", tar) ]
+  )
 
 let docker_import_saved =
   ( "docker_import_saved",
@@ -454,31 +457,40 @@ let docker_import_saved =
       require_docker ();
       let dir = Filename.temp_dir "ccr-import-" "" in
       let tar = Filename.concat dir "rootfs.tar" in
+      let name = Filename.basename dir in
       let prefix, q = docker_prefix () in
       let code =
         Sys.command
           (Printf.sprintf
-             "%s%s rm -f ccr-export >/dev/null 2>&1; %s%s create --name \
-              ccr-export alpine true >/dev/null && %s%s export ccr-export -o \
-              %s && %s%s rm ccr-export >/dev/null"
-             prefix q prefix q prefix q (Filename.quote tar) prefix q)
+             "%s%s create --name %s alpine true >/dev/null && %s%s export %s \
+              -o %s && %s%s rm %s >/dev/null"
+             prefix q name prefix q name (Filename.quote tar) prefix q name)
       in
       if code <> 0 then Alcotest.fail "docker export failed";
       let template = read_fixture "docker-import.cwl" in
       (* Each import is a new image that takes the fixture's tag from the one
          before, which would stay behind untagged, so each is removed. *)
-      let import ~archive =
+      let import archive =
         Fun.protect
-          ~finally:(fun () -> remove_image "ccr-import-test")
-          (run_archive_tool ~dir ~template ~archive)
+          ~finally:(fun () -> remove_image name)
+          (fun () -> run_template ~dir template [ ("@ARCHIVE@", archive) ])
       in
       let gz = Filename.concat dir "rootfs.tar.gz" in
       gzip_to ~src:tar ~dst:gz;
-      import ~archive:gz;
-      with_cwd dir (fun () -> import ~archive:"rootfs.tar.gz");
+      import gz;
+      with_cwd dir (fun () -> import "rootfs.tar.gz");
       let tgz = Filename.concat dir "rootfs.tgz" in
       gzip_to ~src:tar ~dst:tgz;
-      with_cwd dir (fun () -> import ~archive:"rootfs.tgz") )
+      with_cwd dir (fun () -> import "rootfs.tgz") )
+
+let docker_file_built =
+  ( "docker_file",
+    `Slow,
+    fun () ->
+      require_docker ();
+      let dir = Filename.temp_dir "ccr-file-" "" in
+      Fun.protect ~finally:(fun () -> remove_image (Filename.basename dir))
+      @@ fun () -> run_template ~dir (read_fixture "docker-file.cwl") [] )
 
 let docker_run_argv_env_and_mounts () =
   let spec =
@@ -532,5 +544,6 @@ let tests =
         ("run_argv_env_and_mounts", `Quick, docker_run_argv_env_and_mounts);
         ("designated", `Quick, designated_outdir_table);
       ] );
-    ("docker_image", [ docker_load_saved; docker_import_saved ]);
+    ( "docker_image",
+      [ docker_load_saved; docker_import_saved; docker_file_built ] );
   ]
