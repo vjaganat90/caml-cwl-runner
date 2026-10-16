@@ -69,19 +69,7 @@ let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
               | [] ->
                   collect ctx ~lead ~name ~ty:Ty.String ~binding_opt value acc
               | t :: rest ->
-                  let matches =
-                    match (t, value) with
-                    | Ty.Null, Ty.Vnull -> true
-                    | Ty.Boolean, Ty.Vbool _ -> true
-                    | (Ty.Int | Ty.Long), Ty.Vint _ -> true
-                    | (Ty.Float | Ty.Double), (Ty.Vfloat _ | Ty.Vint _) -> true
-                    | Ty.String, Ty.Vstring _ -> true
-                    | Ty.File, Ty.Vfile _ -> true
-                    | Ty.Directory, Ty.Vdir _ -> true
-                    | Ty.Array _, Ty.Varray _ -> true
-                    | _ -> false
-                  in
-                  if matches then
+                  if Ty.matches t value then
                     collect ctx ~lead ~name ~ty:t ~binding_opt value acc
                   else pick rest
             in
