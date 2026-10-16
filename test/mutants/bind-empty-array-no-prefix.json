@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "{ key; name; words = words b v } :: tail",
+  "new": "{ key; name; words = flag b.prefix } :: tail",
+  "why": "an empty array adds nothing to the command line, not even its prefix"
+}
