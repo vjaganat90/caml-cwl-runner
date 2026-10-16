@@ -43,8 +43,8 @@ val argv :
       then each item. An item is bound by the [inputBinding] written in the
       array type ([item_binding] of [Ty.Array]), else by [Ty.default_binding].
       So items are added even when neither the input nor the array type has a
-      binding, an empty array still adds its [prefix], and the [valueFrom] of
-      the input's binding is not evaluated.
+      binding, and the [valueFrom] of the input's binding is not evaluated. An
+      empty array adds nothing, not even its [prefix].
     - Any other array (the result of a [valueFrom], or a value whose type is not
       an array type) is only its [prefix], or nothing if it is empty.
     - A string in [arguments] is evaluated like a [valueFrom], so a [$(...)] in

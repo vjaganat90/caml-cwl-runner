@@ -62,6 +62,10 @@ let rules =
       "inputs: []\narguments: [$(runtime.cores)]",
       [],
       [ "echo"; "1" ] );
+    ( "an empty array adds nothing, not even its prefix",
+      "inputs: {xs: {type: 'string[]', inputBinding: {prefix: -x}}}",
+      [ ("xs", strings []) ],
+      [ "echo" ] );
   ]
 
 let rule (name, fields, job, expected) =
