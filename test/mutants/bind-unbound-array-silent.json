@@ -1,6 +1,6 @@
 {
   "file": "lib/bind.ml",
-  "old": "  | _, Ty.Array { items; item_binding = Some ib }, None ->\n      elements e ctx (append_name lead name) name items ib v\n",
-  "new": "  | _, Ty.Array { items; item_binding }, None ->\n      elements e ctx (append_name lead name) name items\n        (Option.value item_binding ~default:Ty.default_binding)\n        v\n",
+  "old": "| Ty.Varray xs, Ty.Array { items; item_binding = Some ib }, None ->",
+  "new": "| Ty.Varray xs, Ty.Array { items; item_binding = ib }, None -> let ib = Option.value ib ~default:Ty.default_binding in",
   "why": "an array input with no inputBinding, and no inputBinding in its type, adds nothing"
 }
