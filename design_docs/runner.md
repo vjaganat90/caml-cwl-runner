@@ -34,7 +34,9 @@ stdout. Without JOB the input object is empty. `--quiet` hides diagnostics, not
 errors; `--version` and `--help` exit 0. The exit code is 33 for
 `Error.Unsupported` and 1 for any other error, a usage error included. In
 `lib/`, `(_, Error.t) result` values are sequenced with `let*` and `let+` from
-`Error.Syntax`.
+`Error.Syntax`. The readers of a document return an `Error.Annotated.t`, which
+also carries diagnostics, and combine with `let*`, `let+` and `and+` from
+`Error.Annotated`.
 
 ## Names
 
@@ -297,7 +299,8 @@ A walk of more than 64 directory levels is `Error.Runtime`.
 Recipes for the changes made most often. Each names the functions to touch;
 `AGENTS.md` says how to commit, test and measure them.
 
-**Implement a field ccr already recognises** (one in a `known_*_keys` list):
+**Implement a field ccr already recognises** (one in the `~unimplemented`
+list of a `Schema.diagnostics_for_keys` call):
 
 1. Add it to its record in `lib/data.ml` (`Command_line_tool.t`,
    `Schema.input` or `Schema.output`, or `Type.binding`), named as the spec key
@@ -305,10 +308,11 @@ Recipes for the changes made most often. Each names the functions to touch;
    including `mk_tool`, `bound` and `binding` in `test/harness.ml` and
    `Ty.default_binding`.
 2. Read it where its siblings are read (`Command_line_tool.of_tree`,
-   `Schema.parse_input` or `parse_output`, `Schema.parse_binding`): a scalar with
-   `Untyped_tree.string_field`, `bool_field` or `int_field`, a sub-object with
-   `Schema.field`. In the same commit, move its name from `known_*_keys` to
-   `implemented_*_keys`; that is what silences its diagnostic.
+   `Schema.parse_input` or `parse_output`, `Schema.parse_binding`), as one more
+   `and+` of the reader's `let+`: a scalar with `Untyped_tree.string_field`,
+   `bool_field` or `int_field`, a sub-object with `Schema.field`. In the same
+   commit, move its name from the `~unimplemented` list to the `~implemented`
+   one; that is what silences its diagnostic.
 3. Use it where the behavior lives: `Bind.argv` for the command line
    (`apply_value_from`, `generate_arg`), `Cwl.run` for the process and its
    streams, `collect_output` in `lib/cwl.ml` for outputs.

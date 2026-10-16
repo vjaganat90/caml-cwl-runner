@@ -1,136 +1,83 @@
 include Data.Command_line_tool
-open Error.Syntax
+open Error.Annotated
 
-(* The top-level keys of a tool, as the two lists [Schema.diagnostics_for_keys]
-   takes. [known_tool_keys] adds the CWL fields ccr does not implement. *)
+(* The top-level keys of a tool that need no diagnostic: those that name a
+   process, Schema Salad's, the process fields and the tool's own. *)
 let implemented_tool_keys =
-  [
-    "cwlVersion";
-    "class";
-    "id";
-    "label";
-    "doc";
-    "inputs";
-    "outputs";
-    "baseCommand";
-    "arguments";
-    "stdin";
-    "stdout";
-    "stderr";
-    "requirements";
-    "hints";
-    "successCodes";
-    "$namespaces";
-    "$schemas";
-    "$base";
-  ]
+  [ "cwlVersion"; "class"; "id"; "label"; "doc" ]
+  @ [ "$namespaces"; "$schemas"; "$base" ]
+  @ [ "inputs"; "outputs"; "requirements"; "hints" ]
+  @ [ "baseCommand"; "arguments"; "stdin"; "stdout"; "stderr"; "successCodes" ]
 
-let known_tool_keys =
-  implemented_tool_keys
-  @ [ "intent"; "temporaryFailCodes"; "permanentFailCodes" ]
-
-let parse_arguments ~json_path v =
-  match v with
-  | Untyped_tree.Null -> Ok ([], [])
+let parse_arguments path = function
+  | Untyped_tree.Null -> return []
   | Untyped_tree.Array xs ->
       Schema.map_i
-        (fun i x ->
-          match x with
+        (fun path -> function
           | Untyped_tree.String s ->
-              Ok ({ Ty.default_binding with value_from = Some s }, [])
-          | _ -> Schema.parse_binding ~json_path:(Schema.nth json_path i) x)
-        xs
-  | other -> Schema.expected ~json_path ~what:"arguments array" other
+              return { Ty.default_binding with value_from = Some s }
+          | x -> Schema.parse_binding path x)
+        path xs
+  | other -> Schema.expected ~json_path:path ~what:"arguments array" other
 
-let parse_base_command v =
-  match v with
-  | Untyped_tree.String s -> Ok [ s ]
-  | Untyped_tree.Array xs ->
-      Schema.strings ~json_path:"baseCommand" ~expected:"string" xs
-  | Untyped_tree.Null -> Ok []
-  | other ->
-      Schema.expected ~json_path:"baseCommand" ~what:"string or array" other
-
-let parse_success_codes v =
-  let one = Schema.parse_int in
-  match v with
-  | Untyped_tree.Null -> Ok [ 0 ]
-  | Untyped_tree.Int _ | Untyped_tree.Float _ ->
-      let+ n = one "successCodes" v in
+let parse_success_codes path = function
+  | Untyped_tree.Null -> return [ 0 ]
+  | (Untyped_tree.Int _ | Untyped_tree.Float _) as v ->
+      let+ n = Schema.parse_int path v in
       [ n ]
-  | Untyped_tree.Array xs ->
-      let+ ns, _ =
-        Schema.map_i
-          (fun i x ->
-            let+ n = one (Schema.nth "successCodes" i) x in
-            (n, []))
-          xs
-      in
-      ns
-  | other ->
-      Schema.expected ~json_path:"successCodes" ~what:"int or array of int"
-        other
+  | Untyped_tree.Array xs -> Schema.map_i Schema.parse_int path xs
+  | other -> Schema.expected ~json_path:path ~what:"int or array of int" other
 
 let of_tree doc =
   match doc with
   | Untyped_tree.Array _ ->
       Error.schema "/" "$graph / packed documents are not implemented"
   | Untyped_tree.Object kvs ->
-      let* class_ = Untyped_tree.string_field ~json_path:"" kvs "class" in
-      let class_ = Option.value class_ ~default:"" in
-      let* cwl_version = Schema.parse_cwl_version kvs in
-      let* () =
-        let forbidden k =
-          match List.assoc_opt k kvs with
-          | None -> Ok ()
-          | Some _ -> Error.schema k ("unresolved " ^ k)
-        in
-        let* () = forbidden "$import" in
-        let* () = forbidden "$include" in
-        forbidden "$graph"
+      let field key = Schema.field ~json_path:"" kvs key in
+      let string key =
+        Result.bind (Untyped_tree.string_field ~json_path:"" kvs key) return
       in
-      let top_diags =
-        Schema.diagnostics_for_keys ~implemented:implemented_tool_keys
-          ~known:known_tool_keys ~json_path:"" kvs
+      let forbidden k =
+        if List.mem_assoc k kvs then Error.schema k ("unresolved " ^ k)
+        else return ()
       in
-      let class_diag =
-        if class_ = "CommandLineTool" || class_ = "" then []
-        else [ Schema.diag class_ "class" ]
+      let+ () =
+        warn
+          (Schema.diagnostics_for_keys ~implemented:implemented_tool_keys
+             ~unimplemented:
+               [ "intent"; "temporaryFailCodes"; "permanentFailCodes" ]
+             "" kvs)
+          ()
+      and+ () =
+        let* class_ = string "class" in
+        match Option.value class_ ~default:"" with
+        | "CommandLineTool" | "" -> return ()
+        | class_ -> warn [ Schema.diag class_ "class" ] ()
+      and+ cwl_version = Schema.parse_cwl_version kvs
+      and+ _ = all (List.map forbidden [ "$import"; "$include"; "$graph" ])
+      and+ base_command =
+        field "baseCommand" (Schema.strings ~what:"string") (return [])
+      and+ arguments = field "arguments" parse_arguments (return [])
+      and+ inputs, outputs, requirements, hints = Schema.parse_process kvs
+      and+ stdout = string "stdout"
+      and+ stdin = string "stdin"
+      and+ stderr = string "stderr"
+      and+ success_codes =
+        field "successCodes" parse_success_codes (return [ 0 ])
       in
-      let* base_command =
-        Option.fold ~none:(Ok []) ~some:parse_base_command
-          (List.assoc_opt "baseCommand" kvs)
-      in
-      let* arguments, arg_diags =
-        Schema.parse_opt parse_arguments "arguments" kvs
-      in
-      let* (inputs, outputs, requirements, hints), process_diags =
-        Schema.parse_process kvs
-      in
-      let* stdout = Untyped_tree.string_field ~json_path:"" kvs "stdout" in
-      let* stdin = Untyped_tree.string_field ~json_path:"" kvs "stdin" in
-      let* stderr = Untyped_tree.string_field ~json_path:"" kvs "stderr" in
-      let* success_codes =
-        Option.fold ~none:(Ok [ 0 ]) ~some:parse_success_codes
-          (List.assoc_opt "successCodes" kvs)
-      in
-      let tool =
-        {
-          cwl_version;
-          base_command;
-          arguments;
-          inputs;
-          outputs;
-          stdout;
-          stdin;
-          stderr;
-          success_codes;
-          requirements;
-          hints;
-        }
-      in
-      let diagnostics = top_diags @ class_diag @ arg_diags @ process_diags in
-      Ok { Error.value = tool; diagnostics }
+      {
+        cwl_version;
+        base_command;
+        arguments;
+        inputs;
+        outputs;
+        stdout;
+        stdin;
+        stderr;
+        success_codes;
+        requirements;
+        hints;
+      }
   | other -> Schema.expected ~json_path:"/" ~what:"a CWL document object" other
 
 let cores_min tool =

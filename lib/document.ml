@@ -62,18 +62,12 @@ let of_tree ?fragment tree =
       let* class_ = Untyped_tree.string_field ~json_path:"" kvs "class" in
       match Option.value class_ ~default:"" with
       | "Workflow" ->
-          let* wf = Workflow.of_tree tree in
-          Ok
-            {
-              Error.value = Workflow wf.Error.value;
-              diagnostics = wf.diagnostics;
-            }
+          Error.Annotated.(
+            let+ wf = Workflow.of_tree tree in
+            Workflow wf)
       | "CommandLineTool" | "" ->
-          let* clt = Command_line_tool.of_tree tree in
-          Ok
-            {
-              Error.value = Command_line_tool clt.Error.value;
-              diagnostics = clt.diagnostics;
-            }
+          Error.Annotated.(
+            let+ tool = Command_line_tool.of_tree tree in
+            Command_line_tool tool)
       | class_ -> Error.unsupported class_)
   | other -> Schema.expected ~json_path:"/" ~what:"a CWL document object" other
