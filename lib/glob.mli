@@ -29,13 +29,6 @@ include module type of Data.Glob
     absolute path of [p] with symlinks resolved, or an [Error]. [Runtime.READ]
     includes it, so every runtime is an [FS]. *)
 
-val under : string -> string -> bool
-(** [under root path] is true when [path] is [root] or lies below it. It is
-    textual: after dropping one trailing [/] from each (a lone [/] stays),
-    [path] must equal [root] or start with [root] and a [/]. So [..] and
-    symlinks are not resolved, [/out2] is not under [/out], and [/etc] is not
-    under [/]. [glob] uses it for its roots and [Runtime] to confine outputs. *)
-
 val glob :
   (module FS) ->
   ?roots:string list ->

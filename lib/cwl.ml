@@ -8,6 +8,7 @@ module Type = Ty
 module Expr = Expr
 module Bind = Bind
 module Glob = Glob
+module Location = Location
 module Workdir = Workdir
 module Runtime = Runtime
 open Error.Syntax

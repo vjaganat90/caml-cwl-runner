@@ -329,12 +329,11 @@ let json_object fields =
 let add_opt name conv v fields =
   match v with None -> fields | Some x -> fields @ [ (name, conv x) ]
 
-let file_uri loc =
-  if String.starts_with ~prefix:"file:" loc then loc else "file://" ^ loc
-
 let file_fields (f : file) =
   [ ("class", json_string "File") ]
-  |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
+  |> add_opt "location"
+       (fun loc -> json_string (Location.to_uri loc))
+       f.location
   |> add_opt "path" json_string f.path
   |> add_opt "basename" json_string f.basename
   |> add_opt "nameroot" json_string f.nameroot
@@ -344,7 +343,9 @@ let file_fields (f : file) =
 
 let dir_fields (d : directory) =
   [ ("class", json_string "Directory") ]
-  |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
+  |> add_opt "location"
+       (fun loc -> json_string (Location.to_uri loc))
+       d.location
   |> add_opt "path" json_string d.path
 
 let rec to_json = function

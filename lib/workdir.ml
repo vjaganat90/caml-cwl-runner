@@ -35,11 +35,6 @@ let resolve ~job_dir loc =
   let loc = strip_file_uri loc in
   if Filename.is_relative loc then Filename.concat job_dir loc else loc
 
-let trim_slash s =
-  if String.length s > 1 && String.ends_with ~suffix:"/" s then
-    String.sub s 0 (String.length s - 1)
-  else s
-
 let source ~job_dir ~what loc =
   match Option.map (resolve ~job_dir) loc with
   | None -> Error.runtime (Printf.sprintf "%s input missing location" what)
@@ -56,7 +51,7 @@ let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
       else
         let dst = Filename.concat outdir base in
         let* () = R.copy_file src dst in
-        let seen = trim_slash container ^ "/" ^ base in
+        let seen = Location.trim_slash container ^ "/" ^ base in
         Ok
           ( Ty.Vfile
               {
@@ -85,35 +80,14 @@ let stage (module R : Runtime.WRITE) ~container ~outdir ~job_dir inputs =
   in
   go [] [] inputs
 
-let normalize_abs path =
-  let segs = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
-  let rec go acc = function
-    | [] -> Some (List.rev acc)
-    | "." :: rest -> go acc rest
-    | ".." :: _ -> None
-    | seg :: rest -> go (seg :: acc) rest
-  in
-  match go [] segs with
-  | None -> None
-  | Some [] -> Some "/"
-  | Some segs -> Some ("/" ^ String.concat "/" segs)
-
 let relocate ~container ~host path =
-  if container = host || not (String.starts_with ~prefix:"/" path) then path
+  let dotdot = List.mem ".." (String.split_on_char '/' path) in
+  if container = host || Filename.is_relative path || dotdot then path
   else
-    match normalize_abs path with
+    match Location.relative container (Location.normalize path) with
     | None -> path
-    | Some normalized ->
-        let container = trim_slash container in
-        let host = trim_slash host in
-        if normalized = container then host
-        else
-          let prefix = container ^ "/" in
-          if String.starts_with ~prefix normalized then
-            host
-            ^ String.sub normalized (String.length container)
-                (String.length normalized - String.length container)
-          else path
+    | Some "" -> Location.trim_slash host
+    | Some rest -> Location.trim_slash host ^ "/" ^ rest
 
 let map_paths f = function
   | Ty.Vfile file ->

@@ -5,8 +5,8 @@
     [Document], [Command_line_tool], [Workflow] and [Schema] (the typed process
     documents and their shared fields), [Type] (types and values; the library's
     [Ty]), [Expr] (parameter references), [Bind] (argv), [Glob] (output globs),
-    [Workdir] (File and Directory paths) and [Runtime] (the local and Docker
-    runtimes).
+    [Location] (locations as paths), [Workdir] (File and Directory paths) and
+    [Runtime] (the local and Docker runtimes).
 
     [run] follows [invocation.md]: stage the inputs into the output directory,
     build the command line, start the tool there with the prescribed
@@ -29,6 +29,7 @@ module Type : module type of Ty
 module Expr : module type of Expr
 module Bind : module type of Bind
 module Glob : module type of Glob
+module Location : module type of Location
 module Workdir : module type of Workdir
 module Runtime : module type of Runtime
 
