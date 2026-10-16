@@ -1,6 +1,3 @@
-(** Stage files and spawn processes. The local body is Eio; tests pack a fake.
-    Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
-
 open Error.Syntax
 include Data.Runtime
 

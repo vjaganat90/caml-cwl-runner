@@ -1,8 +1,3 @@
-(** Nested YAML/JSON file contents, before CWL types. The only document reader.
-    [load] resolves local [$import] and [$include], reading every file through
-    the [FILE] it is given. Does not leak [Yaml.value]. Not [Document]
-    (CommandLineTool | Workflow) and not [Type.value]. *)
-
 include Data.Untyped_tree
 open Error.Syntax
 
