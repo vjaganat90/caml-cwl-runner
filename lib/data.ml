@@ -127,9 +127,7 @@ module Type = struct
     value_from : string option;
         (** A constant string or an expression, evaluated with [self] set to the
             value being bound. Its result replaces that value. An [arguments]
-            entry has no value, so this is the argument itself. On the binding
-            of an array input it is evaluated only when [item_separator] is set,
-            and is otherwise ignored. *)
+            entry has no value, so this is the argument itself. *)
   }
   (** A CWL [CommandLineBinding]: how a value is written on the command line.
       The fields are the spec's, read with the spec's defaults. [shellQuote] and

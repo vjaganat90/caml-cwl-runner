@@ -87,31 +87,34 @@ let rec bind e ctx lead name ty binding v =
   match (v, ty, binding) with
   | Ty.Vnull, _, _ -> Ok []
   | _, Ty.Union ts, _ -> bind e ctx lead name (member ts v) binding v
-  | _, Ty.Array { items; item_binding = Some ib }, None ->
-      elements e ctx (append_name lead name) name items ib v
+  | Ty.Varray xs, Ty.Array { items; item_binding = Some ib }, None ->
+      elements e ctx (append_name lead name) name items ib xs
   | _, _, None -> Ok []
-  | _, _, Some b -> bound e ctx lead name ty b v
+  | _, _, Some (b : Ty.binding) ->
+      let* p = position e ctx b.position in
+      let* bound = value_from e ctx b v in
+      render e ctx (append_name (append_int lead p) name) name ty b bound
 
-(* The items of [v] bound by [b]. *)
-and bound e ctx lead name ty (b : Ty.binding) v =
-  let* p = position e ctx b.position in
-  let key = append_name (append_int lead p) name in
-  match ty with
-  | Ty.Array { items; item_binding } when b.item_separator = None ->
-      let+ tail =
+(* The items of [v], the value [b] binds at [key]: its own words, then, for an
+   array not joined by [itemSeparator], those of its elements. They are bound
+   as the items of [ty] when [v] is the input's own array, else by the default
+   binding. *)
+and render e ctx key name ty (b : Ty.binding) v =
+  let+ tail =
+    match (v, ty) with
+    | Ty.Varray _, _ when b.item_separator <> None -> Ok []
+    | Ty.Varray xs, Ty.Array { items; item_binding } when b.value_from = None ->
         elements e ctx key name items
           (Option.value item_binding ~default:Ty.default_binding)
-          v
-      in
-      { key; name; words = words b v } :: tail
-  | _ ->
-      let+ v = value_from e ctx b v in
-      [ { key; name; words = words b v } ]
+          xs
+    | Ty.Varray xs, _ -> elements e ctx key name Ty.String Ty.default_binding xs
+    | _ -> Ok []
+  in
+  { key; name; words = words b v } :: tail
 
-(* The items of each element of the array [v], each of type [items] and bound
-   by [b], after the array's [key]. *)
-and elements e ctx key name items b v =
-  let xs = match v with Ty.Varray xs -> xs | _ -> [ v ] in
+(* The items of each element of [xs], each of type [items] and bound by [b],
+   after the array's [key]. *)
+and elements e ctx key name items b xs =
   let element (i, x) =
     bind e ctx (append_int key i)
       (name ^ "[" ^ string_of_int i ^ "]")
@@ -120,15 +123,11 @@ and elements e ctx key name items b v =
   let+ items = Error.map_list element (List.mapi (fun i x -> (i, x)) xs) in
   List.concat items
 
-(* The item of the [i]-th entry of [arguments]. *)
+(* The items of the [i]-th entry of [arguments]. *)
 let argument e ctx (i, (b : Ty.binding)) =
   let* p = position e ctx b.position in
-  let+ v = value_from e ctx b Ty.Vnull in
-  {
-    key = [ I p; I i ];
-    name = Printf.sprintf "arguments[%d]" i;
-    words = words b v;
-  }
+  let* v = value_from e ctx b Ty.Vnull in
+  render e ctx [ I p; I i ] (Printf.sprintf "arguments[%d]" i) Ty.String b v
 
 let argv e (tool : Command_line_tool.t) inputs runtime =
   let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
@@ -141,5 +140,5 @@ let argv e (tool : Command_line_tool.t) inputs runtime =
       (List.mapi (fun i a -> (i, a)) tool.arguments)
   in
   let+ inputs = Error.map_list input tool.inputs in
-  let items = List.sort cmp_item (args @ List.concat inputs) in
+  let items = List.sort cmp_item (List.concat (args @ inputs)) in
   tool.base_command @ List.concat_map (fun item -> item.words) items
