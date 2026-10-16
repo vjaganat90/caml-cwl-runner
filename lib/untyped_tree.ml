@@ -98,51 +98,17 @@ let string_field = field "string" (function String s -> Some s | _ -> None)
 let bool_field = field "boolean" (function Bool b -> Some b | _ -> None)
 let int_field = field "int" (function Int n -> Some n | _ -> None)
 
-let is_remote s =
-  String.starts_with ~prefix:"http://" s
-  || String.starts_with ~prefix:"https://" s
-
-let strip_file s =
-  let prefix = "file://" in
-  if not (String.starts_with ~prefix s) then s
-  else
-    let rest =
-      String.sub s (String.length prefix)
-        (String.length s - String.length prefix)
-    in
-    if rest <> "" && rest.[0] = '/' then rest
-    else
-      match String.index_opt rest '/' with
-      | None -> rest
-      | Some i -> String.sub rest i (String.length rest - i)
-
-let normalize path =
-  let rooted = path <> "" && path.[0] = '/' in
-  let segs =
-    String.split_on_char '/' path |> List.filter (fun s -> s <> "" && s <> ".")
-  in
-  let rec go acc = function
-    | [] -> List.rev acc
-    | ".." :: rest -> (
-        match acc with [] -> go [] rest | _ :: tl -> go tl rest)
-    | seg :: rest -> go (seg :: acc) rest
-  in
-  let body = String.concat "/" (go [] segs) in
-  if rooted then "/" ^ body else body
-
 let base_dir = function
   | `File path -> Filename.dirname path
   | `Dir path -> path
 
-let locate ~feature ~base uri =
-  if is_remote uri then Error.unsupported feature
-  else
-    let uri = strip_file uri in
-    let dir = base_dir base in
-    if is_remote dir then Error.unsupported feature
-    else if Filename.is_relative uri then
-      Ok (normalize (Filename.concat dir uri))
-    else Ok (normalize uri)
+let locate ~feature ~base uri = Location.locate ~feature (base_dir base) uri
+
+(* A [$base] that ends in [/] names a directory; any other names a file. *)
+let base_of ~base raw =
+  let+ path = locate ~feature:"remote $base" ~base raw in
+  if String.ends_with ~suffix:"/" (Location.to_path raw) then `Dir path
+  else `File path
 
 let only_keys kvs allowed =
   match List.find_opt (fun (k, _) -> not (List.mem k allowed)) kvs with
@@ -166,10 +132,7 @@ let resolve (module F : FILE) ~base ~stack tree =
     let* base =
       match List.assoc_opt "$base" kvs with
       | None -> Ok base
-      | Some (String raw) ->
-          let* path = locate ~feature:"remote $base" ~base raw in
-          if String.ends_with ~suffix:"/" (strip_file raw) then Ok (`Dir path)
-          else Ok (`File path)
+      | Some (String raw) -> base_of ~base raw
       | Some other -> Error.schema "$base" (expected "string" other)
     in
     match (List.assoc_opt "$import" kvs, List.assoc_opt "$include" kvs) with
@@ -215,5 +178,5 @@ let resolve (module F : FILE) ~base ~stack tree =
 let load (module F : FILE) path =
   let* text = F.read_file path in
   let* tree = of_yaml_string ~path text in
-  let path = normalize path in
+  let path = Location.normalize path in
   resolve (module F) ~base:(`File path) ~stack:[ path ] tree
