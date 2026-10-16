@@ -47,8 +47,8 @@ val argv :
       the input's binding is not evaluated.
     - Any other array (the result of a [valueFrom], or a value whose type is not
       an array type) is only its [prefix], or nothing if it is empty.
-    - A string in [arguments] is one word as written: it is not evaluated, even
-      if it contains [$(...)].
+    - A string in [arguments] is evaluated like a [valueFrom], so a [$(...)] in
+      it is replaced; a string without one is a word as written.
 
     Fails with [Error.Expr] if a [position] is neither an int nor null (null is
     0), and with the error of [E.eval] for an expression it rejects. *)

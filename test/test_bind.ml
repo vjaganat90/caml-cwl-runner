@@ -54,6 +54,34 @@ let example_cases =
       ];
   ]
 
+(* One row per binding rule of CommandLineTool.yml: a name, the tool's
+   [inputs] and [arguments] as YAML lines, the job, and the argv. *)
+let rules =
+  [
+    ( "a string argument is an expression",
+      "inputs: []\narguments: [$(runtime.cores)]",
+      [],
+      [ "echo"; "1" ] );
+  ]
+
+let rule (name, fields, job, expected) =
+  let header =
+    "cwlVersion: v1.2\nclass: CommandLineTool\nbaseCommand: echo\n"
+  in
+  let got =
+    let open Cwl.Error.Syntax in
+    let* tree =
+      Cwl.Untyped_tree.of_yaml_string (header ^ "outputs: []\n" ^ fields)
+    in
+    let* tool = Cwl.Command_line_tool.of_tree tree in
+    Cwl.Bind.argv
+      (module Cwl.Expr.Param_ref)
+      tool.value job Cwl.Expr.default_runtime
+  in
+  ( name,
+    `Quick,
+    fun () -> Alcotest.(check (list string)) name expected (expect_ok got) )
+
 let prop_boolean_flag =
   Test.make ~name:"boolean flag" ~count:100 Gen.bool (fun b ->
       argv_ok
@@ -120,7 +148,7 @@ let tests =
   [
     ( "bind_examples",
       ("union_array_item_prefixes", `Quick, union_array_item_prefixes)
-      :: example_cases );
+      :: (example_cases @ List.map rule rules) );
     ( "bind_properties",
       List.map
         (QCheck_alcotest.to_alcotest ~speed_level:`Quick)
