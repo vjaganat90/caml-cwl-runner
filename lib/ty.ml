@@ -40,8 +40,6 @@ let value_kind = function
   | Vrecord _ -> "record"
 
 let or_else a b = match a with Some _ as x -> x | None -> b
-let file_loc (f : file) = or_else f.location f.path
-let dir_loc (d : directory) = or_else d.location d.path
 let file_path (f : file) = or_else f.path f.location
 let dir_path (d : directory) = or_else d.path d.location
 

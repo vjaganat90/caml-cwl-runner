@@ -64,18 +64,10 @@ val value_kind : value -> string
     item type. A [Vint] is [int] and a [Vfloat] is [float], never [long] or
     [double]. *)
 
-val file_loc : file -> string option
-(** [file_loc f] is the [location] of [f], else its [path], else [None]. It is
-    where to read [f] from when staging it. *)
-
-val dir_loc : directory -> string option
-(** Like [file_loc], for a Directory. *)
-
 val file_path : file -> string option
 (** [file_path f] is the [path] of [f], else its [location] as written
-    ([file://] included), else [None]: the opposite preference to [file_loc]. It
-    is the path a command line shows, and the one [Workdir] relocates, confines
-    and hashes. *)
+    ([file://] included), else [None]. It is the path a command line shows, and
+    the one [Workdir] relocates, confines and hashes. *)
 
 val dir_path : directory -> string option
 (** Like [file_path], for a Directory. *)
