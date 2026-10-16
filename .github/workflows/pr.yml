@@ -1,0 +1,27 @@
+name: pr
+
+# The PR's title, body and branches (AGENTS.md, "PR text"). A separate
+# workflow so that editing the PR text reruns only this, in seconds. The
+# script comes from the base branch, like the gates job in ci.yml.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  pr-text:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pr-text-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    env:
+      BASE: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: take the gate from the base branch
+        run: |
+          if git show "origin/$BASE:scripts/gates.py" > "$RUNNER_TEMP/gates.py" 2> /dev/null; then :
+          else cp scripts/gates.py "$RUNNER_TEMP/gates.py"; fi
+      - run: python3 "$RUNNER_TEMP/gates.py" --pr "$GITHUB_EVENT_PATH"
