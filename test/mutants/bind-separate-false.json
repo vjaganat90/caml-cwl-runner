@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "| Some p, v :: vs when not separate -> (p ^ v) :: vs",
+  "new": "| Some p, v :: vs when separate -> (p ^ v) :: vs",
+  "why": "separate: false joins the prefix to the value"
+}

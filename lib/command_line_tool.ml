@@ -94,9 +94,8 @@ let of_tree doc =
   | Untyped_tree.Array _ ->
       Error.schema "/" "$graph / packed documents are not implemented"
   | Untyped_tree.Object kvs ->
-      let class_ =
-        Option.value (Untyped_tree.string_field kvs "class") ~default:""
-      in
+      let* class_ = Untyped_tree.string_field ~json_path:"" kvs "class" in
+      let class_ = Option.value class_ ~default:"" in
       let* cwl_version = Schema.parse_cwl_version kvs in
       let* () =
         let forbidden k =
@@ -140,9 +139,9 @@ let of_tree doc =
           (Schema.parse_req_list ~in_requirements:false)
           "hints" kvs
       in
-      let stdout = Untyped_tree.string_field kvs "stdout" in
-      let stdin = Untyped_tree.string_field kvs "stdin" in
-      let stderr = Untyped_tree.string_field kvs "stderr" in
+      let* stdout = Untyped_tree.string_field ~json_path:"" kvs "stdout" in
+      let* stdin = Untyped_tree.string_field ~json_path:"" kvs "stdin" in
+      let* stderr = Untyped_tree.string_field ~json_path:"" kvs "stderr" in
       let* success_codes =
         match List.assoc_opt "successCodes" kvs with
         | None -> Ok [ 0 ]

@@ -18,7 +18,7 @@ let parse_cwl_version kvs =
 let diag ?(in_requirements = false) feature path =
   Error.unimplemented ~in_requirements feature path
 
-let child path name = if path = "" then name else path ^ "." ^ name
+let child = Untyped_tree.child
 let nth path i = Printf.sprintf "%s[%d]" path i
 
 let map_i f xs =
@@ -115,12 +115,13 @@ let rec parse_binding ~json_path v =
                  Untyped_tree.pp other)
       in
       let* position in
-      let prefix = Untyped_tree.string_field kvs "prefix" in
-      let separate =
-        Option.value (Untyped_tree.bool_field kvs "separate") ~default:true
+      let* prefix = Untyped_tree.string_field ~json_path kvs "prefix" in
+      let* separate = Untyped_tree.bool_field ~json_path kvs "separate" in
+      let separate = Option.value separate ~default:true in
+      let* item_separator =
+        Untyped_tree.string_field ~json_path kvs "itemSeparator"
       in
-      let item_separator = Untyped_tree.string_field kvs "itemSeparator" in
-      let value_from = Untyped_tree.string_field kvs "valueFrom" in
+      let* value_from = Untyped_tree.string_field ~json_path kvs "valueFrom" in
       Ok ({ Ty.position; prefix; separate; item_separator; value_from }, diags)
   | Untyped_tree.Null -> Ok (Ty.default_binding, [])
   | other ->
@@ -215,10 +216,10 @@ let parse_input ~json_path ~id_opt v =
             },
             diags )
   | Untyped_tree.Object kvs ->
-      let id =
+      let* id =
         match id_opt with
-        | Some id -> Some id
-        | None -> Untyped_tree.string_field kvs "id"
+        | Some id -> Ok (Some id)
+        | None -> Untyped_tree.string_field ~json_path kvs "id"
       in
       let* id =
         match id with
@@ -500,10 +501,10 @@ let parse_output ~json_path ~id_opt v =
             },
             diags )
   | Untyped_tree.Object kvs ->
-      let id =
+      let* id =
         match id_opt with
-        | Some id -> Some id
-        | None -> Untyped_tree.string_field kvs "id"
+        | Some id -> Ok (Some id)
+        | None -> Untyped_tree.string_field ~json_path kvs "id"
       in
       let* id =
         match id with
