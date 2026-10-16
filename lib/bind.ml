@@ -6,20 +6,10 @@ open Error.Syntax
 type key_atom = I of int | S of string
 type sort_key = key_atom list
 
-(* What a binding adds. [Value v] is a value to render. [Prefix_only p] is the
-   prefix of an array that is expanded into its items: it is added once,
-   before them. *)
-type payload = Value of Ty.value | Prefix_only of string
-
-(* One binding to render. [name] is the input's id, with [[i]] appended for
-   item i of an array, and [arguments[i]] for the i-th argument. It breaks ties
-   between equal keys. *)
-type item = {
-  key : sort_key;
-  binding : Ty.binding;
-  payload : payload;
-  name : string;
-}
+(* The words one binding adds, at its sort key. [name] is the input's id, with
+   [[i]] appended for item i of an array, and [arguments[i]] for the i-th
+   argument. It breaks ties between equal keys. *)
+type item = { key : sort_key; name : string; words : string list }
 
 let cmp_atom a b =
   match (a, b) with
@@ -41,192 +31,118 @@ let cmp_item a b =
   let c = cmp_key a.key b.key in
   if c <> 0 then c else String.compare a.name b.name
 
-let append_pos key n = key @ [ I n ]
+let append_int key n = key @ [ I n ]
 let append_name key name = key @ [ S name ]
-let append_index key i = key @ [ I i ]
 
-(* The binding of a string in [arguments] and of an array item that has none. *)
-let empty_binding = Ty.default_binding
+let position (module E : Expr.ENGINE) ctx = function
+  | Ty.Pos n -> Ok n
+  | Ty.Expr s -> (
+      match E.eval ctx s with
+      | Ok (Ty.Vint n) -> Ok (Int64.to_int n)
+      | Ok Ty.Vnull -> Ok 0
+      | Ok v ->
+          Error.expr
+            (Printf.sprintf "position expression must yield int, got %s"
+               (Ty.value_kind v))
+      | Error _ as e -> e)
 
-(* True when [name] starts with [arguments], as the name of an argument does.
-   A null argument still runs its [valueFrom]; a null input does not. *)
-let is_argument name = String.starts_with ~prefix:"arguments" name
+(* The value [b] binds: [v], or what its [valueFrom] gives with [self] = [v]. *)
+let value_from (module E : Expr.ENGINE) ctx (b : Ty.binding) v =
+  match b.value_from with
+  | None -> Ok v
+  | Some expr -> E.eval { ctx with Expr.self = v } expr
 
-let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =
-  let ctx0 = { Expr.inputs; self = Ty.Vnull; runtime } in
-  let resolve_position ctx = function
-    | Ty.Pos n -> Ok n
-    | Ty.Expr s -> (
-        match E.eval ctx s with
-        | Ok (Ty.Vint n) -> Ok (Int64.to_int n)
-        | Ok Ty.Vnull -> Ok 0
-        | Ok v ->
-            Error
-              (Error.Expr
-                 {
-                   message =
-                     Printf.sprintf "position expression must yield int, got %s"
-                       (Ty.value_kind v);
-                 })
-        | Error _ as e -> e)
+let flag = function Some p -> [ p ] | None -> []
+
+let tokens ~separate prefix values =
+  match (prefix, values) with
+  | _, [] -> []
+  | None, vs -> vs
+  | Some p, v :: vs when not separate -> (p ^ v) :: vs
+  | Some p, vs -> p :: vs
+
+(* The words of [v] bound by [b], by the kind of [v]. The items of an array
+   that is not joined by [itemSeparator] are items of their own. *)
+let words (b : Ty.binding) = function
+  | Ty.Vnull | Ty.Vbool false -> []
+  | Ty.Vbool true | Ty.Vrecord _ -> flag b.prefix
+  | Ty.Varray [] -> []
+  | Ty.Varray xs -> (
+      match b.item_separator with
+      | Some sep ->
+          tokens ~separate:b.separate b.prefix
+            [ String.concat sep (List.map Ty.string_of_value xs) ]
+      | None -> flag b.prefix)
+  | v -> tokens ~separate:b.separate b.prefix [ Ty.string_of_value v ]
+
+(* The first member of a union that [value] matches, else [string]. *)
+let rec member ts value =
+  match ts with
+  | [] -> Ty.String
+  | t :: rest -> if Ty.matches t value then t else member rest value
+
+(* The items of input [name] of type [ty], bound by [binding] when it has one,
+   with value [v]. [lead] is the key of the enclosing array item, if any. *)
+let rec bind e ctx lead name ty binding v =
+  match (v, ty, binding) with
+  | Ty.Vnull, _, _ -> Ok []
+  | _, Ty.Union ts, _ -> bind e ctx lead name (member ts v) binding v
+  | _, Ty.Array { items; item_binding }, None ->
+      elements e ctx (append_name lead name) name items
+        (Option.value item_binding ~default:Ty.default_binding)
+        v
+  | _, _, None -> Ok []
+  | _, _, Some b -> bound e ctx lead name ty b v
+
+(* The items of [v] bound by [b]. *)
+and bound e ctx lead name ty (b : Ty.binding) v =
+  let* p = position e ctx b.position in
+  let key = append_name (append_int lead p) name in
+  match ty with
+  | Ty.Array { items; item_binding } when b.item_separator = None ->
+      let+ tail =
+        elements e ctx key name items
+          (Option.value item_binding ~default:Ty.default_binding)
+          v
+      in
+      { key; name; words = flag b.prefix } :: tail
+  | _ ->
+      let+ v = value_from e ctx b v in
+      [ { key; name; words = words b v } ]
+
+(* The items of each element of the array [v], each of type [items] and bound
+   by [b], after the array's [key]. *)
+and elements e ctx key name items b v =
+  let xs = match v with Ty.Varray xs -> xs | _ -> [ v ] in
+  let element (i, x) =
+    bind e ctx (append_int key i)
+      (name ^ "[" ^ string_of_int i ^ "]")
+      items (Some b) x
   in
-  let rec collect ctx ~lead ~name ~ty ~(binding_opt : Ty.binding option) value
-      acc =
-    match value with
-    | Ty.Vnull -> Ok acc
-    | _ -> (
-        match ty with
-        | Ty.Union ts ->
-            let rec pick = function
-              | [] ->
-                  collect ctx ~lead ~name ~ty:Ty.String ~binding_opt value acc
-              | t :: rest ->
-                  if Ty.matches t value then
-                    collect ctx ~lead ~name ~ty:t ~binding_opt value acc
-                  else pick rest
-            in
-            pick ts
-        | Ty.Array { items; item_binding } ->
-            let xs = match value with Ty.Varray xs -> xs | _ -> [ value ] in
-            let* parent_key =
-              match binding_opt with
-              | None -> Ok lead
-              | Some b ->
-                  let+ p = resolve_position ctx b.position in
-                  append_pos lead p
-            in
-            let parent_key = append_name parent_key name in
-            let acc =
-              match binding_opt with
-              | Some b when b.item_separator <> None ->
-                  { key = parent_key; binding = b; payload = Value value; name }
-                  :: acc
-              | Some b -> (
-                  match b.prefix with
-                  | Some p ->
-                      {
-                        key = parent_key;
-                        binding = b;
-                        payload = Prefix_only p;
-                        name;
-                      }
-                      :: acc
-                  | None -> acc)
-              | None -> acc
-            in
-            if
-              match binding_opt with
-              | Some b when b.item_separator <> None -> true
-              | _ -> false
-            then Ok acc
-            else
-              let item_b =
-                match item_binding with
-                | Some b -> Some b
-                | None -> Some empty_binding
-              in
-              let rec go i acc = function
-                | [] -> Ok acc
-                | x :: xs ->
-                    let lead = append_index parent_key i in
-                    let* acc =
-                      collect ctx ~lead
-                        ~name:(name ^ "[" ^ string_of_int i ^ "]")
-                        ~ty:items ~binding_opt:item_b x acc
-                    in
-                    go (i + 1) acc xs
-              in
-              go 0 acc xs
-        | _ -> (
-            match binding_opt with
-            | None -> Ok acc
-            | Some b ->
-                let* p = resolve_position ctx b.position in
-                let key = append_name (append_pos lead p) name in
-                Ok ({ key; binding = b; payload = Value value; name } :: acc)))
+  let+ items = Error.map_list element (List.mapi (fun i x -> (i, x)) xs) in
+  List.concat items
+
+(* The item of the [i]-th entry of [arguments]. *)
+let argument e ctx (i, arg) =
+  let name = Printf.sprintf "arguments[%d]" i in
+  match arg with
+  | Command_line_tool.Literal s ->
+      Ok { key = [ I 0; I i ]; name; words = [ s ] }
+  | Command_line_tool.Binding b ->
+      let* p = position e ctx b.position in
+      let+ v = value_from e ctx b Ty.Vnull in
+      { key = [ I p; I i ]; name; words = words b v }
+
+let argv e (tool : Command_line_tool.t) inputs runtime =
+  let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
+  let input (inp : Schema.input) =
+    let v = Option.value (List.assoc_opt inp.id inputs) ~default:Ty.Vnull in
+    bind e { ctx with self = v } [] inp.id inp.ty inp.input_binding v
   in
-  let rec collect_arguments ctx i acc = function
-    | [] -> Ok acc
-    | Command_line_tool.Literal s :: rest ->
-        let item =
-          {
-            key = [ I 0; I i ];
-            binding = empty_binding;
-            payload = Value (Ty.Vstring s);
-            name = Printf.sprintf "arguments[%d]" i;
-          }
-        in
-        collect_arguments ctx (i + 1) (item :: acc) rest
-    | Command_line_tool.Binding b :: rest ->
-        let* p = resolve_position ctx b.position in
-        let item =
-          {
-            key = [ I p; I i ];
-            binding = b;
-            payload = Value Ty.Vnull;
-            name = Printf.sprintf "arguments[%d]" i;
-          }
-        in
-        collect_arguments ctx (i + 1) (item :: acc) rest
+  let* args =
+    Error.map_list (argument e ctx)
+      (List.mapi (fun i a -> (i, a)) tool.arguments)
   in
-  let rec collect_inputs ctx acc = function
-    | [] -> Ok acc
-    | (inp : Schema.input) :: rest ->
-        let value =
-          match List.assoc_opt inp.id inputs with
-          | Some v -> v
-          | None -> Ty.Vnull
-        in
-        let ctx = { ctx with Expr.self = value } in
-        let* acc =
-          collect ctx ~lead:[] ~name:inp.id ~ty:inp.ty
-            ~binding_opt:inp.input_binding value acc
-        in
-        collect_inputs ctx acc rest
-  in
-  let apply_value_from ctx item =
-    match (item.payload, item.binding.value_from) with
-    | Prefix_only _, _ | Value _, None -> Ok item
-    | Value Ty.Vnull, Some _ when not (is_argument item.name) ->
-        Ok { item with payload = Value Ty.Vnull }
-    | Value v, Some expr -> (
-        let ctx = { ctx with Expr.self = v } in
-        match E.eval ctx expr with
-        | Error _ as e -> e
-        | Ok v -> Ok { item with payload = Value v })
-  in
-  let flag = function Some p -> [ p ] | None -> [] in
-  let tokens ~separate prefix values =
-    match (prefix, values) with
-    | _, [] -> []
-    | None, vs -> vs
-    | Some p, v :: vs when not separate -> (p ^ v) :: vs
-    | Some p, vs -> p :: vs
-  in
-  let generate_arg item =
-    match item.payload with
-    | Prefix_only p -> [ p ]
-    | Value Ty.Vnull | Value (Ty.Vbool false) -> []
-    | Value (Ty.Vbool true) | Value (Ty.Vrecord _) -> flag item.binding.prefix
-    | Value (Ty.Varray xs) -> (
-        match item.binding.item_separator with
-        | Some sep when xs <> [] ->
-            tokens ~separate:item.binding.separate item.binding.prefix
-              [ String.concat sep (List.map Ty.string_of_value xs) ]
-        | _ -> if xs = [] then [] else flag item.binding.prefix)
-    | Value v ->
-        tokens ~separate:item.binding.separate item.binding.prefix
-          [ Ty.string_of_value v ]
-  in
-  let* acc = collect_arguments ctx0 0 [] tool.arguments in
-  let* items = collect_inputs ctx0 acc tool.inputs in
-  let rec eval_all acc = function
-    | [] -> Ok (List.rev acc)
-    | x :: xs ->
-        let* x = apply_value_from ctx0 x in
-        eval_all (x :: acc) xs
-  in
-  let* items = eval_all [] items in
-  let items = List.sort cmp_item items in
-  let args = List.concat_map generate_arg items in
-  Ok (tool.base_command @ args)
+  let+ inputs = Error.map_list input tool.inputs in
+  let items = List.sort cmp_item (args @ List.concat inputs) in
+  tool.base_command @ List.concat_map (fun item -> item.words) items
