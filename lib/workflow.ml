@@ -1,15 +1,11 @@
 include Data.Workflow
-open Error.Syntax
+open Error.Annotated
 
 let of_tree tree =
   match tree with
   | Untyped_tree.Object kvs ->
-      let* cwl_version = Schema.parse_cwl_version kvs in
-      let+ (inputs, outputs, requirements, hints), diagnostics =
-        Schema.parse_process kvs
-      in
-      {
-        Error.value = { cwl_version; inputs; outputs; requirements; hints };
-        diagnostics = Error.unimplemented "Workflow" "class" :: diagnostics;
-      }
+      let+ () = warn [ Error.unimplemented "Workflow" "class" ] ()
+      and+ cwl_version = Schema.parse_cwl_version kvs
+      and+ inputs, outputs, requirements, hints = Schema.parse_process kvs in
+      { cwl_version; inputs; outputs; requirements; hints }
   | other -> Schema.expected ~json_path:"/" ~what:"a CWL document object" other

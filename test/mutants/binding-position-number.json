@@ -1,6 +1,6 @@
 {
   "file": "lib/schema.ml",
-  "old": "| Ok n -> Ok (Ty.Pos n)",
-  "new": "| Ok n -> Ok (Ty.Pos (n + 1))",
+  "old": "return (Ty.Pos (Int64.to_int n))",
+  "new": "return (Ty.Pos (Int64.to_int n + 1))",
   "why": "a binding position keeps its number"
 }
