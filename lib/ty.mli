@@ -36,8 +36,9 @@ val default_binding : binding
 (** The binding with every field at its CWL default: [position] 0, [separate]
     true, and no [prefix], [item_separator] or [value_from]. [Schema] returns it
     for an [inputBinding] that is [null], and takes its [position] for a binding
-    that omits one; [Bind] uses it for array items and plain-string [arguments]
-    that have no binding of their own. *)
+    that omits one; [Bind] uses it for array items that have no binding of their
+    own, and [Command_line_tool] for a string in [arguments], with that string
+    as its [value_from]. *)
 
 val is_optional : t -> bool
 (** [is_optional t] is [true] when [t] admits [null]: it is [Null], or a [Union]

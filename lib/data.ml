@@ -357,12 +357,6 @@ module Schema = struct
 end
 
 module Command_line_tool = struct
-  (** One entry of [arguments]. [Literal] is a string entry: it is passed on as
-      written, and a [$(...)] in it is not evaluated. [Binding] is an entry
-      written as a binding object: it has no input value, so its [value_from]
-      gives the argument. *)
-  type argument = Literal of string | Binding of Type.binding
-
   type t = {
     cwl_version : string;
         (** [cwlVersion] as written: [v1.0], [v1.1] or [v1.2], and [v1.2] when
@@ -371,7 +365,11 @@ module Command_line_tool = struct
     base_command : string list;
         (** [baseCommand], a single string being a one-element list; empty when
             absent. *)
-    arguments : argument list;
+    arguments : Type.binding list;
+        (** [arguments]. An entry has no input value, so its [value_from] gives
+            the argument. A string entry is read as the binding whose
+            [value_from] is that string: a literal, or an expression whose
+            result is the argument. *)
     inputs : Schema.input list;
     outputs : Schema.output list;
     stdout : string option;
