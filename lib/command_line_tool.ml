@@ -36,12 +36,9 @@ let parse_arguments ~json_path v =
       Schema.map_i
         (fun i x ->
           match x with
-          | Untyped_tree.String s -> Ok (Literal s, [])
-          | _ ->
-              let* b, d =
-                Schema.parse_binding ~json_path:(Schema.nth json_path i) x
-              in
-              Ok (Binding b, d))
+          | Untyped_tree.String s ->
+              Ok ({ Ty.default_binding with value_from = Some s }, [])
+          | _ -> Schema.parse_binding ~json_path:(Schema.nth json_path i) x)
         xs
   | other -> Schema.expected ~json_path ~what:"arguments array" other
 
