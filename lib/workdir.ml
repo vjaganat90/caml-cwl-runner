@@ -27,7 +27,7 @@ let local_path s =
   else Error.runtime (Printf.sprintf "unsupported location scheme %S" scheme)
 
 (* A [location] is a URI reference and a [path] a plain path. *)
-let source ~job_dir ~what location path =
+let source ~dir ~what location path =
   let+ src =
     match (location, path) with
     | Some loc, _ -> local_path loc
@@ -35,12 +35,22 @@ let source ~job_dir ~what location path =
     | None, None ->
         Error.runtime (Printf.sprintf "%s input missing location" what)
   in
-  if Filename.is_relative src then Filename.concat job_dir src else src
+  if Filename.is_relative src then Filename.concat dir src else src
 
-let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
-  function
-  | Ty.Vfile f ->
-      let* src = source ~job_dir ~what:"File" f.location f.path in
+let locate dir v =
+  Ty.map_result
+    (function
+      | Ty.Vfile f ->
+          let+ src = source ~dir ~what:"File" f.location f.path in
+          Ty.Vfile { f with location = Some src }
+      | Ty.Vdir d ->
+          let+ src = source ~dir ~what:"Directory" d.location d.path in
+          Ty.Vdir { location = Some src; path = Some src }
+      | v -> Ok v)
+    v
+
+let stage_leaf (module R : Runtime.WRITE) ~container ~outdir used = function
+  | Ty.Vfile ({ location = Some src; _ } as f) ->
       let raw_base = Option.value f.basename ~default:(Filename.basename src) in
       let* base = safe_leaf ~what:"File basename" raw_base in
       if List.mem base used then
@@ -58,21 +68,16 @@ let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
                 location = Some seen;
               },
             base :: used )
-  | Ty.Vdir d ->
-      let* src = source ~job_dir ~what:"Directory" d.location d.path in
-      Ok (Ty.Vdir { location = Some src; path = Some src }, used)
   | v -> Ok (v, used)
 
-let stage_value (module R : Runtime.WRITE) ~container ~outdir ~job_dir used v =
-  Ty.fold_map (stage_leaf (module R) ~container ~outdir ~job_dir) used v
+let stage_value (module R : Runtime.WRITE) ~container ~outdir used v =
+  Ty.fold_map (stage_leaf (module R) ~container ~outdir) used v
 
-let stage (module R : Runtime.WRITE) ~container ~outdir ~job_dir inputs =
+let stage (module R : Runtime.WRITE) ~container ~outdir inputs =
   let rec go used acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
-        let* v, used =
-          stage_value (module R) ~container ~outdir ~job_dir used v
-        in
+        let* v, used = stage_value (module R) ~container ~outdir used v in
         go used ((k, v) :: acc) rest
   in
   go [] [] inputs

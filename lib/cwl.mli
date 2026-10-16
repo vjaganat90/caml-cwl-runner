@@ -69,9 +69,10 @@ val run :
     file work and starts the tool, unless the tool's [requirements] (not its
     [hints]) hold a [DockerRequirement]: then the runtime that [docker] returns
     for it does, and without [docker] the run fails with [Error.Runtime]. With
-    [job = None] the input object is empty. Relative locations in the job, and
-    in the tool's defaults, are relative to the directory of [job], or of [tool]
-    when [job] is [None].
+    [job = None] the input object is empty. A relative location in the job is
+    relative to the directory of [job], and one in a [default] to that of
+    [tool]; either becomes an absolute path, so the tool finds it from its own
+    working directory.
 
     [outdir] is the designated output directory, created if missing; by default
     it is a fresh directory. A relative [outdir] is not made absolute, so [HOME]
