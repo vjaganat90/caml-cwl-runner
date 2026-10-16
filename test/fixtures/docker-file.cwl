@@ -3,7 +3,7 @@ class: CommandLineTool
 requirements:
   - class: DockerRequirement
     dockerFile: "FROM alpine:latest\n"
-    dockerImageId: ccr-dockerfile-test
+    dockerImageId: @TAG@
 baseCommand: [echo, built]
 inputs: []
 outputs: []
