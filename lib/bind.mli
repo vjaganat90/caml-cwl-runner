@@ -41,10 +41,10 @@ val argv :
       by it; an empty one adds nothing.
     - An array of an array type, without [itemSeparator], is its [prefix] once,
       then each item. An item is bound by the [inputBinding] written in the
-      array type ([item_binding] of [Ty.Array]), else by [Ty.default_binding].
-      So items are added even when neither the input nor the array type has a
-      binding, and the [valueFrom] of the input's binding is not evaluated. An
-      empty array adds nothing, not even its [prefix].
+      array type ([item_binding] of [Ty.Array]), else by [Ty.default_binding]
+      when the input has a binding. An array with neither adds nothing. The
+      [valueFrom] of the input's binding is not evaluated. An empty array adds
+      nothing, not even its [prefix].
     - Any other array (the result of a [valueFrom], or a value whose type is not
       an array type) is only its [prefix], or nothing if it is empty.
     - A string in [arguments] is evaluated like a [valueFrom], so a [$(...)] in
