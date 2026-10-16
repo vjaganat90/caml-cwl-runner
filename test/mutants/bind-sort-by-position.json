@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "| I x, I y -> Int.compare x y",
+  "new": "| I x, I y -> Int.compare y x",
+  "why": "bindings sort by ascending position"
+}

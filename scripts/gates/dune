@@ -1,0 +1,9 @@
+(library
+ (name gate)
+ (modules :standard \ gates)
+ (libraries compiler-libs.common unix yaml re))
+
+(executable
+ (name gates)
+ (modules gates)
+ (libraries gate))
