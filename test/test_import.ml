@@ -139,10 +139,43 @@ let field_table () =
       |> Alcotest.(check string) text want)
     field_rows
 
+(* A plain scalar is resolved by the YAML 1.2 core schema; a quoted one is a
+   string. *)
+let scalar_table () =
+  List.iter
+    (fun (text, want) ->
+      Cwl.Untyped_tree.of_yaml_string text
+      |> Result.fold
+           ~ok:(Format.asprintf "%a" Cwl.Untyped_tree.pp)
+           ~error:Cwl.Error.to_string
+      |> Alcotest.(check string) text want)
+    [
+      ("no", {|"no"|});
+      ("y", {|"y"|});
+      ("On", {|"On"|});
+      ("yes", {|"yes"|});
+      ("True", "true");
+      ("FALSE", "false");
+      ("~", "null");
+      ("", "null");
+      ("'true'", {|"true"|});
+      ("0x1F", "31");
+      ("0o17", "15");
+      ("-5", "-5");
+      ("0b1", {|"0b1"|});
+      ("1_0", {|"1_0"|});
+      ("2.0", "2.");
+      ("1e3", "1000.");
+      ("9007199254740993", "9007199254740993");
+      ("[no, 5]", {|["no", 5]|});
+      ("a: &x 1\nb: *x", "parse error: aliases are not supported");
+    ]
+
 let tests =
   [
     ("imports", [ ("table", `Quick, import_table) ]);
     ("fields", [ ("table", `Quick, field_table) ]);
+    ("scalars", [ ("table", `Quick, scalar_table) ]);
     ( "yaml",
       List.map
         (QCheck_alcotest.to_alcotest ~speed_level:`Quick)

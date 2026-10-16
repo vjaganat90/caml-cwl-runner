@@ -63,10 +63,9 @@ val expected :
     arm. *)
 
 val parse_int : string -> Untyped_tree.value -> (int, Error.t) result
-(** [parse_int json_path v] is the integer in [v]: an [Int], or a [Float] with
-    an integer value. Any other [v] is a schema error at [json_path]. A number
-    outside the range of an OCaml [int] is not rejected: an [Int] wraps around
-    and a [Float] gives an unspecified value. *)
+(** [parse_int json_path v] is the integer in [v]: an [Int]. Any other [v] is a
+    schema error at [json_path]. A number outside the range of an OCaml [int] is
+    not rejected: it wraps around. *)
 
 val strings :
   json_path:string ->

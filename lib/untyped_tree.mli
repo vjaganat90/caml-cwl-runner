@@ -8,9 +8,9 @@
     holds it. Only an object holding [$import] or [$include] is replaced: every
     other key, [$base] and [$namespaces] included, stays in the tree.
 
-    A [value] is a JSON value, except that a number with no fractional part is
-    an [Int] (an [int64]). An [Object] is an association list: it keeps key
-    order and duplicate keys, and the field readers below use the first match.
+    A [value] is a JSON value, except that an integer is an [Int] (an [int64]).
+    An [Object] is an association list: it keeps key order and duplicate keys,
+    and the field readers below use the first match.
 
     A [FILE] is the only effect this module has: [read_file path] is the text of
     the file at [path], or an [Error.t]. Any [Runtime.READ] is a [FILE]. *)
@@ -20,14 +20,14 @@ include module type of Data.Untyped_tree
 val of_yaml_string : ?path:string -> string -> (value, Error.t) result
 (** [of_yaml_string s] is the tree of the YAML or JSON text [s], with no
     directive resolved ([load] does that). An empty [s] is [Null], and only the
-    first document of a stream is read. A number with no fractional part is an
-    [Int] ([5.0] and [1e3] too) when it is between [-2^63] and [2^63] inclusive;
-    [2^63] gives an unspecified [int64]. The YAML library reads numbers as
-    floats, so an integer above [2^53] may be rounded. Plain [yes], [no], [on],
-    [off], [y] and [n], in lower case, Capitalized or UPPER CASE, are booleans
-    (a YAML 1.1 rule). Fails with [Parse] when [s] is not valid YAML, uses an
-    alias, or has a key that is not a scalar; [path], when not [""], only names
-    the file in that error. *)
+    first document of a stream is read. A plain scalar is resolved by the YAML
+    1.2 core schema, as Schema Salad requires: only [true], [True], [TRUE] and
+    the [false] forms are booleans, so [no] and [y] are strings; [12], [0x1F]
+    and [0o17] are exact [Int]s; [2.0] and [1e3] are [Float]s; an integer
+    outside the [int64] range is a [Float]. Every quoted scalar is a [String].
+    Fails with [Parse] when [s] is not valid YAML, uses an alias, or has a key
+    that is not a scalar; [path], when not [""], only names the file in that
+    error. *)
 
 val load : (module FILE) -> string -> (value, Error.t) result
 (** [load file path] parses the file at [path] and resolves the directives in
@@ -95,7 +95,4 @@ val int_field :
   (string * value) list ->
   string ->
   (int64 option, Error.t) result
-(** Like [string_field], for an [Int] or a [Float] with no fractional part; the
-    message says ["int"]. The [Float] goes through [Int64.of_float] with no
-    range check, so a huge one gives an unspecified [int64]; [of_yaml_string]
-    makes such a [Float] only outside the [int64] range. *)
+(** Like [string_field], for an [Int]; the message says ["int"]. *)

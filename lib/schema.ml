@@ -34,7 +34,6 @@ let parse_cwl_version kvs =
 
 let parse_int json_path = function
   | Untyped_tree.Int n -> Ok (Int64.to_int n)
-  | Untyped_tree.Float f when Float.is_integer f -> Ok (int_of_float f)
   | other -> expected ~json_path ~what:"int" other
 
 let parse_position ~json_path = function
