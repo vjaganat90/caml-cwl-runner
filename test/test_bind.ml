@@ -66,6 +66,10 @@ let rules =
       "inputs: {xs: {type: 'string[]', inputBinding: {prefix: -x}}}",
       [ ("xs", strings []) ],
       [ "echo" ] );
+    ( "an array with no binding adds nothing",
+      "inputs: {xs: 'string[]'}",
+      [ ("xs", strings [ "a" ]) ],
+      [ "echo" ] );
   ]
 
 let rule (name, fields, job, expected) =
