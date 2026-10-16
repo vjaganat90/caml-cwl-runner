@@ -124,7 +124,6 @@ let rec matches ty value =
   | Null, Vnull -> true
   | Boolean, Vbool _ -> true
   | (Int | Long), Vint _ -> true
-  | (Int | Long), Vfloat f when Float.is_integer f -> true
   | (Float | Double), Vfloat _ -> true
   | (Float | Double), Vint _ -> true
   | String, Vstring _ -> true
@@ -193,8 +192,6 @@ let rec value_of_tree param ty doc =
   | Null, Untyped_tree.Null -> Ok Vnull
   | Boolean, Untyped_tree.Bool b -> Ok (Vbool b)
   | (Int | Long), Untyped_tree.Int n -> Ok (Vint n)
-  | (Int | Long), Untyped_tree.Float f when Float.is_integer f ->
-      Ok (Vint (Int64.of_float f))
   | (Float | Double), Untyped_tree.Float f -> Ok (Vfloat f)
   | (Float | Double), Untyped_tree.Int n -> Ok (Vfloat (Int64.to_float n))
   | String, Untyped_tree.String s -> Ok (Vstring s)
