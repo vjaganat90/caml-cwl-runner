@@ -54,18 +54,19 @@ but `Error` uses `Error`, so the dependency lists leave `Error` out.
 
 ```text
 0  Error
-1  Untyped_tree
-   Glob
-2  Ty                 Untyped_tree
-3  Schema             Ty, Untyped_tree
+1  Location
+2  Untyped_tree       Location
+   Glob               Location
+3  Ty                 Location, Untyped_tree
+4  Schema             Ty, Untyped_tree
    Expr               Ty
-4  Command_line_tool  Schema, Ty, Untyped_tree
+5  Command_line_tool  Schema, Ty, Untyped_tree
    Workflow           Schema, Untyped_tree
-   Runtime            Glob, Schema
-5  Document           Command_line_tool, Workflow, Schema, Untyped_tree
+   Runtime            Location, Schema
+6  Document           Command_line_tool, Workflow, Schema, Untyped_tree
    Bind               Command_line_tool, Expr, Schema, Ty
-   Workdir            Runtime, Ty
-6  Cwl                all of the above
+   Workdir            Location, Runtime, Ty
+7  Cwl                all of the above
 ```
 
 Effects reach a function only as a module argument: `FILE` for
@@ -253,7 +254,7 @@ the run stays local. Two in one list are a schema error.
 
 The legal roots are the `realpath` of the outdir, the tmpdir and every Directory
 input's source. A path is under a root when it equals the root or starts with
-the root and a `/`, so `/out-evil` is not under `/out` (`Glob.under`). After
+the root and a `/`, so `/out-evil` is not under `/out` (`Location.under`). After
 `Cwl.run` returns `Ok`, every File and Directory `path` and `location` in the
 output object, declared outputs and extra `cwl.output.json` keys alike, resolves
 with symlinks followed to a path under a legal root.

@@ -20,7 +20,7 @@ let confined_using realpath roots path =
                 (Printf.sprintf "path %S is not under a legal root" path)
           | root :: rest -> (
               match realpath root with
-              | Ok r when Glob.under r resolved -> Ok ()
+              | Ok r when Location.under r resolved -> Ok ()
               | Ok _ | Error _ -> go rest)
         in
         go roots
