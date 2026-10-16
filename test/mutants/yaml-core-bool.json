@@ -1,0 +1,6 @@
+{
+  "file": "lib/untyped_tree.ml",
+  "old": "| \"true\" | \"True\" | \"TRUE\" -> Bool true",
+  "new": "| \"true\" | \"True\" | \"TRUE\" | \"yes\" -> Bool true",
+  "why": "YAML 1.2 core schema: yes is a string, only true forms are booleans"
+}

@@ -46,12 +46,11 @@ val is_optional : t -> bool
 
 val matches : t -> value -> bool
 (** [matches t v] is [true] when [v] is a valid value of type [t]. [Int] and
-    [Long] take an integer or an integral float, [Float] and [Double] any
-    number, [String] only a string; an array needs every item to match, a
-    [Union] one member, and no type takes a [Vrecord].
-    [apply_defaults_and_check] uses it on job inputs and [Cwl.run] on the
-    entries of a [cwl.output.json]; [Bind] uses it to pick the member of a union
-    that fits a value. *)
+    [Long] take an integer, [Float] and [Double] any number, [String] only a
+    string; an array needs every item to match, a [Union] one member, and no
+    type takes a [Vrecord]. [apply_defaults_and_check] uses it on job inputs and
+    [Cwl.run] on the entries of a [cwl.output.json]; [Bind] uses it to pick the
+    member of a union that fits a value. *)
 
 val type_name : t -> string
 (** [type_name t] is the name of [t] in an error message: [int], [File],
@@ -121,10 +120,10 @@ val value_of_tree : string -> t -> Untyped_tree.value -> (value, Error.t) result
 (** [value_of_tree param ty doc] reads [doc] as a value of type [ty]; [Schema]
     uses it for an input's [default], and [param] is the input id that errors
     name. A union takes its first member that reads: [Null] members are tried
-    last, or first when [doc] is [null]. Numbers read loosely: an integral float
-    is an [Int] or [Long], an integer a [Float] or [Double], any number a
-    [String]. A File or Directory reads from an object whose optional [class]
-    must match, drops the fields it does not model, and gets [fill_file_paths].
+    last, or first when [doc] is [null]. Numbers read loosely: an integer a
+    [Float] or [Double], any number a [String]. A File or Directory reads from
+    an object whose optional [class] must match, drops the fields it does not
+    model, and gets [fill_file_paths].
 
     A mismatch is [Error.Type], naming in [expected] the type that failed (the
     item type for a bad array item, the whole union for a union) and printing in
