@@ -87,10 +87,8 @@ let rec bind e ctx lead name ty binding v =
   match (v, ty, binding) with
   | Ty.Vnull, _, _ -> Ok []
   | _, Ty.Union ts, _ -> bind e ctx lead name (member ts v) binding v
-  | _, Ty.Array { items; item_binding }, None ->
-      elements e ctx (append_name lead name) name items
-        (Option.value item_binding ~default:Ty.default_binding)
-        v
+  | _, Ty.Array { items; item_binding = Some ib }, None ->
+      elements e ctx (append_name lead name) name items ib v
   | _, _, None -> Ok []
   | _, _, Some b -> bound e ctx lead name ty b v
 
