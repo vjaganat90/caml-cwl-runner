@@ -1,7 +1,3 @@
-(** POSIX / Python glob against an abstract filesystem. CWL outputBinding rules
-    ([**], reject [..], roots) live here. Runtime only implements [FS]; this
-    module does not spawn or touch Eio. *)
-
 include Data.Glob
 open Error.Syntax
 
@@ -11,6 +7,8 @@ let join a b =
   else if String.ends_with ~suffix:"/" a then a ^ b
   else a ^ "/" ^ b
 
+(* Splits at [/] and drops the empty components. A backslash is dropped and the
+   character after it kept, even a [/] or a wildcard. *)
 let split_pattern s =
   let buf = Buffer.create (String.length s) in
   let rec go i acc escaped =
