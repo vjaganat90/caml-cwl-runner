@@ -1,12 +1,19 @@
-(** [inputBinding] → argv. Pure: does not open files or spawn. Expression
-    evaluation is a module argument ([ENGINE]). *)
-
 open Error.Syntax
 
+(* A sort key is a list of atoms: [I n] is a position or an array index, [S s]
+   a name. As in invocation.md, numbers sort before strings and strings sort
+   lexicographically by their UTF-8 bytes. *)
 type key_atom = I of int | S of string
 type sort_key = key_atom list
+
+(* What a binding adds. [Value v] is a value to render. [Prefix_only p] is the
+   prefix of an array that is expanded into its items: it is added once,
+   before them. *)
 type payload = Value of Ty.value | Prefix_only of string
 
+(* One binding to render. [name] is the input's id, with [[i]] appended for
+   item i of an array, and [arguments[i]] for the i-th argument. It breaks ties
+   between equal keys. *)
 type item = {
   key : sort_key;
   binding : Ty.binding;
@@ -37,7 +44,12 @@ let cmp_item a b =
 let append_pos key n = key @ [ I n ]
 let append_name key name = key @ [ S name ]
 let append_index key i = key @ [ I i ]
+
+(* The binding of a string in [arguments] and of an array item that has none. *)
 let empty_binding = Ty.default_binding
+
+(* True when [name] starts with [arguments], as the name of an argument does.
+   A null argument still runs its [valueFrom]; a null input does not. *)
 let is_argument name = String.starts_with ~prefix:"arguments" name
 
 let argv (module E : Expr.ENGINE) (tool : Command_line_tool.t) inputs runtime =

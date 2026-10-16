@@ -1,6 +1,3 @@
-(** A CWL process file: CommandLineTool or Workflow. [of_tree] reads [class] and
-    builds one or the other. Not a job input object. *)
-
 include Data.Document
 open Error.Syntax
 

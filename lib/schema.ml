@@ -1,7 +1,3 @@
-(** Shared process vocabulary and the parsers both process classes use: inputs,
-    outputs, requirements, types, bindings. Does not parse a whole
-    CommandLineTool or Workflow and does not spawn. *)
-
 include Data.Schema
 open Error.Syntax
 
@@ -84,6 +80,10 @@ let shortname id =
 
 let is_namespaced key = String.contains key ':'
 
+(* One pair of key lists per kind of object. [implemented_*] keys need no
+   diagnostic, even those whose value is dropped (like [label] and [doc]).
+   [known_*] adds the CWL fields ccr does not implement. [diagnostics_for_keys]
+   reports each key outside [implemented_*] as known, unknown or an extension. *)
 let implemented_input_keys =
   [ "id"; "label"; "doc"; "type"; "default"; "inputBinding" ]
 
@@ -256,6 +256,9 @@ let parse_input what ~json_path id_opt v =
 
 let parse_inputs = parse_params "input" parse_input
 
+(* Only [coresMin] is kept, and only as a number: any other value of it (an
+   expression, say) is dropped without a diagnostic. Any other field but
+   [class] is a diagnostic. *)
 let parse_resource ~json_path ~in_requirements kvs =
   let cores_min =
     match List.assoc_opt "coresMin" kvs with
