@@ -1,8 +1,3 @@
-(** CommandLineTool facade: load, argv, spawn, capture outputs. Staging,
-    relocation, confinement, and checksums are [Workdir]. [command_line] stops
-    at argv; [run] executes. Does not implement Workflow or a JavaScript engine.
-*)
-
 module Error = Error
 module Untyped_tree = Untyped_tree
 module Schema = Schema

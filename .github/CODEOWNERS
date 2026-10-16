@@ -1,0 +1,12 @@
+# What CI checks, and how. A PR that changes one of these files can't merge
+# until the owner has read it (AGENTS.md, "Size and shape").
+/.github/ @vjaganat90
+/AGENTS.md @vjaganat90
+/gates.json @vjaganat90
+/scripts/ @vjaganat90
+/vendor/ @vjaganat90
+/.gitmodules @vjaganat90
+/dune-project @vjaganat90
+/*.opam @vjaganat90
+dune @vjaganat90
+.ocamlformat* @vjaganat90
