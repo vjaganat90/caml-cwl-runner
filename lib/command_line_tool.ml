@@ -1,10 +1,8 @@
-(** A CWL CommandLineTool record and its parser. Known-unimplemented fields
-    become diagnostics; they are not dropped. Does not evaluate expressions or
-    spawn. *)
-
 include Data.Command_line_tool
 open Error.Syntax
 
+(* The top-level keys of a tool, as the two lists [Schema.diagnostics_for_keys]
+   takes. [known_tool_keys] adds the CWL fields ccr does not implement. *)
 let implemented_tool_keys =
   [
     "cwlVersion";

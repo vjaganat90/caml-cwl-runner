@@ -1,6 +1,3 @@
-(** A CWL Workflow record. Parsing only: graph execution is not here yet.
-    [of_tree] accepts [class: Workflow] and reports it unimplemented. *)
-
 include Data.Workflow
 open Error.Syntax
 

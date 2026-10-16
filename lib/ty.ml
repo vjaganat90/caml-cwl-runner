@@ -1,8 +1,3 @@
-(** Avro-ish CWL types and runtime values. Nested [inputBinding] on arrays lives
-    here so [Command_line_tool] can depend on [Type] without a cycle. Walkers
-    recurse into arrays and records; callers handle leaves. Does not load
-    documents or spawn. *)
-
 include Data.Type
 open Error.Syntax
 
@@ -50,8 +45,10 @@ let dir_loc (d : directory) = or_else d.location d.path
 let file_path (f : file) = or_else f.path f.location
 let dir_path (d : directory) = or_else d.path d.location
 
-(* The containers ccr walks today. File and Directory stay leaves until
-   secondaryFiles and listing are walked. *)
+(* The containers the walkers descend into: arrays and records. File and
+   Directory stay leaves until secondaryFiles and listing are walked. visit
+   returns a container's children and a function that rebuilds the container
+   from new children. *)
 let visit = function
   | Varray xs -> Some (xs, fun ys -> Varray ys)
   | Vrecord kvs ->
