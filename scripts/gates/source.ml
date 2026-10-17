@@ -90,10 +90,10 @@ let raising =
      Result.get_error Hashtbl.find String.sub String.index String.rindex String.index_from Bytes.sub int_of_string \
      float_of_string bool_of_string Int64.of_string Char.chr"
 
+(* Not Unix, Eio, Eio_unix, Eio_main, Lwt or Thread: only the runtime library links them, so the compiler rejects them
+   in the rest of lib/. Stdlib I/O and mutable state compile anywhere, so this list covers them. *)
 let impure_modules =
-  String.split_on_char ' '
-    "Sys Unix Eio Eio_unix Eio_main In_channel Out_channel Lwt Hashtbl Obj Queue Stack Atomic Mutex Condition Domain \
-     Thread Random"
+  String.split_on_char ' ' "Sys In_channel Out_channel Hashtbl Obj Queue Stack Atomic Mutex Condition Domain Random"
 
 let impure_names =
   String.split_on_char ' '
