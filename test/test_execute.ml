@@ -5,7 +5,7 @@ open Harness
 
 let run_tool tool job =
   Eio_main.run @@ fun env ->
-  Cwl.run (Cwl.Runtime.local env) (fixture tool) (Some (fixture job))
+  Cwl.run (Runtime.local env) (fixture tool) (Some (fixture job))
 
 type outcome =
   | Expect_ok of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
@@ -199,8 +199,8 @@ let run_edge e () =
     if not e.docker then run_tool e.tool e.job
     else
       Eio_main.run @@ fun env ->
-      let local = Cwl.Runtime.local env in
-      let docker image = Cwl.Runtime.docker env image in
+      let local = Runtime.local env in
+      let docker image = Runtime.docker env image in
       Cwl.run local ~docker (fixture e.tool) (Some (fixture e.job))
   in
   match result with
@@ -273,7 +273,7 @@ let output_under_outdir =
     `Quick,
     fun () ->
       Eio_main.run @@ fun env ->
-      let (module R) = Cwl.Runtime.local env in
+      let (module R) = Runtime.local env in
       let outdir = expect_ok (R.mkdtemp "ccr-under-") in
       let outdir = expect_ok (R.abspath outdir) in
       match

@@ -26,7 +26,7 @@ include module type of Data.Glob
 (** [FS] is the filesystem a walk reads. [exists] and [is_dir] look through
     symlinks, so a dangling link does not exist. [read_dir d] is the entry names
     of [d], not paths; [.] and [..] are ignored if listed. [realpath p] is the
-    absolute path of [p] with symlinks resolved, or an [Error]. [Runtime.READ]
+    absolute path of [p] with symlinks resolved, or an [Error]. [Io.READ]
     includes it, so every runtime is an [FS]. *)
 
 val glob :

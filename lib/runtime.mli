@@ -5,9 +5,9 @@
     call these inside [Eio_main.run].
 
     [READ] (inspect files), [WRITE] (change them), [SPAWN] (start the tool) and
-    [RUNTIME] (all three) are declared once in the private module [Data], where
-    their members are documented, and included below. A function takes the
-    smallest one that covers what it does, so its type says what it may touch.
+    [RUNTIME] (all three) are declared in {!Cwl.Io}, where their members are
+    documented. A function takes the smallest one that covers what it does, so
+    its type says what it may touch.
 
     Follows "Runtime environment" in [invocation.md]: the tool starts in the
     designated output directory (the [cwd] given to [spawn]) and, under
@@ -16,7 +16,8 @@
     re-raised. Does not parse CWL or build the tool's own command line;
     {!docker_run_argv} only wraps it. *)
 
-include module type of Data.Runtime
+open Cwl
+open Io
 
 val env_list : tool_env -> string list
 (** [env_list e] is the two strings [HOME=h] and [TMPDIR=t], in that order,
