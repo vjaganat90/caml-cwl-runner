@@ -1,7 +1,7 @@
 (** The data model of ccr, this CWL runner: its variant and record types and its
     effect signatures, defined once. [Error], [Untyped_tree], [Schema],
-    [Command_line_tool], [Workflow], [Document], [Expr], [Glob] and [Runtime]
-    each re-export the module of the same name below with
+    [Command_line_tool], [Workflow], [Document], [Expr], [Glob] and [Io] each
+    re-export the module of the same name below with
     [include module type of Data.X]. [Ty] ([lib/ty.ml]) does the same for
     [Type], and is [Cwl.Type] outside the library. So the comments here document
     the types those modules show. This module is private, does no I/O, and has
@@ -12,9 +12,9 @@
     into a [Document.t], whose [Command_line_tool.t] or [Workflow.t] is built
     from [Schema] parts and [Type]s. A job file is read into a [Type.object_],
     and [Cwl.run] returns one too. [Expr] says what an expression sees and what
-    evaluates it, [Glob] what globbing needs of a file system, and [Runtime]
-    what code may do to the machine. [Error] holds the failures, and the
-    diagnostics for constructs that are read and not implemented.
+    evaluates it, [Glob] what globbing needs of a file system, and [Io] what
+    code may do to the machine. [Error] holds the failures, and the diagnostics
+    for constructs that are read and not implemented.
 
     A [json_path] is the dotted location of a node in a document, such as
     [inputs[0].type] or [requirements.DockerRequirement]. A top-level field is
@@ -103,7 +103,7 @@ module Untyped_tree = struct
 
   (** What reading a document needs of the world: a file's content.
       [Untyped_tree.load] takes one to read a document and the files it
-      [$import]s or [$include]s. Every [Runtime.READ] is one. *)
+      [$import]s or [$include]s. Every [Io.READ] is one. *)
   module type FILE = sig
     val read_file : string -> (string, Error.t) result
     (** [read_file p] is the whole content of the file at [p]. It fails when [p]
@@ -459,7 +459,7 @@ end
 
 module Glob = struct
   (** The four questions a glob asks of a file system. [Glob.glob] takes one, so
-      a test can hand it an in-memory tree. Every [Runtime.READ] is one. *)
+      a test can hand it an in-memory tree. Every [Io.READ] is one. *)
   module type FS = sig
     val exists : string -> bool
     (** [exists p] is true when [p] is there, following symlinks: a dangling
@@ -480,7 +480,7 @@ module Glob = struct
   end
 end
 
-module Runtime = struct
+module Io = struct
   type node = [ `Not_found | `File | `Directory | `Symlink | `Other ]
   (** What a path is on disk. [`Not_found]: nothing is there. [`File]: a regular
       file. [`Directory]. [`Symlink]: a symbolic link, which only [READ.lstat]

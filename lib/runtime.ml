@@ -1,5 +1,6 @@
+open Cwl
+open Io
 open Error.Syntax
-include Data.Runtime
 
 (* A failure becomes a value. Cancellation is not a failure: it is how Eio
    stops a fiber, so it passes through. *)
@@ -9,21 +10,16 @@ let wrap f =
   | exn -> Error.runtime (Printexc.to_string exn)
 
 let confined_using realpath roots path =
+  let holds resolved root =
+    match realpath root with
+    | Ok r -> Location.under r resolved
+    | Error _ -> false
+  in
   if roots = [] then Error.runtime "confined: no roots"
   else
-    match realpath path with
-    | Error _ as e -> e
-    | Ok resolved ->
-        let rec go = function
-          | [] ->
-              Error.runtime
-                (Printf.sprintf "path %S is not under a legal root" path)
-          | root :: rest -> (
-              match realpath root with
-              | Ok r when Location.under r resolved -> Ok ()
-              | Ok _ | Error _ -> go rest)
-        in
-        go roots
+    let* resolved = realpath path in
+    if List.exists (holds resolved) roots then Ok ()
+    else Error.runtime (Printf.sprintf "path %S is not under a legal root" path)
 
 let node_of = function
   | `Not_found -> `Not_found
