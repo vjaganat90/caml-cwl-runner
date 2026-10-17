@@ -13,7 +13,7 @@
     and the field readers below use the first match.
 
     A [FILE] is the only effect this module has: [read_file path] is the text of
-    the file at [path], or an [Error.t]. Any [Runtime.READ] is a [FILE]. *)
+    the file at [path], or an [Error.t]. Any [Io.READ] is a [FILE]. *)
 
 include module type of Data.Untyped_tree
 

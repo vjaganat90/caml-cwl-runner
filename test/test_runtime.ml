@@ -3,7 +3,7 @@
 
 open Harness
 
-let runtime_setup (module R : Cwl.Runtime.RUNTIME) =
+let runtime_setup (module R : Cwl.Io.RUNTIME) =
   let parent = expect_ok (R.mkdtemp "ccr-conf-") in
   let parent = expect_ok (R.abspath parent) in
   let root = Filename.concat parent "out" in
@@ -45,12 +45,12 @@ let process_env_table () =
   let cwd_seen = ref "" in
   let result =
     Eio_main.run @@ fun env ->
-    let (module Local) = Cwl.Runtime.local env in
+    let (module Local) = Runtime.local env in
     let module R = struct
       include Local
 
       let spawn env cwd _stdio _argv =
-        seen := Cwl.Runtime.env_list env;
+        seen := Runtime.env_list env;
         cwd_seen := cwd;
         Ok 0
     end in
@@ -92,7 +92,7 @@ let documents_load_through_runtime () =
   let read = ref [] in
   let result =
     Eio_main.run @@ fun env ->
-    let (module Local) = Cwl.Runtime.local env in
+    let (module Local) = Runtime.local env in
     let module R = struct
       include Local
 
@@ -130,7 +130,7 @@ let local_env_inherits_only_path () =
   let out = Filename.concat dir "env.txt" in
   let code =
     Eio_main.run @@ fun env ->
-    let (module R) = Cwl.Runtime.local env in
+    let (module R) = Runtime.local env in
     R.spawn
       { home = dir; tmpdir = dir }
       dir
@@ -153,7 +153,7 @@ let local_env_inherits_only_path () =
 let no_job_uses_defaults () =
   match
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl") None
+    Cwl.run (Runtime.local env) (fixture "no-job-default.cwl") None
   with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann -> lookup_bytes "out" "from-default\n" ann
@@ -169,8 +169,8 @@ let uncaptured_output_reaches_console () =
   let buf = Buffer.create 64 in
   let result =
     Eio_main.run @@ fun env ->
-    let console = (Eio.Flow.buffer_sink buf :> Cwl.Runtime.console) in
-    Cwl.run (Cwl.Runtime.local ~console env) (fixture "console.cwl") None
+    let console = (Eio.Flow.buffer_sink buf :> Runtime.console) in
+    Cwl.run (Runtime.local ~console env) (fixture "console.cwl") None
   in
   (match result with
   | Error (Cwl.Error.Runtime _) -> ()
@@ -199,7 +199,7 @@ let sha1_vectors () =
 let output_file_checksum () =
   match
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) (fixture "no-job-default.cwl") None
+    Cwl.run (Runtime.local env) (fixture "no-job-default.cwl") None
   with
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
   | Ok ann ->
@@ -218,7 +218,7 @@ let tmpdir_run ?rm_tmpdir job =
   let outdir = Filename.temp_dir "ccr-rm-" "" in
   let result =
     Eio_main.run @@ fun env ->
-    Cwl.run (Cwl.Runtime.local env) ~outdir ?rm_tmpdir
+    Cwl.run (Runtime.local env) ~outdir ?rm_tmpdir
       (fixture "tmpdir-report.cwl")
       (Some (fixture job))
   in

@@ -41,7 +41,7 @@ val locate : string -> Ty.value -> (Ty.value, Error.t) result
     nor [path], or its location has a scheme other than [file]. *)
 
 val stage :
-  (module Runtime.WRITE) ->
+  (module Io.WRITE) ->
   container:string ->
   outdir:string ->
   Ty.object_ ->
@@ -87,7 +87,7 @@ val resolve_paths : container:string -> string -> Ty.value -> Ty.value
     takes the [path]. *)
 
 val confine :
-  (module Runtime.READ) -> string list -> Ty.value -> (Ty.value, Error.t) result
+  (module Io.READ) -> string list -> Ty.value -> (Ty.value, Error.t) result
 (** [confine (module R) roots v] takes the [path], else the [location], of each
     File and Directory in [v], and returns the value with [path] and [location]
     both set to that path's real path (symlinks resolved). A File's missing
@@ -104,7 +104,7 @@ val confine :
     directory. It implements the spec's rule that an output path must refer to a
     path within the output directory. *)
 
-val checksum : (module Runtime.READ) -> Ty.value -> (Ty.value, Error.t) result
+val checksum : (module Io.READ) -> Ty.value -> (Ty.value, Error.t) result
 (** [checksum (module R) v] fills in, on each File in [v], whichever of
     [checksum] (["sha1$"] followed by the hex SHA-1 of the contents) and [size]
     (in bytes) it lacks; a value already present is kept, not verified. The file

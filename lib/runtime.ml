@@ -1,5 +1,4 @@
 open Error.Syntax
-include Data.Runtime
 
 (* A failure becomes a value. Cancellation is not a failure: it is how Eio
    stops a fiber, so it passes through. *)

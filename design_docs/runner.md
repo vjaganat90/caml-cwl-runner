@@ -42,31 +42,35 @@ also carries diagnostics, and combine with `let*`, `let+` and `and+` from
 
 - `Type` is the file `lib/ty.ml`: `Ty` inside `lib/`, `Cwl.Type` outside,
   `Data.Type` in `data.ml`. Every other module is named after its file.
-- `Cwl` is the library's only public module: `cwl.mli` re-exports the others,
-  and `Data` is a dune private module. `lib/cwl.ml` also holds the code that
-  turns glob hits and `cwl.output.json` into output values.
+- `lib/` builds two libraries. The core, `cwl`, has `Cwl` as its only public
+  module: `cwl.mli` re-exports the others, and `Data` is a dune private module.
+  `lib/cwl.ml` also holds the code that turns glob hits and `cwl.output.json`
+  into output values. `runtime` is `lib/runtime.ml` alone, written against the
+  core: `lib/dune` opens `Cwl` and `Cwl.Io` for it, so it says `Error` and
+  `RUNTIME`, not `Cwl.Error` and `Cwl.Io.RUNTIME`.
 
 ## Layers
 
 Derived from `ocamldep -modules lib/*.ml`. A module uses only lower layers.
 `Data` (see Names) is below all of them and is not listed. Every listed module
-but `Error` uses `Error`, so the dependency lists leave `Error` out.
+but `Error` and `Io` uses `Error`, so the dependency lists leave `Error` out.
 
 ```text
 0  Error
+   Io
 1  Location
 2  Untyped_tree       Location
    Glob               Location
 3  Ty                 Location, Untyped_tree
 4  Schema             Ty, Untyped_tree
    Expr               Ty
+   Workdir            Io, Location, Ty
 5  Command_line_tool  Schema, Ty, Untyped_tree
    Workflow           Schema, Untyped_tree
-   Runtime            Location, Schema
 6  Document           Command_line_tool, Workflow, Schema, Untyped_tree
    Bind               Command_line_tool, Expr, Schema, Ty
-   Workdir            Location, Runtime, Ty
 7  Cwl                all of the above
+8  Runtime            Io, Location, Schema (library runtime)
 ```
 
 Effects reach a function only as a module argument: `FILE` for
@@ -74,9 +78,10 @@ Effects reach a function only as a module argument: `FILE` for
 `RUNTIME` for `Cwl.run`, `ENGINE` for `Bind.argv`. Libraries outside `Stdlib`
 appear in few places: `Yaml` in `Untyped_tree`, `Re` in `Glob`, `Digestif`,
 `Unix`, `Eio`, `Eio_unix` and `Optint` in `Runtime`, `Cmdliner` and `Eio_main`
-in `bin/main.ml`. `Runtime` implements `Glob.FS` and uses `Schema` for the
-Docker settings; `Workdir` uses `Runtime` for the `READ` and `WRITE` signatures
-only.
+in `bin/main.ml`. Only `runtime` and `bin/` list Eio, Unix or digestif in
+their dune `libraries`, so the compiler rejects them in the core. `Runtime`
+implements `Glob.FS` and the `Io` signatures, and uses `Schema` for the Docker
+settings.
 
 ## The run
 
@@ -176,7 +181,7 @@ What the diagram leaves out:
   Every File has `location` (`file://` and the path), `path`, `basename`,
   `nameroot` and `nameext` (`basename` split at its last dot; `nameext` is empty
   with no dot or only a leading one), `checksum` (`sha1$` and the hex from
-  `Runtime.READ.sha1`) and `size`. No outputs print `{}`.
+  `Io.READ.sha1`) and `size`. No outputs print `{}`.
 
 **Why Eio.** `Unix.create_process` has no working-directory argument and
 `Unix.chdir` changes the whole process, which would race between fibers; Eio's
@@ -262,7 +267,7 @@ output object, declared outputs and extra `cwl.output.json` keys alike, resolves
 with symlinks followed to a path under a legal root.
 
 - **Glob.** `Glob.glob` lists only directories whose `realpath` is under a
-  root; `Runtime.READ.confined` then checks each hit against all roots. A hit
+  root; `Io.READ.confined` then checks each hit against all roots. A hit
   may be a symlink: it keeps its own path when its target is under a root and
   is `Error.Runtime` when not.
 - **`cwl.output.json`.** `Workdir.confine` checks the `path` (the `location` if
@@ -349,7 +354,7 @@ in `lib/cwl.ml` and `lib/cwl.mli`. It does I/O only through the narrowest module
 argument.
 
 **Add a filesystem or process operation:** a `val` in `READ`, `WRITE` or `SPAWN`
-(`Data.Runtime`), implemented once in `Runtime.filesystem`, which builds both
+(`Data.Io`), implemented once in `Runtime.filesystem`, which builds both
 `Runtime.local` and `Runtime.docker` from a launcher. Callers take the narrowest
 signature that has it.
 
@@ -398,7 +403,7 @@ steps on the same Eio scheduler, each a run with its own outdir.
   `inputs[0].type`; where a schema error or diagnostic points. Built with
   `Untyped_tree.child` and `Schema.nth`.
 - **legal roots**: see Confinement. To confine a path is to check it against
-  them after resolving symlinks (`Workdir.confine`, `Runtime.READ.confined`).
+  them after resolving symlinks (`Workdir.confine`, `Io.READ.confined`).
 - **location, path**: the two File and Directory fields. `location` says where
   the thing is, `path` where the tool opens it; each stands in for the other
   when missing (`Type.file_loc`, `Type.file_path`).

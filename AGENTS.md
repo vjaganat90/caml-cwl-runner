@@ -44,16 +44,21 @@ Architecture:
 
 - A function does I/O only through a module argument, and takes the narrowest
   signature that covers what it does: `(module Untyped_tree.FILE)` reads
-  documents, `(module Glob.FS)` globs, `(module Runtime.READ)` inspects files,
-  `(module Runtime.WRITE)` changes them, `(module Runtime.RUNTIME)` also
-  spawns, and `(module Expr.ENGINE)` evaluates expressions.
-- Only `lib/runtime.ml` and `bin/main.ml` do I/O (Eio, `Unix`, `Sys`). Inside
+  documents, `(module Glob.FS)` globs, `(module Io.READ)` inspects files,
+  `(module Io.WRITE)` changes them, `(module Io.RUNTIME)` also spawns, and
+  `(module Expr.ENGINE)` evaluates expressions.
+- Only `lib/runtime.ml` and `bin/main.ml` do I/O. `lib/runtime.ml` is its
+  own library, `runtime`, the only one in `lib/` that depends on Eio, `Unix`
+  and digestif, so the compiler rejects them in the rest of `lib/`. It can't
+  reject `Sys`, Stdlib I/O or mutable state; the gate checks those. Inside
   `Runtime` every wait is an Eio operation; a blocking call with no Eio
   operation runs through `Eio_unix.run_in_systhread`. `Eio.Cancel.Cancelled`
   is re-raised, never turned into an `Error`.
 - Types that several modules share, and module signatures, are defined once
   in `lib/data.ml` and `include`d by the public modules; a type that one
-  module uses stays in it. No objects, no ppx.
+  module uses stays in it. No objects, no ppx. The signatures `READ`,
+  `WRITE`, `SPAWN` and `RUNTIME` are in `Io`, which the core exports; the
+  `runtime` library implements them.
 - A failure is an `Error.t`. Build it with `Error.schema` (the process
   document is wrong, at a JSON path), `Error.runtime` (running failed: I/O, a
   collision, confinement), `Error.expr` (an expression failed) or

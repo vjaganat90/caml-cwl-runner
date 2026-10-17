@@ -49,7 +49,7 @@ let locate dir v =
       | v -> Ok v)
     v
 
-let stage_leaf (module R : Runtime.WRITE) ~container ~outdir used = function
+let stage_leaf (module R : Io.WRITE) ~container ~outdir used = function
   | Ty.Vfile ({ location = Some src; _ } as f) ->
       let raw_base = Option.value f.basename ~default:(Filename.basename src) in
       let* base = safe_leaf ~what:"File basename" raw_base in
@@ -70,10 +70,10 @@ let stage_leaf (module R : Runtime.WRITE) ~container ~outdir used = function
             base :: used )
   | v -> Ok (v, used)
 
-let stage_value (module R : Runtime.WRITE) ~container ~outdir used v =
+let stage_value (module R : Io.WRITE) ~container ~outdir used v =
   Ty.fold_map (stage_leaf (module R) ~container ~outdir) used v
 
-let stage (module R : Runtime.WRITE) ~container ~outdir inputs =
+let stage (module R : Io.WRITE) ~container ~outdir inputs =
   let rec go used acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
@@ -147,7 +147,7 @@ let node_matches path expected got =
              got = got_name expected got;
            })
 
-let confine (module R : Runtime.READ) roots v =
+let confine (module R : Io.READ) roots v =
   let confine_path raw =
     if raw = "" then Error.runtime "File or Directory output missing path"
     else
@@ -168,7 +168,7 @@ let or_fill present compute =
       let+ value = compute () in
       Some value
 
-let checksum (module R : Runtime.READ) v =
+let checksum (module R : Io.READ) v =
   Ty.map_result
     (function
       | Ty.Vfile f -> (

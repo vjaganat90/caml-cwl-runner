@@ -1,5 +1,5 @@
 (test
  (name test_cwl)
- (libraries cwl alcotest qcheck-core qcheck-alcotest eio_main unix)
+ (libraries cwl runtime alcotest qcheck-core qcheck-alcotest eio_main unix)
  (deps
   (source_tree fixtures)))

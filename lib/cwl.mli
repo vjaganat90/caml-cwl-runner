@@ -31,7 +31,7 @@ module Bind : module type of Bind
 module Glob : module type of Glob
 module Location : module type of Location
 module Workdir : module type of Workdir
-module Runtime : module type of Runtime
+module Io : module type of Io
 
 val command_line :
   (module Untyped_tree.FILE) ->
@@ -55,8 +55,8 @@ val command_line :
     reference. *)
 
 val run :
-  (module Runtime.RUNTIME) ->
-  ?docker:(Schema.docker -> (module Runtime.RUNTIME)) ->
+  (module Io.RUNTIME) ->
+  ?docker:(Schema.docker -> (module Io.RUNTIME)) ->
   ?outdir:string ->
   ?rm_tmpdir:bool ->
   string ->

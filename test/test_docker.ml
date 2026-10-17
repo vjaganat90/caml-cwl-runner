@@ -33,7 +33,7 @@ let prop_docker_argv_suffix =
       let argv = List.map (fun s -> "c" ^ s) raw in
       let spec =
         {
-          Cwl.Runtime.bin = "/bin/docker";
+          Runtime.bin = "/bin/docker";
           user = "1:1";
           cwd = "/host-out";
           workdir;
@@ -42,7 +42,7 @@ let prop_docker_argv_suffix =
           container_env = [];
         }
       in
-      let got = Cwl.Runtime.docker_run_argv spec argv in
+      let got = Runtime.docker_run_argv spec argv in
       let n = List.length argv in
       let pre_len = List.length got - n in
       let flag name =
@@ -280,7 +280,7 @@ let docker_mount_table () =
   Unix.symlink real link;
   let real = Unix.realpath real in
   let check_ok ~host ~workdir ~source ~target =
-    match Cwl.Runtime.docker_mount ~host ~workdir with
+    match Runtime.docker_mount ~host ~workdir with
     | Ok (got_source, got_target) ->
         Alcotest.(check string) "source" source got_source;
         Alcotest.(check string) "target" target got_target
@@ -290,7 +290,7 @@ let docker_mount_table () =
   check_ok ~host:link ~workdir:link ~source:real ~target:link;
   List.iter
     (fun workdir ->
-      match Cwl.Runtime.docker_mount ~host:real ~workdir with
+      match Runtime.docker_mount ~host:real ~workdir with
       | Error (Cwl.Error.Runtime _) -> ()
       | Ok (src, dst) ->
           Alcotest.failf "accepted mount %S -> %S:%S" workdir src dst
@@ -317,7 +317,7 @@ let designated_outdir_table () =
       let argv_ok = ref false in
       let result =
         Eio_main.run @@ fun env ->
-        let (module Local) = Cwl.Runtime.local env in
+        let (module Local) = Runtime.local env in
         let module R = struct
           include Local
 
@@ -388,7 +388,7 @@ let designated_outdir_table () =
     designated_cases
 
 let docker_prefix () =
-  let bin = Eio_main.run Cwl.Runtime.docker_executable in
+  let bin = Eio_main.run Runtime.docker_executable in
   let q = Filename.quote bin in
   let prefix =
     if Filename.is_relative bin then ""
@@ -408,8 +408,8 @@ let run_template ~dir template substitutions =
   let tool = write_text (Filename.concat dir "tool.cwl") text in
   let job = write_text (Filename.concat dir "job.json") "{}\n" in
   Eio_main.run @@ fun env ->
-  let local = Cwl.Runtime.local env in
-  let docker image = Cwl.Runtime.docker env image in
+  let local = Runtime.local env in
+  let docker image = Runtime.docker env image in
   match Cwl.run local ~docker tool (Some job) with
   | Ok _ -> ()
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
@@ -492,7 +492,7 @@ let docker_file_built =
 let docker_run_argv_env_and_mounts () =
   let spec =
     {
-      Cwl.Runtime.bin = "docker";
+      Runtime.bin = "docker";
       user = "501:20";
       cwd = "/host/out";
       workdir = "/out";
@@ -523,7 +523,7 @@ let docker_run_argv_env_and_mounts () =
       "echo";
       "hi";
     ]
-    (Cwl.Runtime.docker_run_argv spec [ "echo"; "hi" ])
+    (Runtime.docker_run_argv spec [ "echo"; "hi" ])
 
 let tests =
   [
