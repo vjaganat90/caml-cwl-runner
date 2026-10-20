@@ -204,7 +204,7 @@ let collect_dir_roots acc v =
   Ty.fold
     (fun acc v ->
       match (Ty.class_of v, Ty.path v) with
-      | Some "Directory", Some p -> p :: acc
+      | Some "Directory", Some p when not (Filename.is_relative p) -> p :: acc
       | _ -> acc)
     acc v
 

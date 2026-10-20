@@ -45,17 +45,31 @@ let set_paths v (path, location) =
   in
   set "path" path v |> set "location" location
 
-(* Process.yml, File [contents]: a File with neither [location] nor [path] is
-   a literal, and staging writes its [contents] to a file. With no [basename],
-   ccr names it [literal-<n>], [n] the count of Files staged before it. *)
+(* Process.yml, File [contents] and Directory [location]: a File with
+   neither [location] nor [path] but [contents], or a Directory with neither
+   but a [listing], is a literal, and staging creates it. With no
+   [basename], ccr names it [literal-<n>], [n] the count of entries staged
+   before it. *)
 let is_literal v =
-  Ty.class_of v = Some "File" && Ty.path v = None && Ty.get "contents" v <> None
+  Ty.path v = None
+  &&
+  match Ty.class_of v with
+  | Some "File" -> Ty.get "contents" v <> None
+  | Some _ -> Ty.get "listing" v <> None
+  | None -> false
 
-let locate dir v =
+(* The [listing] of a Directory literal; [is_literal] checked it is there. *)
+let listing v =
+  Option.value (Ty.get "listing" v) ~default:(Untyped_tree.Array [])
+
+let rec locate dir v =
   Ty.map_result
     (fun v ->
       match Ty.class_of v with
       | None -> Ok v
+      | Some "Directory" when is_literal v ->
+          let+ entries = locate dir (listing v) in
+          Ty.set "listing" entries v
       | Some _ when is_literal v -> Ok v
       | Some what ->
           let+ src =
@@ -67,37 +81,55 @@ let locate dir v =
           set_paths v (path, Some src))
     v
 
-let stage_leaf (module R : Io.WRITE) ~container ~outdir used v =
-  let place write fallback =
+(* Stages [v] at [rel], a path relative to [outdir]: an entry of a
+   Directory literal goes inside it, under that Directory's [rel]. [used]
+   holds the basenames already staged at [rel]. *)
+let rec stage_leaf (module R : Io.WRITE) ~container ~outdir rel used v =
+  let place fallback write =
     let raw_base =
       Option.value (Ty.get_string "basename" v) ~default:fallback
     in
-    let* base = safe_leaf ~what:"File basename" raw_base in
+    let* base = safe_leaf ~what:"File or Directory basename" raw_base in
     if List.mem base used then
       Error.runtime (Printf.sprintf "staging collision on basename '%s'" base)
     else
-      let* () = write (Filename.concat outdir base) in
-      let seen = Location.trim_slash container ^ "/" ^ base in
+      let rel = Filename.concat rel base in
+      let* v = write (Filename.concat outdir rel) rel in
+      let seen = Location.trim_slash container ^ "/" ^ rel in
       let v = Ty.set "basename" (Untyped_tree.String base) v in
-      Ok (Ty.fill_file_paths (set_paths v (Some base, Some seen)), base :: used)
+      Ok (Ty.fill_file_paths (set_paths v (Some rel, Some seen)), base :: used)
   in
+  let file write dst _ =
+    let+ () = write dst in
+    v
+  in
+  let literal = Printf.sprintf "literal-%d" (List.length used) in
   match
     (Ty.class_of v, Ty.get_string "location" v, Ty.get_string "contents" v)
   with
-  | Some "File", Some src, _ -> place (R.copy_file src) (Filename.basename src)
+  | Some "File", Some src, _ ->
+      place (Filename.basename src) (file (R.copy_file src))
   | Some "File", None, Some text ->
-      let name = Printf.sprintf "literal-%d" (List.length used) in
-      place (fun dst -> R.write_file dst text) name
+      place literal (file (fun dst -> R.write_file dst text))
+  | Some "Directory", _, _ when is_literal v ->
+      place literal (fun dst rel ->
+          let* () = R.mkdir_p dst in
+          let+ entries, _ =
+            stage_value
+              (module R : Io.WRITE)
+              ~container ~outdir rel [] (listing v)
+          in
+          Ty.set "listing" entries v)
   | _ -> Ok (v, used)
 
-let stage_value (module R : Io.WRITE) ~container ~outdir used v =
-  Ty.fold_map (stage_leaf (module R) ~container ~outdir) used v
+and stage_value (module R : Io.WRITE) ~container ~outdir rel used v =
+  Ty.fold_map (stage_leaf (module R : Io.WRITE) ~container ~outdir rel) used v
 
 let stage (module R : Io.WRITE) ~container ~outdir inputs =
   let rec go used acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
-        let* v, used = stage_value (module R) ~container ~outdir used v in
+        let* v, used = stage_value (module R) ~container ~outdir "" used v in
         go used ((k, v) :: acc) rest
   in
   go [] [] inputs
