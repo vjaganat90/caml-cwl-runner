@@ -5,20 +5,21 @@
     module is [Ty]; it is exported as [Cwl.Type], and its types are declared in
     [Data.Type].
 
-    The types are the Schema Salad primitives, [Any], enums, [File],
-    [Directory], arrays and unions; an optional type is a union with [Null].
-    There is no record type: [Schema] reads it as [String], with a diagnostic.
-    [Int] and [Long] share the value [Int] ([int64]), [Float] and [Double] the
-    value [Float], and no range or precision is checked. An array type carries
-    the [inputBinding] written in it as [item_binding]. The type [binding] is
-    defined here, not in [Schema] (which parses types and bindings), so this
-    module needs nothing from [Schema].
+    The types are the Schema Salad primitives, [Any], enums, records, [File],
+    [Directory], arrays and unions; an optional type is a union with [Null]. A
+    named type is not implemented: [Schema] reads it as [String], with a
+    diagnostic. [Int] and [Long] share the value [Int] ([int64]), [Float] and
+    [Double] the value [Float], and no range or precision is checked. An array
+    type carries the [inputBinding] written in it as [item_binding], and a
+    record field its own [inputBinding]. The type [binding] is defined here, not
+    in [Schema] (which parses types and bindings), so this module needs nothing
+    from [Schema].
 
     A [value] is the YAML/JSON tree ([Untyped_tree.value]) itself. A File or a
     Directory is an [Object] by its [class] (see [class_of]), and keeps every
     field it was given. Any other [Object] is a record, such as a nested object
-    in a job; no type describes it. An [object_] is a job or an output object:
-    an association list from parameter id to value, in order.
+    in a job, which a [Record] type or [Any] describes. An [object_] is a job or
+    an output object: an association list from parameter id to value, in order.
 
     A {i leaf} is a value that is not an array or a record: File and Directory
     are leaves, so a walker does not enter their [secondaryFiles] or [listing].
@@ -52,7 +53,8 @@ val matches : t -> value -> bool
     [Long] take an integer, [Float] and [Double] any number, [String] only a
     string, an [Enum] one of its symbols, [File] and [Directory] an object of
     that [class_of]; an array needs every item to match, a [Union] one member,
-    [Any] every value but [null], and no other type takes a record.
+    [Any] every value but [null], and a [Record] a record whose every field
+    matches its type (a missing field is [null]); no other type takes a record.
     [apply_defaults_and_check] uses it on job inputs and [Cwl.run] on the
     entries of a [cwl.output.json]; [Bind] uses it to pick the member of a union
     that fits a value. *)
@@ -84,6 +86,10 @@ val get : string -> value -> value option
 val get_string : string -> value -> string option
 (** [get_string key v] is [get key v] when that is a string, else [None]: the
     [basename] of a File, say. *)
+
+val field_value : field -> value -> value
+(** [field_value f v] is the value of the field [f] in the record [v]: [get] of
+    its [name], or [null] when that is [None]. *)
 
 val set : string -> value -> value -> value
 (** [set key x v] is the object [v] with the field [key] set to [x]: in place
@@ -139,10 +145,11 @@ val coerce : string -> t -> value -> (value, Error.t) result
     uses it for an input's [default], and [param] is the input id that errors
     name. A union takes its first member that fits: [Null] members are tried
     last, or first when [doc] is [null]. [Any] takes any [doc] but [null], as it
-    is. Numbers fit loosely: an integer a [Float] or [Double], and any number a
-    [String], as which it is converted. A File or Directory is an object whose
-    optional [class] must match; it gets that [class], keeps every field, and
-    gets [fill_file_paths].
+    is. A record is coerced field by field, each error naming [param.field], and
+    keeps its other keys. Numbers fit loosely: an integer a [Float] or [Double],
+    and any number a [String], as which it is converted. A File or Directory is
+    an object whose optional [class] must match; it gets that [class], keeps
+    every field, and gets [fill_file_paths].
 
     A mismatch is [Error.Type], naming in [expected] the type that failed (the
     item type for a bad array item, the whole union for a union) and printing in

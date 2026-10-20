@@ -146,7 +146,8 @@ What the diagram leaves out:
   basename, and staged Files that a `glob` can match.
 - **Argv.** `Bind.argv` follows the "Input binding" section of invocation.md: it
   sorts the bindings by `position` and builds each from `prefix`, `separate`,
-  `itemSeparator` and `valueFrom`. A string in `arguments` is a binding whose
+  `itemSeparator` and `valueFrom`. A record input's fields are bound by their
+  own `inputBinding`, after the record's words in sort order. A string in `arguments` is a binding whose
   `valueFrom` is that string, so a `$(...)` in it is evaluated. `Cwl.command_line` stops here, with placeholder
   `runtime.outdir` and `runtime.tmpdir` and without the requirement check, so
   argv tests start no process.

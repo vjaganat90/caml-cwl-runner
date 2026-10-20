@@ -80,6 +80,17 @@ let rules =
        arguments: [{prefix: -x, valueFrom: $(inputs.xs)}]",
       [ ("xs", strings [ "a"; "b" ]) ],
       [ "echo"; "-x"; "a"; "b" ] );
+    ( "record fields bind by position after the record's own words",
+      "inputs: {r: {inputBinding: {prefix: -r}, type: {type: record, fields: \
+       {b: {type: int, inputBinding: {position: 2, prefix: -b}}, c: {type: \
+       int, inputBinding: {position: 1, prefix: -c}}}}}}",
+      [
+        ( "r",
+          Cwl.Untyped_tree.Object
+            [ ("b", Cwl.Untyped_tree.Int 1L); ("c", Cwl.Untyped_tree.Int 2L) ]
+        );
+      ],
+      [ "echo"; "-r"; "-c"; "2"; "-b"; "1" ] );
   ]
 
 let rule (name, fields, job, expected) =

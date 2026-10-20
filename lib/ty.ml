@@ -27,6 +27,7 @@ let rec type_name = function
   | Directory -> "Directory"
   | Any -> "Any"
   | Enum _ -> "enum"
+  | Record _ -> "record"
   | Array { items; _ } -> type_name items ^ "[]"
   | Union ts -> "[" ^ String.concat ", " (List.map type_name ts) ^ "]"
 
@@ -164,6 +165,10 @@ let fill v =
 
 let fill_file_paths = map (fun v -> if class_of v = None then v else fill v)
 
+(* The value of field [f] in the record [v]; a missing field is null. *)
+let field_value (f : field) v =
+  Option.value (get f.name v) ~default:Untyped_tree.Null
+
 let rec matches ty v =
   match (ty, v) with
   | Null, Untyped_tree.Null -> true
@@ -178,6 +183,8 @@ let rec matches ty v =
   | Union ts, v -> List.exists (fun t -> matches t v) ts
   | Any, Untyped_tree.Null -> false
   | Any, _ -> true
+  | Record fields, Untyped_tree.Object _ when class_of v = None ->
+      List.for_all (fun (f : field) -> matches f.ty (field_value f v)) fields
   | _ -> false
 
 let require_class param expected kvs =
@@ -237,6 +244,16 @@ let rec coerce param ty doc =
   | Array { items; _ }, Untyped_tree.Array xs ->
       let+ xs = Error.map_list (coerce param items) xs in
       Untyped_tree.Array xs
+  | Record fields, Untyped_tree.Object kvs when class_of doc = None ->
+      let field (f : field) =
+        let+ v = coerce (param ^ "." ^ f.name) f.ty (field_value f doc) in
+        (f.name, v)
+      in
+      let+ coerced = Error.map_list field fields in
+      let keep (k, v) =
+        (k, Option.value (List.assoc_opt k coerced) ~default:v)
+      in
+      Untyped_tree.Object (List.map keep kvs)
   | _, Untyped_tree.Null ->
       if is_optional ty then Ok Untyped_tree.Null else fail (type_name ty)
   | _ -> fail (type_name ty)
