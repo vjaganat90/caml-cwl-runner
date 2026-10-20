@@ -108,6 +108,11 @@ let number_of_float f =
   if Float.is_integer f then Untyped_tree.Int (Int64.of_float f)
   else Untyped_tree.Float f
 
+(* invocation.md: a runner that cannot give the reserved storage "should
+   report back the minimal requested amount", and ResourceRequirement's
+   [outdirMin] and [tmpdirMin] default to 1024 MiB. Neither is read. *)
+let reserved_storage = Untyped_tree.Int 1024L
+
 let eval_path ctx root segs =
   let start =
     match root with
@@ -121,6 +126,8 @@ let eval_path ctx root segs =
                ("tmpdir", Untyped_tree.String ctx.runtime.tmpdir);
                ("cores", number_of_float ctx.runtime.cores);
                ("ram", number_of_float ctx.runtime.ram);
+               ("outdirSize", reserved_storage);
+               ("tmpdirSize", reserved_storage);
              ])
     | "null" -> Ok Untyped_tree.Null
     | other ->

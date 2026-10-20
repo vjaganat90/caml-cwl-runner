@@ -8,11 +8,12 @@
 include module type of Data.Expr
 (** A [context] is the root of every reference: [inputs], [self] (a value the
     spec defines per field, null where it defines none) and [runtime]. A
-    [runtime] has [outdir], [tmpdir], [cores] and [ram] (in MiB); the spec's
-    [outdirSize] and [tmpdirSize] are not there. A reference reads a whole
-    [cores] or [ram] as an int. An [ENGINE] turns the text of a field into a
-    value or an [Error.t]: [eval ctx s]. [Param_ref] is the only one; a
-    JavaScript engine would be another, with the same signature. *)
+    [runtime] has [outdir], [tmpdir], [cores] and [ram] (in MiB). A reference to
+    [runtime.outdirSize] or [runtime.tmpdirSize] is the int 1024 (MiB), the
+    default of [outdirMin] and [tmpdirMin], which ccr does not read. A reference
+    reads a whole [cores] or [ram] as an int. An [ENGINE] turns the text of a
+    field into a value or an [Error.t]: [eval ctx s]. [Param_ref] is the only
+    one; a JavaScript engine would be another, with the same signature. *)
 
 val default_runtime : runtime
 (** [outdir] and [tmpdir] are the placeholder paths [/unused-outdir] and
