@@ -1,0 +1,6 @@
+{
+  "file": "lib/cwl.ml",
+  "old": "let locate d = Result.map Option.some (Workdir.locate tool_dir d) in",
+  "new": "let locate d = Result.map Option.some (Workdir.locate job_dir d) in",
+  "why": "a relative location in a default resolves against the tool document, not the job"
+}
