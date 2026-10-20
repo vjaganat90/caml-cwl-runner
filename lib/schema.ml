@@ -132,7 +132,7 @@ and parse_type_dsl json_path s =
     | "string" -> return Ty.String
     | "File" -> return Ty.File
     | "Directory" -> return Ty.Directory
-    | "Any" -> warn [ diag "Any" json_path ] Ty.String
+    | "Any" -> return Ty.Any
     | other -> warn [ diag ("type " ^ other) json_path ] Ty.String
 
 and parse_type_object path kvs =
