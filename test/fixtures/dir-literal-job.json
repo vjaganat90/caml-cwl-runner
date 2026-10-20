@@ -1,0 +1,3 @@
+{"d": {"class": "Directory", "basename": "top", "listing": [
+  {"class": "Directory", "basename": "sub", "listing": [
+    {"class": "File", "basename": "f.txt", "contents": "hi\n"}]}]}}

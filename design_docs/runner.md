@@ -135,8 +135,12 @@ What the diagram leaves out:
   working directory; its `location` is the path under the designated output
   directory. A File literal, with `contents` and neither `location` nor
   `path`, is written there instead, as `literal-<n>` when it has no basename.
+  A Directory literal, with a `listing` and neither `location` nor `path`, is
+  created there the same way, and its entries are staged into it, so their
+  `path` is relative to the outdir too (`cwl/a.txt`).
   A File that is not a regular file once symlinks are followed and
-  two Files with one basename are `Error.Runtime`. A Directory is not copied:
+  two Files with one basename in one directory are `Error.Runtime`. Any other
+  Directory is not copied:
   its `path` and `location` stay the host path `Workdir.locate` gave it. Known differences from the spec or cwltool, each an
   oracle case: the `path` and `location` of a staged File, Files with one
   basename, and staged Files that a `glob` can match.
@@ -268,8 +272,8 @@ the run stays local. Two in one list are a schema error.
 
 ## Confinement
 
-The legal roots are the `realpath` of the outdir, the tmpdir and every Directory
-input's source. A path is under a root when it equals the root or starts with
+The legal roots are the `realpath` of the outdir, the tmpdir and every located
+Directory input's source. A path is under a root when it equals the root or starts with
 the root and a `/`, so `/out-evil` is not under `/out` (`Location.under`). After
 `Cwl.run` returns `Ok`, every File and Directory `path` and `location` in the
 output object, declared outputs and extra `cwl.output.json` keys alike, resolves
