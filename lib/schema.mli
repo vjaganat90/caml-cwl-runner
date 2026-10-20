@@ -17,10 +17,11 @@
 
     A construct the runner ([ccr]) does not implement is not an error. The
     parser returns an [Error.diagnostic] beside the value it built and goes on;
-    only a malformed document is an [Error.t]. An unimplemented or unknown field
-    is a diagnostic too, mostly through [diagnostics_for_keys]. A type ccr
-    cannot model, a name it does not know, is read as [string] with a
-    diagnostic. A requirement class ccr does not implement is kept as
+    only a malformed document, or a type named below, is an [Error.t]. An
+    unimplemented or unknown field is a diagnostic too, mostly through
+    [diagnostics_for_keys]. A type ccr does not know by name, such as one a
+    [SchemaDefRequirement] defines, is [Error.Unsupported]: no value of it can
+    be checked. A requirement class ccr does not implement is kept as
     [Unimplemented], so that [first_unimplemented] can stop a run. *)
 
 include module type of Data.Schema

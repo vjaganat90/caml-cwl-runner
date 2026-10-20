@@ -395,6 +395,8 @@ record as `Schema.Unimplemented`. What it does to a run:
   `loadContents` on an input) is a diagnostic and the run goes on.
 - `${…}`, a `$(…)` that is not a parameter reference, and an `outputEval` or
   `loadContents` beside a `glob` are `Unsupported` when reached.
+- A named type, which only a `SchemaDefRequirement` defines, is `Unsupported`
+  when the document is read.
 - A Workflow parses, then is `Unsupported` when run; any other class is
   `Unsupported` when loaded.
 
