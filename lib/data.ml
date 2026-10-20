@@ -327,11 +327,15 @@ module Schema = struct
     glob : string list;
         (** The [glob] patterns, each of which may hold a parameter reference. A
             single string is one pattern; an absent or null [glob] is none. *)
+    output_eval : string option;
+        (** [outputEval], an expression that gives the output's value. Beside a
+            [glob] it is [Error.Unsupported] when [Cwl.run] collects the output
+            without a [cwl.output.json]. *)
     unimplemented : Error.diagnostic list;
         (** Diagnostics for the other fields of the binding. When there is no
             [cwl.output.json], [Cwl.run] fails with [Error.Unsupported] if this
-            holds [outputEval] or [loadContents] and [glob] is not empty, unless
-            the output is of type [stdout] or [stderr]. *)
+            holds [loadContents] and [glob] is not empty, unless the output is
+            of type [stdout] or [stderr]. *)
   }
   (** A CWL [CommandOutputBinding]: how to find an output among the files the
       tool wrote. *)
