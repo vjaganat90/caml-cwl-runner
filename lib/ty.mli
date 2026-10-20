@@ -7,13 +7,13 @@
 
     The types are the Schema Salad primitives, [Any], enums, records, [File],
     [Directory], arrays and unions; an optional type is a union with [Null]. A
-    named type is not implemented: [Schema] reads it as [String], with a
-    diagnostic. [Int] and [Long] share the value [Int] ([int64]), [Float] and
-    [Double] the value [Float], and no range or precision is checked. An array
-    type carries the [inputBinding] written in it as [item_binding], and a
-    record field its own [inputBinding]. The type [binding] is defined here, not
-    in [Schema] (which parses types and bindings), so this module needs nothing
-    from [Schema].
+    named type is not implemented: [Schema] fails on it with
+    [Error.Unsupported]. [Int] and [Long] share the value [Int] ([int64]),
+    [Float] and [Double] the value [Float], and no range or precision is
+    checked. An array type carries the [inputBinding] written in it as
+    [item_binding], and a record field its own [inputBinding]. The type
+    [binding] is defined here, not in [Schema] (which parses types and
+    bindings), so this module needs nothing from [Schema].
 
     A [value] is the YAML/JSON tree ([Untyped_tree.value]) itself. A File or a
     Directory is an [Object] by its [class] (see [class_of]), and keeps every

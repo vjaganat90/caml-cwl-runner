@@ -185,7 +185,9 @@ and parse_type_dsl json_path s =
     | "File" -> return Ty.File
     | "Directory" -> return Ty.Directory
     | "Any" -> return Ty.Any
-    | other -> warn [ diag ("type " ^ other) json_path ] Ty.String
+    (* A named type, from a SchemaDefRequirement, is not implemented. No
+       value can be checked or bound without it, so the process cannot run. *)
+    | other -> Error.unsupported ("type " ^ other)
 
 and parse_type_object path kvs =
   match List.assoc_opt "type" kvs with

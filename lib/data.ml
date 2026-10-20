@@ -169,8 +169,6 @@ module Type = struct
     | Float
     | Double
     | String
-        (** ccr also reads a named type, which it does not implement, as
-            [String], with a diagnostic. *)
     | File
     | Directory
     | Array of { items : t; item_binding : binding option }
