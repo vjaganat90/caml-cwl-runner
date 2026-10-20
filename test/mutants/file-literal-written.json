@@ -1,0 +1,6 @@
+{
+  "file": "lib/workdir.ml",
+  "old": "place (fun dst -> R.write_file dst text) name",
+  "new": "place (fun dst -> R.write_file dst (String.uppercase_ascii text)) name",
+  "why": "staging a File literal writes its contents to the staged file"
+}

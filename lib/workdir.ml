@@ -45,11 +45,18 @@ let set_paths v (path, location) =
   in
   set "path" path v |> set "location" location
 
+(* Process.yml, File [contents]: a File with neither [location] nor [path] is
+   a literal, and staging writes its [contents] to a file. With no [basename],
+   ccr names it [literal-<n>], [n] the count of Files staged before it. *)
+let is_literal v =
+  Ty.class_of v = Some "File" && Ty.path v = None && Ty.get "contents" v <> None
+
 let locate dir v =
   Ty.map_result
     (fun v ->
       match Ty.class_of v with
       | None -> Ok v
+      | Some _ when is_literal v -> Ok v
       | Some what ->
           let+ src =
             source ~dir ~what
@@ -61,22 +68,26 @@ let locate dir v =
     v
 
 let stage_leaf (module R : Io.WRITE) ~container ~outdir used v =
-  match (Ty.class_of v, Ty.get_string "location" v) with
-  | Some "File", Some src ->
-      let raw_base =
-        Option.value
-          (Ty.get_string "basename" v)
-          ~default:(Filename.basename src)
-      in
-      let* base = safe_leaf ~what:"File basename" raw_base in
-      if List.mem base used then
-        Error.runtime (Printf.sprintf "staging collision on basename '%s'" base)
-      else
-        let dst = Filename.concat outdir base in
-        let* () = R.copy_file src dst in
-        let seen = Location.trim_slash container ^ "/" ^ base in
-        let v = Ty.set "basename" (Untyped_tree.String base) v in
-        Ok (set_paths v (Some base, Some seen), base :: used)
+  let place write fallback =
+    let raw_base =
+      Option.value (Ty.get_string "basename" v) ~default:fallback
+    in
+    let* base = safe_leaf ~what:"File basename" raw_base in
+    if List.mem base used then
+      Error.runtime (Printf.sprintf "staging collision on basename '%s'" base)
+    else
+      let* () = write (Filename.concat outdir base) in
+      let seen = Location.trim_slash container ^ "/" ^ base in
+      let v = Ty.set "basename" (Untyped_tree.String base) v in
+      Ok (Ty.fill_file_paths (set_paths v (Some base, Some seen)), base :: used)
+  in
+  match
+    (Ty.class_of v, Ty.get_string "location" v, Ty.get_string "contents" v)
+  with
+  | Some "File", Some src, _ -> place (R.copy_file src) (Filename.basename src)
+  | Some "File", None, Some text ->
+      let name = Printf.sprintf "literal-%d" (List.length used) in
+      place (fun dst -> R.write_file dst text) name
   | _ -> Ok (v, used)
 
 let stage_value (module R : Io.WRITE) ~container ~outdir used v =

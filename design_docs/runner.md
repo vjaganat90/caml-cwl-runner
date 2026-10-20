@@ -133,7 +133,9 @@ What the diagram leaves out:
 - **Staging.** `Workdir.stage` copies each File into the outdir under its
   basename. The copy's `path` is that basename, so the tool finds it from its
   working directory; its `location` is the path under the designated output
-  directory. A File that is not a regular file once symlinks are followed and
+  directory. A File literal, with `contents` and neither `location` nor
+  `path`, is written there instead, as `literal-<n>` when it has no basename.
+  A File that is not a regular file once symlinks are followed and
   two Files with one basename are `Error.Runtime`. A Directory is not copied:
   its `path` and `location` stay the host path `Workdir.locate` gave it. Known differences from the spec or cwltool, each an
   oracle case: the `path` and `location` of a staged File, Files with one
