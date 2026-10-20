@@ -130,10 +130,10 @@ val parse_process :
     It stops at the first error, reading the four fields in that order. The
     error is an [Error.Schema] for a malformed field, a [DockerRequirement]
     repeated in one list or a bad [dockerOutputDirectory]. For an input
-    [default] that does not fit its type it is the error of [Ty.value_of_tree],
-    which names the input [id], not a json_path. A [DockerRequirement] in
-    [hints] is checked the same way and kept, and also reported as a diagnostic:
-    only [requirements] select docker, so the tool runs locally. *)
+    [default] that does not fit its type it is the error of [Ty.coerce], which
+    names the input [id], not a json_path. A [DockerRequirement] in [hints] is
+    checked the same way and kept, and also reported as a diagnostic: only
+    [requirements] select docker, so the tool runs locally. *)
 
 val first_unimplemented : requirement list -> string option
 (** [first_unimplemented rs] is the class of the first [Unimplemented] entry of

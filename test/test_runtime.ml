@@ -205,12 +205,14 @@ let output_file_checksum () =
   | Ok ann ->
       let f = lookup_file "out" ann in
       let sum = "sha1$e2fcc2f00a193284d3bcd74d7dfc209f05899362" in
-      Alcotest.(check (option string)) "checksum" (Some sum) f.checksum;
+      Alcotest.(check (option string))
+        "checksum" (Some sum)
+        (Cwl.Type.get_string "checksum" f);
       Alcotest.(check bool)
         "in JSON" true
         (contains
            ~sub:(Printf.sprintf "\"checksum\":%S" sum)
-           (Cwl.Type.object_to_json ann.value))
+           (Cwl.Type.to_json ~sorted:false (Cwl.Untyped_tree.Object ann.value)))
 
 (* Runs tmpdir-report.cwl in a fresh outdir. Returns the run result, the
    tool's TMPDIR, and the outdir. *)

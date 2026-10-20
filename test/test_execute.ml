@@ -27,12 +27,8 @@ let edge ?(job = "empty-job.json") ?(docker = false) name tool outcome =
 
 let collect_paths acc v =
   Cwl.Type.fold
-    (fun acc -> function
-      | Cwl.Type.Vfile f -> (
-          match Cwl.Type.file_path f with Some p -> p :: acc | None -> acc)
-      | Cwl.Type.Vdir d -> (
-          match Cwl.Type.dir_path d with Some p -> p :: acc | None -> acc)
-      | _ -> acc)
+    (fun acc v ->
+      Option.fold ~none:acc ~some:(fun p -> p :: acc) (Cwl.Type.path v))
     acc v
 
 let execute_edges =
@@ -97,10 +93,12 @@ let execute_edges =
          (fun ann ->
            let f = lookup_file "f" ann in
            Alcotest.(check (option string))
-             "nameroot" (Some "foo") f.Cwl.Type.nameroot;
+             "nameroot" (Some "foo")
+             (Cwl.Type.get_string "nameroot" f);
            Alcotest.(check (option string))
-             "nameext" (Some ".txt") f.Cwl.Type.nameext;
-           let json = Cwl.Type.to_json (Cwl.Type.Vfile f) in
+             "nameext" (Some ".txt")
+             (Cwl.Type.get_string "nameext" f);
+           let json = Cwl.Type.to_json ~sorted:false f in
            Alcotest.(check bool)
              "json nameroot" true
              (mem_sub ~sub:"\"nameroot\":\"foo\"" json);
@@ -130,9 +128,9 @@ let execute_edges =
     edge "glob_runtime_outdir" "glob-outdir.cwl"
       (Expect_ok
          (fun ann ->
-           match List.assoc_opt "d" ann.value with
+           match Option.map (classed "Directory" "d") (lookup "d" ann) with
            | Some v -> (
-               match dir_path v with
+               match Cwl.Type.path v with
                | Some p ->
                    Alcotest.(check bool) "is dir" true (Sys.is_directory p)
                | None -> Alcotest.fail "Directory missing path")
@@ -149,7 +147,10 @@ let execute_edges =
                Alcotest.(check string) "basename" "a.txt" (Filename.basename p);
                Alcotest.(check bool)
                  "not host path" true
-                 (not (String.starts_with ~prefix:"/etc/" p))
+                 (not (String.starts_with ~prefix:"/etc/" p));
+               Alcotest.(check (option string))
+                 "format kept" (Some "http://edamontology.org/format_2330")
+                 (Cwl.Type.get_string "format" (lookup_file "f" ann))
            | None -> Alcotest.fail "File missing path"));
     edge "json_extra_int_kept" "json-extra-int.cwl"
       (Expect_ok (lookup_int "n" 1L));
@@ -158,9 +159,11 @@ let execute_edges =
          (fun ann ->
            let f = lookup_file "f" ann in
            Alcotest.(check (option string))
-             "nameroot" (Some "foo") f.Cwl.Type.nameroot;
+             "nameroot" (Some "foo")
+             (Cwl.Type.get_string "nameroot" f);
            Alcotest.(check (option string))
-             "nameext" (Some "") f.Cwl.Type.nameext));
+             "nameext" (Some "")
+             (Cwl.Type.get_string "nameext" f)));
     edge "stdout_from_input" "stdout-named.cwl" ~job:"stdout-named-job.json"
       (Expect_ok
          (fun ann ->

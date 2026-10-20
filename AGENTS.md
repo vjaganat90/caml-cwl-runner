@@ -70,7 +70,10 @@ Architecture:
   Sequence results with `let*` and `let+` from `Error.Syntax`, and lists with
   `Error.map_list`, or `Schema.map_i` when the index is part of the path.
   Don't match an `Error` only to return it.
-- Only `Untyped_tree` turns text into a tree. Read a document field with
+- Only `Untyped_tree` turns text into a tree. That tree is also the CWL value
+  (`Type.value`): a File or Directory is an object by its `class`, and keeps
+  every field it is given. Read and change its fields with `Type.get`,
+  `Type.get_string` and `Type.set`. Read a document field with
   `Untyped_tree.string_field`, `bool_field` or `int_field`: a value of the
   wrong type is a schema error at its path, and `null` is absent. A JSON path
   starts from `""` at the document root and is built with the path helpers in
