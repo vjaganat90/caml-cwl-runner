@@ -1,6 +1,6 @@
 {
   "file": "lib/ty.ml",
-  "old": "default \"basename\" (Option.map Filename.basename (get_string \"path\" v)) v",
-  "new": "if class_of v = Some \"File\" then default \"basename\" (Option.map Filename.basename (get_string \"path\" v)) v else v",
+  "old": "default \"basename\" (Option.bind (get_string \"path\" v) last_segment) v",
+  "new": "if class_of v = Some \"File\" then default \"basename\" (Option.bind (get_string \"path\" v) last_segment) v else v",
   "why": "a Directory with no basename gets the last segment of its location"
 }

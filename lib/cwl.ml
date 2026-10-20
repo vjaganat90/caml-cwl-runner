@@ -236,14 +236,6 @@ let collect_output (module R : Io.READ) ~container outdir roots ctx stdout_name
         let+ v = Ty.map_result (listed (module R) roots 0) v in
         (o.id, v)
 
-let collect_dir_roots acc v =
-  Ty.fold
-    (fun acc v ->
-      match (Ty.class_of v, Ty.path v) with
-      | Some "Directory", Some p when not (Filename.is_relative p) -> p :: acc
-      | _ -> acc)
-    acc v
-
 let check_json_outputs outputs obj =
   let declared_ids = List.map (fun (o : Schema.output) -> o.id) outputs in
   let* checked =
@@ -320,6 +312,18 @@ let runtime_for (module Local : Io.RUNTIME) docker tool =
       | Some mk ->
           Ok (mk ~network:(Command_line_tool.network_access tool) image))
 
+(* Runs [f] on the tool's TMPDIR and the staging root: two fresh
+   directories, by their real paths, removed when [f] returns or raises
+   unless [rm_tmpdir] is [false]. *)
+let with_scratch (module R : Io.RUNTIME) rm_tmpdir f =
+  let fresh prefix = Result.bind (R.mkdtemp prefix) R.realpath in
+  let* tmpdir = fresh "ccr-tmp-" in
+  let* stage_root = fresh "ccr-stg-" in
+  Fun.protect ~finally:(fun () ->
+      if rm_tmpdir then
+        List.iter (fun d -> ignore (R.remove_tree d)) [ tmpdir; stage_root ])
+  @@ fun () -> f tmpdir stage_root
+
 let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
     tool_path job =
   let* tool, diagnostics = load_command_line_tool (module Local) tool_path in
@@ -334,15 +338,12 @@ let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
             R.abspath d
         | None -> R.mkdtemp "ccr-"
       in
-      let* tmpdir = R.mkdtemp "ccr-tmp-" in
-      let* tmpdir = R.realpath tmpdir in
-      Fun.protect ~finally:(fun () ->
-          if rm_tmpdir then ignore (R.remove_tree tmpdir))
-      @@ fun () ->
+      with_scratch (module R) rm_tmpdir @@ fun tmpdir stage_root ->
       let* inputs = job_inputs (module Local) tool tool_path job in
       let cores = Option.value (Command_line_tool.cores_min tool) ~default:1. in
       let container = designated_outdir tool outdir in
-      let* inputs = Workdir.stage (module R) ~container ~outdir inputs in
+      let sources = stage_root :: Workdir.sources inputs in
+      let* inputs = Workdir.stage (module R) stage_root inputs in
       let runtime = Expr.runtime_with ~outdir:container ~tmpdir ~cores in
       let ctx = { Expr.inputs; self = Untyped_tree.Null; runtime } in
       let* argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
@@ -375,7 +376,7 @@ let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
       let stderr_file = Option.map (Filename.concat outdir) stderr_name in
       let* code =
         R.spawn
-          { home = container; tmpdir }
+          { home = container; tmpdir; inputs = sources }
           outdir
           { stdin_file; stdout_file; stderr_file }
           argv
@@ -384,12 +385,6 @@ let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
         Error.runtime (Printf.sprintf "command failed with exit code %d" code)
       else
         let json_path = Filename.concat outdir "cwl.output.json" in
-        let glob_roots =
-          outdir :: tmpdir
-          :: List.fold_left
-               (fun acc (_, v) -> collect_dir_roots acc v)
-               [] inputs
-        in
         let* outputs =
           if R.exists json_path then
             let* s = R.read_file json_path in
@@ -410,7 +405,9 @@ let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
             Error.map_list
               (collect_output
                  (module R)
-                 ~container outdir glob_roots ctx stdout_name stderr_name)
+                 ~container outdir
+                 (outdir :: tmpdir :: sources)
+                 ctx stdout_name stderr_name)
               tool.outputs
         in
         let* outputs =

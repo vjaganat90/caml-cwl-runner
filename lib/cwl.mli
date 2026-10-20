@@ -8,11 +8,11 @@
     [Location] (locations as paths), [Workdir] (File and Directory paths) and
     [Runtime] (the local and Docker runtimes).
 
-    [run] follows [invocation.md]: stage the inputs into the output directory,
-    build the command line, start the tool there with the prescribed
-    environment, then collect the outputs from [cwl.output.json] or from each
-    output's [glob] or captured stream. Staging, relocation, confinement and
-    checksums are in [Workdir].
+    [run] follows [invocation.md]: stage the inputs, each in a directory of its
+    own outside the output directory, build the command line, start the tool
+    there with the prescribed environment, then collect the outputs from
+    [cwl.output.json] or from each output's [glob] or captured stream. Staging,
+    relocation, confinement and checksums are in [Workdir].
 
     Does not run Workflows ([Error.Unsupported] for the feature ["Workflow"])
     and has no JavaScript engine: an expression that is not a parameter
@@ -81,8 +81,10 @@ val run :
     it is a fresh directory. A relative [outdir] is not made absolute, so [HOME]
     and [runtime.outdir] are relative too, unless a [dockerOutputDirectory]
     gives the tool another path for it. [outdir] is kept, since it holds the
-    outputs. The tool's [TMPDIR] is a fresh directory, deleted when the run
-    ends, whether it succeeded or not, unless [rm_tmpdir] is [false].
+    outputs. The tool's [TMPDIR] is a fresh directory, and so is the staging
+    root, where each input File and Directory gets a directory of its own
+    ({!Workdir.stage}); both are deleted when the run ends, whether it succeeded
+    or not, unless [rm_tmpdir] is [false].
 
     If [outdir] holds a [cwl.output.json], it is the output object:
 
@@ -92,7 +94,9 @@ val run :
     - Keys the tool does not declare are kept.
     - A relative path of a File or Directory is taken relative to [outdir], one
       under a [dockerOutputDirectory] is mapped back to [outdir], and every such
-      path must resolve inside [outdir].
+      path must resolve inside [outdir] (invocation.md, "Output binding": "It is
+      an error for "path" to refer outside the output directory"), so it cannot
+      name a staged input.
 
     Otherwise each declared output is read from its [glob], or, for a [stdout]
     or [stderr] output, from the file that captured that stream ([cwl.stdout] or
@@ -105,7 +109,8 @@ val run :
       to refuse a Directory for a declared File and a File for a declared
       Directory.
     - A match must resolve, symbolic links followed, into [outdir], the tool's
-      [TMPDIR] or an input Directory.
+      [TMPDIR], the staging root or an input Directory. A glob lists only
+      [outdir], so it never matches a staged input.
     - A Directory match gets its [listing]: every entry, dot names included,
       sorted by name, each subdirectory listed in turn. Each entry must resolve
       into the same directories, and a tree more than 64 levels deep is an

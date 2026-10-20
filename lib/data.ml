@@ -505,10 +505,13 @@ module Io = struct
   }
   (** Where the tool's three standard streams come from and go to. *)
 
-  type tool_env = { home : string; tmpdir : string }
-  (** The variables CWL defines for the tool: [HOME] is the designated outdir
-      and [TMPDIR] the designated tmpdir. Paths are as the tool sees them
-      (container paths under Docker). *)
+  type tool_env = { home : string; tmpdir : string; inputs : string list }
+  (** What the tool is given besides its argv. [home] and [tmpdir] are the
+      variables CWL defines for it: [HOME] is the designated outdir and [TMPDIR]
+      the designated tmpdir, as the tool sees them (container paths under
+      Docker). [inputs] are the host directories its inputs are staged in or
+      link to; a container sees each read-only at its own real path, and the
+      local runtime has nothing to do for them. *)
 
   (** Effects. What a function may do to the world is the signature of the
       module it is given: [Untyped_tree.FILE] reads documents, [Glob.FS] answers
@@ -572,6 +575,12 @@ module Io = struct
         [dst], creating it or truncating it (mode 0o644). A symlink [src] is
         followed. It does not create parent directories. It fails with
         [Error.Runtime] when [src] is missing or is not a regular file. *)
+
+    val symlink : string -> string -> (unit, Error.t) result
+    (** [symlink src dst] creates [dst] as a symbolic link to the real path of
+        [src], so the link holds no [..] or symlink of its own. It does not
+        create parent directories. It fails with [Error.Runtime] when [src] does
+        not exist or [dst] does. *)
 
     val write_file : string -> string -> (unit, Error.t) result
     (** [write_file p data] makes [p] hold exactly [data], creating it or

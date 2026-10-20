@@ -87,6 +87,14 @@ let run_process eio console { cwd; argv; env }
       | `Exited n -> n
       | `Signaled s -> failwith (Printf.sprintf "process killed by signal %d" s))
 
+let reject_stdio_symlink lstat label = function
+  | None -> Ok ()
+  | Some f -> (
+      match lstat f with
+      | `Symlink ->
+          Error.runtime (Printf.sprintf "%s destination is a symlink" label)
+      | _ -> Ok ())
+
 let filesystem eio console launch =
   let p = path_of eio in
   let native s =
@@ -157,15 +165,12 @@ let filesystem eio console launch =
       let* path = wrap (fun () -> native s) in
       host_realpath path
 
-    let confined roots path = confined_using realpath roots path
+    let symlink src dst =
+      let* target = realpath src in
+      wrap (fun () -> Eio.Path.symlink ~link_to:target (p dst))
 
-    let reject_stdio_symlink label = function
-      | None -> Ok ()
-      | Some f -> (
-          match lstat f with
-          | `Symlink ->
-              Error.runtime (Printf.sprintf "%s destination is a symlink" label)
-          | _ -> Ok ())
+    let confined roots path = confined_using realpath roots path
+    let reject_stdio_symlink = reject_stdio_symlink lstat
 
     let spawn env cwd stdio argv =
       if argv = [] then Error.runtime "empty argv"
@@ -206,6 +211,7 @@ type docker_spec = {
   workdir : string;
   tag : string;
   mounts : (string * string) list;
+  read_only : string list;
   container_env : string list;
   network : bool;
 }
@@ -226,6 +232,7 @@ let docker_run_argv spec argv =
   @ (if spec.network then [] else [ "--network=none" ])
   @ [ "--user"; spec.user; "-v"; spec.cwd ^ ":" ^ spec.workdir ]
   @ List.concat_map (fun (src, dst) -> [ "-v"; src ^ ":" ^ dst ]) spec.mounts
+  @ List.concat_map (fun p -> [ "-v"; p ^ ":" ^ p ^ ":ro" ]) spec.read_only
   @ List.concat_map (fun e -> [ "--env"; e ]) spec.container_env
   @ [ "-w"; spec.workdir; spec.tag ]
   @ argv
@@ -367,6 +374,12 @@ let docker ?console env ~network (req : Schema.docker) =
       in
       let* source, workdir = docker_mount ~host:cwd ~workdir in
       let* tmp = docker_mount ~host:tool.tmpdir ~workdir:tool.tmpdir in
+      let* read_only =
+        Error.map_list
+          (fun p -> Result.bind (host_realpath p) mount_target)
+          tool.inputs
+      in
+      let read_only = List.sort_uniq String.compare read_only in
       let container_env = [ "HOME=" ^ tool.home; "TMPDIR=" ^ tool.tmpdir ] in
       let spec =
         {
@@ -376,6 +389,7 @@ let docker ?console env ~network (req : Schema.docker) =
           workdir;
           tag;
           mounts = [ tmp ];
+          read_only;
           container_env;
           network;
         }

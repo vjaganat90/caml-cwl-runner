@@ -1,6 +1,7 @@
-(** Paths of File and Directory values: staging the job's input files for the
-    tool, mapping the tool's paths back to the host, and confining its outputs
-    to the output directory and filling in their checksums.
+(** Paths of File and Directory values: staging the job's inputs for the tool,
+    each in a directory of its own outside the output directory, mapping the
+    tool's paths back to the host, and confining its outputs to the output
+    directory and filling in their checksums.
 
     [outdir] is the designated output directory (the spec's term) as a host
     path; it is the tool's working directory. {!relocate} and {!resolve_paths}
@@ -17,7 +18,7 @@
     [location]. (An input is the other way round: {!stage} reads [location]
     first.)
 
-    {!locate} reads an input's location before {!stage} copies it. Only
+    {!locate} reads an input's location before {!stage} stages it. Only
     {!stage}, {!confine} and {!checksum} touch files, and only through the
     [Runtime] module they are given. Does not glob, spawn, or build argv. *)
 
@@ -25,8 +26,9 @@ val safe_leaf : what:string -> string -> (string, Error.t) result
 (** [safe_leaf ~what s] is [Ok s] when [s] is a single path segment: not empty,
     not [.] or [..], and without slash, backslash or NUL. Otherwise it is an
     [Error.Runtime] whose message starts with [what]. It guards the names the
-    runner joins onto [outdir] (staged basenames and the [stdout] and [stderr]
-    file names), so none can point outside it. *)
+    runner joins onto a directory (staged basenames, onto their staging
+    directory, and the [stdout] and [stderr] file names, onto [outdir]), so none
+    can point outside it. *)
 
 val locate : string -> Ty.value -> (Ty.value, Error.t) result
 (** [locate dir v] is [v] with the [location] of each File and Directory (also
@@ -47,32 +49,41 @@ val locate : string -> Ty.value -> (Ty.value, Error.t) result
     [file]. *)
 
 val stage :
-  (module Io.WRITE) ->
-  container:string ->
-  outdir:string ->
-  Ty.object_ ->
-  (Ty.object_, Error.t) result
-(** [stage (module R) ~container ~outdir inputs] is [inputs] with every File
-    (also inside arrays and records) copied to [outdir/b], where [b] is its
-    [basename], else the last segment of its source, the host path in its
-    [location] (see {!locate}, which must come first). The copy's [path] and
-    [basename] are [b], a bare name that resolves from the tool's working
-    directory, and its [location] is [container/b]; its other fields are kept,
-    and a missing [nameroot] and [nameext] are filled from [b]. A File literal
-    (see {!locate}) is written there instead, its [contents] as the file's text,
-    and named [literal-<n>] when it has no [basename], [n] being the number of
-    Files and Directories staged before it in that directory (Process.yml, File
-    [contents]). A Directory literal (see {!locate}) is created there as a
-    directory, named as a File literal is, and the entries of its [listing] are
-    staged into it the same way, so their [path] is [b/] and their own name
-    (Process.yml, Directory: "Directories must be recursively staged first and
-    have local values of [path] assigned"). Any other File without a [location],
-    and any other Directory, are left as they are.
+  (module Io.WRITE) -> string -> Ty.object_ -> (Ty.object_, Error.t) result
+(** [stage (module R) root inputs] is [inputs] with every File and Directory
+    (also inside arrays and records) staged in a directory of its own,
+    [root/<n>/b], made here, where [n] is a number no other input gets and [b]
+    is its [basename], else the last segment of its source, the host path in its
+    [location] (see {!locate}, which must come first). Process.yml, File
+    [basename]: "the files and secondary files may be staged to an arbitrary
+    directory, but must use the value of [basename] for the filename", so two
+    inputs with one basename do not meet. [root] is a host directory outside the
+    designated output directory, so no output glob sees an input. A located File
+    is copied there, and a located Directory is a symbolic link to its source
+    (see [Io.WRITE.symlink]), not a copy. The staged value's [path] and
+    [location] are the absolute host path [root/<n>/b], and [basename] is [b];
+    its other fields are kept, and a missing [nameroot] and [nameext] are filled
+    from [b].
 
-    Fails with [Error.Runtime] when a basename is not a {!safe_leaf}, two Files
-    share a basename (even when they are the same file) in one directory, or a
-    File or Directory cannot be copied or written: its source is missing or not
-    a regular file, or [outdir] does not exist. *)
+    A File literal (see {!locate}) is written there instead, its [contents] as
+    the file's text, and named [literal-<n>] when it has no [basename], [n]
+    being the number of Files and Directories staged before it in that directory
+    (Process.yml, File [contents]). A Directory literal (see {!locate}) is
+    created there as a directory, named as a File literal is, and the entries of
+    its [listing] are staged into it the same way, but side by side, so their
+    [path] is under its own (Process.yml, Directory: "Directories must be
+    recursively staged first and have local values of [path] assigned"). Any
+    other File without a [location] is left as it is.
+
+    Fails with [Error.Runtime] when a basename is not a {!safe_leaf}, two
+    entries of one Directory literal share a basename, or a File or Directory
+    cannot be copied, linked or written: its source is missing or, for a File,
+    not a regular file. *)
+
+val sources : Ty.object_ -> string list
+(** [sources inputs] is the host path of each located Directory in [inputs],
+    also one in the [listing] of a Directory literal: what {!stage} links to.
+    Call it on the values {!locate} gives. *)
 
 val relocate : container:string -> host:string -> string -> string
 (** [relocate ~container ~host p] moves [p] from under [container] to under

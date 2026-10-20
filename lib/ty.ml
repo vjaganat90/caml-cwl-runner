@@ -131,12 +131,13 @@ let rec fold_map f acc v =
       let+ ys, acc = map_state (fun acc x -> fold_map f acc x) acc [] xs in
       (put ys, acc)
 
-let file_basename_of location_or_path =
-  match location_or_path with
-  | None -> None
-  | Some p ->
-      let base = Filename.basename (Location.to_path p) in
-      if base = "" then None else Some base
+(* The last segment of the path [p], once [.] and [..] segments are dropped:
+   ["d/."] gives [d], and ["."] has none. *)
+let last_segment p =
+  match Location.normalize p with "" -> None | p -> Some (Filename.basename p)
+
+let file_basename_of location =
+  Option.bind location (fun l -> last_segment (Location.to_path l))
 
 let split_name basename =
   match String.rindex_opt basename '.' with
@@ -155,7 +156,7 @@ let fill v =
   in
   let v = default "path" (file_basename_of (get_string "location" v)) v in
   let v =
-    default "basename" (Option.map Filename.basename (get_string "path" v)) v
+    default "basename" (Option.bind (get_string "path" v) last_segment) v
   in
   match (class_of v, get_string "basename" v) with
   | Some "File", Some b ->

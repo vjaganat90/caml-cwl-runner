@@ -103,11 +103,11 @@ sequenceDiagram
   Cwl->>Document: of_tree
   Note over Cwl: an unimplemented requirement class → Unsupported
   Cwl->>Runtime: make outdir and tmpdir
-  Cwl->>Workdir: stage File inputs into outdir
+  Cwl->>Workdir: stage inputs, each in its own staging directory
   Cwl->>Bind: argv (module Param_ref)
   Cwl->>Runtime: spawn, cwd = outdir
   alt cwl.output.json exists
-    Cwl->>Workdir: resolve_paths, confine to outdir only
+    Cwl->>Workdir: resolve_paths, confine to outdir and input sources
   else
     Cwl->>Glob: glob each pattern
     Cwl->>Runtime: confined (each hit, all roots)
@@ -120,9 +120,10 @@ What the diagram leaves out:
 
 - **Directories.** The outdir is `--outdir` (made if missing) or a new `ccr-…`
   directory in the system temp directory, and is kept: it holds the outputs. The
-  tmpdir is a new `ccr-tmp-…` directory (its `realpath`), the tool's `TMPDIR`,
-  removed when the run ends, success or failure, unless `--leave-tmpdir`
-  (cwltool's flag and default).
+  tmpdir is a new `ccr-tmp-…` directory (its `realpath`), the tool's `TMPDIR`.
+  The staging root is another, `ccr-stg-…`. Both are removed when the run
+  ends, success or failure, unless `--leave-tmpdir` (cwltool's flag and
+  default).
 - **Inputs.** `Workdir.locate` turns each File and Directory `location` into
   an absolute host path: a job value's is taken from the job file's directory,
   and a default's from the tool's, as Process.yml resolves a relative reference
@@ -133,20 +134,23 @@ What the diagram leaves out:
   with a `format` must have one of those formats, compared exactly
   (`Error.Type`): ontologies in `$schemas` are not read, a diagnostic, and a
   `format` expression is a diagnostic and checks nothing.
-- **Staging.** `Workdir.stage` copies each File into the outdir under its
-  basename. The copy's `path` is that basename, so the tool finds it from its
-  working directory; its `location` is the path under the designated output
-  directory. A File literal, with `contents` and neither `location` nor
-  `path`, is written there instead, as `literal-<n>` when it has no basename.
-  A Directory literal, with a `listing` and neither `location` nor `path`, is
-  created there the same way, and its entries are staged into it, so their
-  `path` is relative to the outdir too (`cwl/a.txt`).
-  A File that is not a regular file once symlinks are followed and
-  two Files with one basename in one directory are `Error.Runtime`. Any other
-  Directory is not copied:
-  its `path` and `location` stay the host path `Workdir.locate` gave it. Known differences from the spec or cwltool, each an
-  oracle case: the `path` and `location` of a staged File, Files with one
-  basename, and staged Files that a `glob` can match.
+- **Staging.** `Workdir.stage` gives each File and Directory input a
+  directory of its own under the staging root, `<root>/<n>/`, and stages it
+  there under its basename, so two inputs with one basename do not meet, and
+  no output glob in the outdir sees an input (Process.yml, File `basename`:
+  "the files and secondary files may be staged to an arbitrary directory, but
+  must use the value of `basename` for the filename"). A located File is
+  copied, and a located Directory is a symlink to its source's `realpath`, not
+  a copy. The staged value's `path` and `location` are the absolute host path
+  `<root>/<n>/<basename>`. A File literal, with `contents` and neither
+  `location` nor `path`, is written there instead, as `literal-0` when it has
+  no basename. A Directory literal, with a `listing` and neither `location`
+  nor `path`, is created there the same way, and its entries are staged into
+  it side by side, so their `path` is under its own (`<root>/<n>/cwl/a.txt`);
+  two of them with one basename, and a File that is not a regular file once
+  symlinks are followed, are `Error.Runtime`. Known differences from cwltool,
+  each an oracle case: a staged File's `location` is a plain path, not a
+  `file://` URI. cwltool links a File where ccr copies it.
 - **Argv.** `Bind.argv` follows the "Input binding" section of invocation.md: it
   sorts the bindings by `position` and builds each from `prefix`, `separate`,
   `itemSeparator` and `valueFrom`. A record input's fields are bound by their
@@ -156,9 +160,9 @@ What the diagram leaves out:
   argv tests start no process.
 - **Streams.** `stdout` and `stderr` are expressions that name a file in the
   outdir. `stdin` is an expression that gives any path ("A path to a file",
-  CommandLineTool.yml): a relative one is taken from the outdir, so `stdin`
-  can be a staged input's `path`, such as `cwl/a.txt` in a staged Directory
-  literal, and one under a `dockerOutputDirectory` is relocated. An output of
+  CommandLineTool.yml), such as a staged input's `path`: a relative one is
+  taken from the outdir, and one under a `dockerOutputDirectory` is
+  relocated. An output of
   type `stdout` or `stderr` with no named stream uses `cwl.stdout` or
   `cwl.stderr`.
   The tool's stdout or stderr with no file goes to ccr's stderr, and an unnamed
@@ -269,8 +273,7 @@ the run stays local. Two in one list are a schema error.
   `.` or `..` segment, no `:` (it would split the `-v` option) and no control
   character. It is the designated output directory: `runtime.outdir`, `HOME` and
   the working directory in the container. The host outdir, by its `realpath`, is
-  bind-mounted there. A staged File's `location` is its path in the container
-  and its `path` the basename. Glob patterns and `cwl.output.json` paths under
+  bind-mounted there. Staged inputs keep their host paths (see Mounts). Glob patterns and `cwl.output.json` paths under
   it are relocated to the host outdir (a path with a `..` segment is not
   rewritten). When absent, the mount target is the host outdir's own path, which
   must then be absolute with no `.`, `..` or empty segment, else `Error.Runtime`
@@ -283,12 +286,19 @@ the run stays local. Two in one list are a schema error.
   (`--env`), which runs as ccr's `uid:gid`. The CWL argv follows the image name,
   so Docker runs it without a shell.
 - **Mounts.** The outdir (at the designated output directory) and the tmpdir (at
-  its own `realpath`). Directory inputs are not mounted.
+  its own `realpath`), read-write. Read-only, each at its own `realpath`: the
+  staging root and the source of every located Directory input, also one in
+  a Directory literal's `listing` (`Workdir.sources`), so a staged
+  Directory's symlink resolves in the container as on the host. They come to
+  `spawn` as the `inputs` of `Io.tool_env`; the local runtime ignores them.
 
 ## Confinement
 
-The legal roots are the `realpath` of the outdir, the tmpdir and every located
-Directory input's source. A path is under a root when it equals the root or starts with
+The legal roots are the `realpath` of the outdir, the tmpdir, the staging root
+and every located Directory input's source. Staged inputs are outside the
+outdir, so a glob, which lists the outdir, finds none of them, and a
+`cwl.output.json` path, held to the outdir, cannot name one; an `outputEval`
+value can. A path is under a root when it equals the root or starts with
 the root and a `/`, so `/out-evil` is not under `/out` (`Location.under`). After
 `Cwl.run` returns `Ok`, every File and Directory `path` and `location` in the
 output object, declared outputs and extra `cwl.output.json` keys alike, resolves
@@ -305,7 +315,8 @@ with symlinks followed to a path under a legal root.
   directory, is `Error.Type`.
 - **Names and links.** `Workdir.safe_leaf` accepts a single path segment: not
   empty, not `.` or `..`, and containing none of slash, backslash, NUL. It
-  checks staged basenames and the `stdout` and `stderr` names. A `stdin`,
+  checks staged basenames, joined onto their staging directory, and the
+  `stdout` and `stderr` names, joined onto the outdir. A `stdin`,
   `stdout` or `stderr` file that is already a symlink is `Error.Runtime`.
 
 ## Glob
@@ -448,7 +459,8 @@ steps on the same Eio scheduler, each a run with its own outdir.
   place under the outdir (`Workdir.relocate`); other paths are unchanged.
 - **requirement, hint**: CWL's `requirements`, which a runner must honor, and
   `hints`, which it may ignore. See Not built yet for what ccr does with each.
-- **staging**: copying each File input into the outdir before the tool starts
+- **staging**: putting each File and Directory input in a directory of its own
+  under the staging root, outside the outdir, before the tool starts
   (`Workdir.stage`).
 - **Unsupported**: `Error.Unsupported`, a feature the run needs and ccr lacks.
   The CLI exits 33.
