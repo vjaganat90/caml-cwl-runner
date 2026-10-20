@@ -26,6 +26,7 @@ let rec type_name = function
   | File -> "File"
   | Directory -> "Directory"
   | Any -> "Any"
+  | Enum _ -> "enum"
   | Array { items; _ } -> type_name items ^ "[]"
   | Union ts -> "[" ^ String.concat ", " (List.map type_name ts) ^ "]"
 
@@ -170,6 +171,7 @@ let rec matches ty v =
   | (Int | Long), Untyped_tree.Int _ -> true
   | (Float | Double), Untyped_tree.(Float _ | Int _) -> true
   | String, Untyped_tree.String _ -> true
+  | Enum symbols, Untyped_tree.String s -> List.mem s symbols
   | File, v -> class_of v = Some "File"
   | Directory, v -> class_of v = Some "Directory"
   | Array { items; _ }, Untyped_tree.Array xs -> List.for_all (matches items) xs
@@ -227,6 +229,7 @@ let rec coerce param ty doc =
   | Any, Untyped_tree.(Bool _ | Int _ | Float _ | String _ | Array _ | Object _)
     ->
       Ok doc
+  | Enum symbols, Untyped_tree.String s when List.mem s symbols -> Ok doc
   | String, Untyped_tree.Int n -> Ok (Untyped_tree.String (Int64.to_string n))
   | String, Untyped_tree.Float f -> Ok (Untyped_tree.String (string_of_float f))
   | File, Untyped_tree.Object kvs -> read_object param "File" kvs
