@@ -11,10 +11,11 @@
     How the parts fit. A process file is read into an [Untyped_tree.value], then
     into a [Document.t], whose [Command_line_tool.t] or [Workflow.t] is built
     from [Schema] parts and [Type]s. A job file is read into a [Type.object_],
-    and [Cwl.run] returns one too. [Expr] says what an expression sees and what
-    evaluates it, [Glob] what globbing needs of a file system, and [Io] what
-    code may do to the machine. [Error] holds the failures, and the diagnostics
-    for constructs that are read and not implemented.
+    the fields of its tree checked against the inputs' types, and [Cwl.run]
+    returns one too. [Expr] says what an expression sees and what evaluates it,
+    [Glob] what globbing needs of a file system, and [Io] what code may do to
+    the machine. [Error] holds the failures, and the diagnostics for constructs
+    that are read and not implemented.
 
     A [json_path] is the dotted location of a node in a document, such as
     [inputs[0].type] or [requirements.DockerRequirement]. A top-level field is
@@ -84,8 +85,9 @@ module Error = struct
 end
 
 module Untyped_tree = struct
-  (** Nested YAML or JSON, before CWL types give it meaning; JSON is read as
-      YAML. It is neither a [Document.t] nor a [Type.value]. *)
+  (** Nested YAML or JSON; JSON is read as YAML. A process document is read from
+      it into a [Document.t]; a job, a default, an expression result and an
+      output are this tree too, as [Type.value]. *)
   type value =
     | Null  (** [null], [~], an empty value or an empty document. *)
     | Bool of bool
@@ -112,6 +114,29 @@ module Untyped_tree = struct
 end
 
 module Type = struct
+  type value = Untyped_tree.value
+  (** A CWL value: an input, a default, an output or an expression result. It is
+      the tree itself, so every field a document, job, expression or
+      [cwl.output.json] gives is kept, in order. Its constructors are those of
+      [Untyped_tree.value], written qualified ([Untyped_tree.String s]), so a
+      constructor of [Type] always names a CWL type. An [Int] value is an [Int]
+      or a [Long], with no range check, and a [Float] value a [Float] or a
+      [Double].
+
+      An [Object] whose [class] is ["File"] is a File, and one whose [class] is
+      ["Directory"] a Directory (Process.yml, File and Directory), when the
+      fields ccr reads have their types: [location], [path], and for a File also
+      [basename], [nameroot], [nameext] and [checksum], are strings or absent,
+      and a File's [size] is an int or absent. [location] is where the content
+      is: a [file://] URI or a plain path. A relative input location is resolved
+      against the directory of the document that holds it, and staging sets it
+      to the copy's path as the tool sees it. [path] is the local path; after
+      staging, the [basename] of the copy. Every other field ([contents],
+      [format], [secondaryFiles], [listing], [dirname] and any extension) passes
+      through as it is. Any other [Object] is a record, which no [t] accepts:
+      [inputs] and [runtime] in expressions, or an undeclared key of
+      [cwl.output.json]. *)
+
   (** The [position] of a [binding], its sort key on the command line: an
       integer ([Pos]), or an expression evaluated when argv is built ([Expr]; it
       must give an int, or null for 0). Bindings are ordered by ascending
@@ -155,61 +180,6 @@ module Type = struct
     | Union of t list
         (** Any one of the listed types: a type list in the document, or [T?],
             which is [Union [T; Null]]. *)
-
-  type file = {
-    location : string option;
-        (** Where the content is: a [file://] URI or a plain path (the spec's
-            [location] is an IRI). A relative input location is resolved against
-            the job file's directory, or the tool file's when there is no job
-            file. Staging sets it to the copy's path as the tool sees it.
-            Printing a File as JSON prefixes [file://] unless [file:] is already
-            there. *)
-    path : string option;
-        (** The local path. Input: as given, else the last segment of
-            [location]. After staging: the [basename] of the copy, which is in
-            the output directory, the tool's working directory. Output: the
-            file's path on the host, under the output directory. *)
-    basename : string option;
-        (** The file name without its directory. Defaults to the last segment of
-            [path]. Staging names the copy by it, so it must be one path
-            segment. *)
-    nameroot : string option;
-        (** [basename] without [nameext], computed when missing. *)
-    nameext : string option;
-        (** The extension of [basename]: from its last dot, dot included. Empty
-            when there is no dot, or only a leading one. *)
-    checksum : string option;
-        (** [sha1$] followed by the SHA-1 of the content in lowercase hex. *)
-    size : int64 option;  (** The size of the content in bytes. *)
-  }
-  (** A CWL File object. Reading one fills a missing [path] (from [location]),
-      [basename], [nameroot] and [nameext], and drops the properties ccr does
-      not keep ([contents], [secondaryFiles], [format], [dirname]). Staging
-      ([Workdir.stage], before the tool starts) copies each input File into the
-      output directory under its [basename]. [Workdir.checksum] fills a missing
-      [checksum] and [size] on output Files. *)
-
-  type directory = { location : string option; path : string option }
-  (** A CWL Directory object. Only [location] and [path] are kept, with the
-      meaning they have in [file]; [basename] and [listing] are dropped. An
-      input Directory is not copied: staging sets both to its resolved source
-      path. *)
-
-  (** A CWL value: an input, a default, an output or an expression result. *)
-  type value =
-    | Vnull
-    | Vbool of bool
-    | Vint of int64  (** An [Int] or a [Long], with no range check. *)
-    | Vfloat of float  (** A [Float] or a [Double]. *)
-    | Vstring of string
-    | Vfile of file
-    | Vdir of directory
-    | Varray of value list
-    | Vrecord of (string * value) list
-        (** A JSON object that does not read as a File or Directory, fields in
-            order. No [t] accepts it, so a declared input or output never holds
-            one. It is what [inputs] and [runtime] are in expressions, and the
-            value of an undeclared key of [cwl.output.json]. *)
 
   type object_ = (string * value) list
   (** Parameters by id, in order: the job's inputs, or the outputs of a run. *)
@@ -439,7 +409,7 @@ module Expr = struct
   (** What an expression sees. [inputs] is the job's inputs by id, with defaults
       applied (and Files staged, in a run). [self] is the value of the input
       being bound; in a [valueFrom] it is the value being bound, an element for
-      an array item. It is [Vnull] where no input is involved, as for a file
+      an array item. It is [Null] where no input is involved, as for a file
       name, a glob or an [arguments] entry. *)
 
   (** An expression evaluator. [Expr.Param_ref] handles parameter references;
@@ -450,8 +420,8 @@ module Expr = struct
     (** [eval ctx s] evaluates [s] as CWL does in a field that allows
         expressions, such as [$(inputs.n)]. A string that is exactly one
         reference gives its value with its type. A string with text around a
-        reference, or with several, is interpolated into a [Vstring]. A string
-        with none is returned as a [Vstring]. A failed lookup or an unclosed
+        reference, or with several, is interpolated into a [String]. A string
+        with none is returned as a [String]. A failed lookup or an unclosed
         reference is [Error.Expr]; syntax the engine does not implement is
         [Error.Unsupported]. *)
   end

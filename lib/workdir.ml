@@ -37,21 +37,37 @@ let source ~dir ~what location path =
   in
   if Filename.is_relative src then Filename.concat dir src else src
 
+(* [v] with its [path] and [location] set to [path] and [location], each
+   where it is [Some]. A leaf that is not a File or Directory has neither. *)
+let set_paths v (path, location) =
+  let set key x v =
+    Option.fold ~none:v ~some:(fun s -> Ty.set key (Untyped_tree.String s) v) x
+  in
+  set "path" path v |> set "location" location
+
 let locate dir v =
   Ty.map_result
-    (function
-      | Ty.Vfile f ->
-          let+ src = source ~dir ~what:"File" f.location f.path in
-          Ty.Vfile { f with location = Some src }
-      | Ty.Vdir d ->
-          let+ src = source ~dir ~what:"Directory" d.location d.path in
-          Ty.Vdir { location = Some src; path = Some src }
-      | v -> Ok v)
+    (fun v ->
+      match Ty.class_of v with
+      | None -> Ok v
+      | Some what ->
+          let+ src =
+            source ~dir ~what
+              (Ty.get_string "location" v)
+              (Ty.get_string "path" v)
+          in
+          let path = if what = "File" then None else Some src in
+          set_paths v (path, Some src))
     v
 
-let stage_leaf (module R : Io.WRITE) ~container ~outdir used = function
-  | Ty.Vfile ({ location = Some src; _ } as f) ->
-      let raw_base = Option.value f.basename ~default:(Filename.basename src) in
+let stage_leaf (module R : Io.WRITE) ~container ~outdir used v =
+  match (Ty.class_of v, Ty.get_string "location" v) with
+  | Some "File", Some src ->
+      let raw_base =
+        Option.value
+          (Ty.get_string "basename" v)
+          ~default:(Filename.basename src)
+      in
       let* base = safe_leaf ~what:"File basename" raw_base in
       if List.mem base used then
         Error.runtime (Printf.sprintf "staging collision on basename '%s'" base)
@@ -59,16 +75,9 @@ let stage_leaf (module R : Io.WRITE) ~container ~outdir used = function
         let dst = Filename.concat outdir base in
         let* () = R.copy_file src dst in
         let seen = Location.trim_slash container ^ "/" ^ base in
-        Ok
-          ( Ty.Vfile
-              {
-                f with
-                path = Some base;
-                basename = Some base;
-                location = Some seen;
-              },
-            base :: used )
-  | v -> Ok (v, used)
+        let v = Ty.set "basename" (Untyped_tree.String base) v in
+        Ok (set_paths v (Some base, Some seen), base :: used)
+  | _ -> Ok (v, used)
 
 let stage_value (module R : Io.WRITE) ~container ~outdir used v =
   Ty.fold_map (stage_leaf (module R) ~container ~outdir) used v
@@ -91,24 +100,6 @@ let relocate ~container ~host path =
     | Some "" -> Location.trim_slash host
     | Some rest -> Location.trim_slash host ^ "/" ^ rest
 
-let map_paths f = function
-  | Ty.Vfile file ->
-      let path, location = f (Ty.file_path file) file.location in
-      Ty.Vfile { file with path; location }
-  | Ty.Vdir dir ->
-      let path, location = f (Ty.dir_path dir) dir.location in
-      Ty.Vdir { path; location }
-  | v -> v
-
-let map_paths_result f = function
-  | Ty.Vfile file ->
-      let+ path, location = f `File (Ty.file_path file) in
-      Ty.fill_file_paths (Ty.Vfile { file with path; location })
-  | Ty.Vdir dir ->
-      let+ path, location = f `Directory (Ty.dir_path dir) in
-      Ty.Vdir { path; location }
-  | v -> Ok v
-
 let resolve_paths ~container host v =
   let abs p =
     let p = relocate ~container ~host p in
@@ -123,7 +114,9 @@ let resolve_paths ~container host v =
     in
     (path, location)
   in
-  Ty.map (map_paths endpoints) v
+  Ty.map
+    (fun v -> set_paths v (endpoints (Ty.path v) (Ty.get_string "location" v)))
+    v
 
 let kind_name = function `File -> "File" | `Directory -> "Directory"
 
@@ -154,33 +147,38 @@ let confine (module R : Io.READ) roots v =
       let* () = R.confined roots raw in
       match R.realpath raw with Ok p -> Ok p | Error _ -> Ok raw
   in
-  let one kind preferred =
-    let* path = confine_path (Option.value preferred ~default:"") in
-    let+ () = node_matches path kind (R.stat path) in
-    (Some path, Some path)
+  let one v =
+    match Ty.class_of v with
+    | None -> Ok v
+    | Some cls ->
+        let kind = if cls = "File" then `File else `Directory in
+        let* path = confine_path (Option.value (Ty.path v) ~default:"") in
+        let+ () = node_matches path kind (R.stat path) in
+        Ty.fill_file_paths (set_paths v (Some path, Some path))
   in
-  Ty.map_result (map_paths_result one) v
+  Ty.map_result one v
 
-let or_fill present compute =
-  match present with
-  | Some _ as kept -> Ok kept
-  | None ->
-      let+ value = compute () in
-      Some value
+(* [v] with [key] set to what [compute] gives, unless [v] already has it. *)
+let or_fill key compute v =
+  if Ty.get key v <> None then Ok v
+  else
+    let+ x = compute () in
+    Ty.set key x v
 
 let checksum (module R : Io.READ) v =
   Ty.map_result
-    (function
-      | Ty.Vfile f -> (
-          match Ty.file_path f with
-          | None -> Ok (Ty.Vfile f)
-          | Some path ->
-              let* checksum =
-                or_fill f.checksum (fun () ->
-                    let+ hex = R.sha1 path in
-                    "sha1$" ^ hex)
-              in
-              let* size = or_fill f.size (fun () -> R.file_size path) in
-              Ok (Ty.Vfile { f with checksum; size }))
-      | v -> Ok v)
+    (fun v ->
+      match (Ty.class_of v, Ty.path v) with
+      | Some "File", Some path ->
+          let sha1 () =
+            let+ hex = R.sha1 path in
+            Untyped_tree.String ("sha1$" ^ hex)
+          in
+          let size () =
+            let+ n = R.file_size path in
+            Untyped_tree.Int n
+          in
+          let* v = or_fill "checksum" sha1 v in
+          or_fill "size" size v
+      | _ -> Ok v)
     v

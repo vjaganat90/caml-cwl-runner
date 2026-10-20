@@ -177,11 +177,14 @@ What the diagram leaves out:
   `runtime.cores` is `coresMin` of a `ResourceRequirement` in `requirements`,
   else in `hints`, else 1 (a `coresMin` that is not a number is ignored);
   `runtime.ram` is always 256.
-- **Output JSON.** `Type.object_to_json` prints it; there is no JSON library.
+- **Output JSON.** `Type.to_json` prints it; there is no JSON library.
   Every File has `location` (`file://` and the path), `path`, `basename`,
   `nameroot` and `nameext` (`basename` split at its last dot; `nameext` is empty
   with no dot or only a leading one), `checksum` (`sha1$` and the hex from
-  `Io.READ.sha1`) and `size`. No outputs print `{}`.
+  `Io.READ.sha1`) and `size`; a Directory has `location`, `path` and
+  `basename`. Every other field a File or Directory was given, such as
+  `format` or `secondaryFiles` in `cwl.output.json`, prints as it was given.
+  No outputs print `{}`.
 
 **Why Eio.** `Unix.create_process` has no working-directory argument and
 `Unix.chdir` changes the whole process, which would race between fibers; Eio's
@@ -404,9 +407,14 @@ steps on the same Eio scheduler, each a run with its own outdir.
   `Untyped_tree.child` and `Schema.nth`.
 - **legal roots**: see Confinement. To confine a path is to check it against
   them after resolving symlinks (`Workdir.confine`, `Io.READ.confined`).
+- **File, Directory**: a value (`Type.value`, the YAML/JSON tree) that is an
+  object whose `class` is `File` or `Directory` (`Type.class_of`). It keeps
+  every field it was given, in order; ccr reads and writes them with
+  `Type.get`, `Type.get_string` and `Type.set`, and fills the ones the spec
+  computes (`Type.fill_file_paths`).
 - **location, path**: the two File and Directory fields. `location` says where
   the thing is, `path` where the tool opens it; each stands in for the other
-  when missing (`Type.file_loc`, `Type.file_path`).
+  when missing (`Type.path`).
 - **outdir**: the host directory where the tool runs and its outputs are
   collected.
 - **relocate**: map a path under the designated output directory to the same

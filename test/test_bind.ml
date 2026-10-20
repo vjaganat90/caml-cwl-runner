@@ -104,7 +104,7 @@ let prop_boolean_flag =
   Test.make ~name:"boolean flag" ~count:100 Gen.bool (fun b ->
       argv_ok
         [ bound "flag" ~ty:Cwl.Type.Boolean ~prefix:"-f" ]
-        [ ("flag", Cwl.Type.Vbool b) ]
+        [ ("flag", Cwl.Untyped_tree.Bool b) ]
         (if b then [ "echo"; "-f" ] else [ "echo" ]))
 
 let prop_optional_null_silent =
@@ -115,7 +115,7 @@ let prop_optional_null_silent =
             ~ty:(Cwl.Type.Union [ Cwl.Type.String; Cwl.Type.Null ])
             ~prefix:"--msg";
         ]
-        [ ("msg", Cwl.Type.Vnull) ]
+        [ ("msg", Cwl.Untyped_tree.Null) ]
         [ "echo" ])
 
 let prop_item_separator =
@@ -138,7 +138,7 @@ let prop_separate_false =
     (fun s ->
       argv_ok
         [ bound "v" ~prefix:"-i" ~separate:false ]
-        [ ("v", Cwl.Type.Vstring s) ]
+        [ ("v", Cwl.Untyped_tree.String s) ]
         [ "echo"; "-i" ^ s ])
 
 let prop_base_command_prefix =
@@ -153,7 +153,10 @@ let prop_position_order =
       match
         argv
           [ bound "a" ~position:p1; bound "b" ~position:p2 ]
-          [ ("a", Cwl.Type.Vstring "A"); ("b", Cwl.Type.Vstring "B") ]
+          [
+            ("a", Cwl.Untyped_tree.String "A");
+            ("b", Cwl.Untyped_tree.String "B");
+          ]
       with
       | Error _ -> false
       | Ok argv ->

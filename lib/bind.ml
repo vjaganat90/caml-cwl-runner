@@ -38,8 +38,8 @@ let position (module E : Expr.ENGINE) ctx = function
   | Ty.Pos n -> Ok n
   | Ty.Expr s -> (
       match E.eval ctx s with
-      | Ok (Ty.Vint n) -> Ok (Int64.to_int n)
-      | Ok Ty.Vnull -> Ok 0
+      | Ok (Untyped_tree.Int n) -> Ok (Int64.to_int n)
+      | Ok Untyped_tree.Null -> Ok 0
       | Ok v ->
           Error.expr
             (Printf.sprintf "position expression must yield int, got %s"
@@ -63,17 +63,21 @@ let tokens ~separate prefix values =
 
 (* The words of [v] bound by [b], by the kind of [v]. The items of an array
    that is not joined by [itemSeparator] are items of their own. *)
-let words (b : Ty.binding) = function
-  | Ty.Vnull | Ty.Vbool false -> []
-  | Ty.Vbool true | Ty.Vrecord _ -> flag b.prefix
-  | Ty.Varray [] -> []
-  | Ty.Varray xs -> (
+let words (b : Ty.binding) v =
+  match v with
+  | Untyped_tree.Null | Untyped_tree.Bool false -> []
+  | Untyped_tree.Object _ when Ty.class_of v = None -> flag b.prefix
+  | Untyped_tree.Bool true -> flag b.prefix
+  | Untyped_tree.Array [] -> []
+  | Untyped_tree.Array xs -> (
       match b.item_separator with
       | Some sep ->
           tokens ~separate:b.separate b.prefix
             [ String.concat sep (List.map Ty.string_of_value xs) ]
       | None -> flag b.prefix)
-  | v -> tokens ~separate:b.separate b.prefix [ Ty.string_of_value v ]
+  | Untyped_tree.Int _ | Untyped_tree.Float _ | Untyped_tree.String _
+  | Untyped_tree.Object _ ->
+      tokens ~separate:b.separate b.prefix [ Ty.string_of_value v ]
 
 (* The first member of a union that [value] matches, else [string]. *)
 let rec member ts value =
@@ -85,9 +89,9 @@ let rec member ts value =
    with value [v]. [lead] is the key of the enclosing array item, if any. *)
 let rec bind e ctx lead name ty binding v =
   match (v, ty, binding) with
-  | Ty.Vnull, _, _ -> Ok []
+  | Untyped_tree.Null, _, _ -> Ok []
   | _, Ty.Union ts, _ -> bind e ctx lead name (member ts v) binding v
-  | Ty.Varray xs, Ty.Array { items; item_binding = Some ib }, None ->
+  | Untyped_tree.Array xs, Ty.Array { items; item_binding = Some ib }, None ->
       elements e ctx (append_name lead name) name items ib xs
   | _, _, None -> Ok []
   | _, _, Some (b : Ty.binding) ->
@@ -102,12 +106,14 @@ let rec bind e ctx lead name ty binding v =
 and render e ctx key name ty (b : Ty.binding) v =
   let+ tail =
     match (v, ty) with
-    | Ty.Varray _, _ when b.item_separator <> None -> Ok []
-    | Ty.Varray xs, Ty.Array { items; item_binding } when b.value_from = None ->
+    | Untyped_tree.Array _, _ when b.item_separator <> None -> Ok []
+    | Untyped_tree.Array xs, Ty.Array { items; item_binding }
+      when b.value_from = None ->
         elements e ctx key name items
           (Option.value item_binding ~default:Ty.default_binding)
           xs
-    | Ty.Varray xs, _ -> elements e ctx key name Ty.String Ty.default_binding xs
+    | Untyped_tree.Array xs, _ ->
+        elements e ctx key name Ty.String Ty.default_binding xs
     | _ -> Ok []
   in
   { key; name; words = words b v } :: tail
@@ -126,13 +132,15 @@ and elements e ctx key name items b xs =
 (* The items of the [i]-th entry of [arguments]. *)
 let argument e ctx (i, (b : Ty.binding)) =
   let* p = position e ctx b.position in
-  let* v = value_from e ctx b Ty.Vnull in
+  let* v = value_from e ctx b Untyped_tree.Null in
   render e ctx [ I p; I i ] (Printf.sprintf "arguments[%d]" i) Ty.String b v
 
 let argv e (tool : Command_line_tool.t) inputs runtime =
-  let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
+  let ctx = { Expr.inputs; self = Untyped_tree.Null; runtime } in
   let input (inp : Schema.input) =
-    let v = Option.value (List.assoc_opt inp.id inputs) ~default:Ty.Vnull in
+    let v =
+      Option.value (List.assoc_opt inp.id inputs) ~default:Untyped_tree.Null
+    in
     bind e { ctx with self = v } [] inp.id inp.ty inp.input_binding v
   in
   let* args =

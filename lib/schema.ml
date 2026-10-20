@@ -200,7 +200,7 @@ let parse_input path key v =
       ~unimplemented:[ "loadListing" ] path key v
   in
   let get key = field ~json_path:path kvs key in
-  let default _ d = Result.bind (Ty.value_of_tree id ty d) return in
+  let default _ d = Result.bind (Ty.coerce id ty d) return in
   let+ default = get "default" (some default) (return None)
   and+ input_binding = get "inputBinding" (some parse_binding) (return None)
   and+ () = warn unimplemented () in

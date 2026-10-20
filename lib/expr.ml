@@ -92,45 +92,25 @@ let parse_param_ref s =
         in
         segs i []
 
-let opt conv = function None -> Some Ty.Vnull | Some x -> Some (conv x)
-let str = opt (fun s -> Ty.Vstring s)
-let long = opt (fun n -> Ty.Vint n)
-
-let file_field (f : Ty.file) = function
-  | "location" -> str f.location
-  | "path" -> str f.path
-  | "basename" -> str f.basename
-  | "nameroot" -> str f.nameroot
-  | "nameext" -> str f.nameext
-  | "checksum" -> str f.checksum
-  | "size" -> long f.size
-  | "class" -> Some (Ty.Vstring "File")
-  | _ -> None
-
-let dir_field (d : Ty.directory) = function
-  | "location" -> str d.location
-  | "path" -> str d.path
-  | "class" -> Some (Ty.Vstring "Directory")
-  | _ -> None
-
 let number_of_float f =
-  if Float.is_integer f then Ty.Vint (Int64.of_float f) else Ty.Vfloat f
+  if Float.is_integer f then Untyped_tree.Int (Int64.of_float f)
+  else Untyped_tree.Float f
 
 let eval_path ctx root segs =
   let start =
     match root with
-    | "inputs" -> Ok (Ty.Vrecord ctx.inputs)
+    | "inputs" -> Ok (Untyped_tree.Object ctx.inputs)
     | "self" -> Ok ctx.self
     | "runtime" ->
         Ok
-          (Ty.Vrecord
+          (Untyped_tree.Object
              [
-               ("outdir", Ty.Vstring ctx.runtime.outdir);
-               ("tmpdir", Ty.Vstring ctx.runtime.tmpdir);
+               ("outdir", Untyped_tree.String ctx.runtime.outdir);
+               ("tmpdir", Untyped_tree.String ctx.runtime.tmpdir);
                ("cores", number_of_float ctx.runtime.cores);
                ("ram", number_of_float ctx.runtime.ram);
              ])
-    | "null" -> Ok Ty.Vnull
+    | "null" -> Ok Untyped_tree.Null
     | other ->
         Error.expr (Printf.sprintf "unknown parameter context '%s'" other)
   in
@@ -144,25 +124,20 @@ let eval_path ctx root segs =
           match found with Some v -> step v rest | None -> Error.expr missing
         in
         match (current, seg) with
-        | Ty.Vnull, _ ->
+        | Untyped_tree.Null, _ ->
             Error.expr (Printf.sprintf "cannot look up '%s' on null" key)
-        | Ty.Vrecord kvs, (Dot k | Quote k) ->
+        | Untyped_tree.Object kvs, (Dot k | Quote k) ->
             descend (List.assoc_opt k kvs)
               (Printf.sprintf "missing field '%s' in object" k)
-        | Ty.Vfile f, (Dot k | Quote k) ->
-            descend (file_field f k)
-              (Printf.sprintf "unknown File field '%s'" k)
-        | Ty.Vdir d, (Dot k | Quote k) ->
-            descend (dir_field d k)
-              (Printf.sprintf "unknown Directory field '%s'" k)
-        | Ty.Varray xs, (Dot "length" | Quote "length") when rest = [] ->
-            Ok (Ty.Vint (Int64.of_int (List.length xs)))
-        | Ty.Varray xs, Index i ->
+        | Untyped_tree.Array xs, (Dot "length" | Quote "length") when rest = []
+          ->
+            Ok (Untyped_tree.Int (Int64.of_int (List.length xs)))
+        | Untyped_tree.Array xs, Index i ->
             descend (List.nth_opt xs i)
               (Printf.sprintf "array index %d out of range" i)
-        | Ty.Vstring s, Index i ->
+        | Untyped_tree.String s, Index i ->
             if i >= 0 && i < String.length s then
-              step (Ty.Vstring (String.make 1 s.[i])) rest
+              step (Untyped_tree.String (String.make 1 s.[i])) rest
             else Error.expr (Printf.sprintf "string index %d out of range" i)
         | _ ->
             Error.expr
@@ -171,7 +146,9 @@ let eval_path ctx root segs =
   in
   match start with Error _ as e -> e | Ok current -> step current segs
 
-let text_of = function Ty.Vstring s -> s | v -> Ty.to_json_sorted v
+let text_of = function
+  | Untyped_tree.String s -> s
+  | v -> Ty.to_json ~sorted:true v
 
 let rec close_at s i depth open_c close_c quote =
   if i >= String.length s then None
@@ -235,6 +212,6 @@ module Param_ref : ENGINE = struct
         if String.exists (fun c -> c = '$' || c = '\\') expr then
           match scan ctx expr 0 (Buffer.create (String.length expr)) with
           | Error _ as e -> e
-          | Ok text -> Ok (Ty.Vstring text)
-        else Ok (Ty.Vstring expr)
+          | Ok text -> Ok (Untyped_tree.String text)
+        else Ok (Untyped_tree.String expr)
 end
