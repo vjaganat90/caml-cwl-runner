@@ -1,0 +1,6 @@
+{
+  "file": "lib/workdir.ml",
+  "old": "if R.exists p then go (i + 1) else p",
+  "new": "if R.exists p && false then go (i + 1) else p",
+  "why": "an output copied out of the staging root takes the first free name, so it does not overwrite an outdir file"
+}

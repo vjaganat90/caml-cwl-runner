@@ -195,7 +195,15 @@ What the diagram leaves out:
   `self` the empty array (the spec defines `self` only beside a `glob`; this is
   cwltool's). It must satisfy `Type.matches` (`Error.Type`), and each File or
   Directory in it is resolved and confined like a `cwl.output.json` path, to
-  every legal root. Beside a `glob`, `outputEval` is `Unsupported`.
+  every legal root. One under the staging root (a staged input, or a File or
+  Directory literal), which is removed after the run, is copied into the
+  outdir by `Workdir.export`, as cwltool relocates its outputs: under its
+  basename, or the first free `<basename>_2`, `<basename>_3`, ... when the
+  outdir has that name already (cwltool's rule for a name clash); `basename`
+  is kept. A located input Directory keeps its host path, which outlives the
+  run (cwltool reports its own staging path). A Directory then gets its
+  `listing` as a glob hit does. Beside a `glob`, `outputEval` is
+  `Unsupported`.
 - **Expressions.** `Expr.Param_ref` evaluates `position`, `valueFrom`, stream
   names, `glob` and `outputEval`. A string that is one `$(…)` reference keeps the value's
   type. A string that mixes text and references is interpolated; `\$(`, `\${`
@@ -298,7 +306,7 @@ The legal roots are the `realpath` of the outdir, the tmpdir, the staging root
 and every located Directory input's source. Staged inputs are outside the
 outdir, so a glob, which lists the outdir, finds none of them, and a
 `cwl.output.json` path, held to the outdir, cannot name one; an `outputEval`
-value can. A path is under a root when it equals the root or starts with
+value can, and is copied into the outdir (see Outputs by `outputEval`). A path is under a root when it equals the root or starts with
 the root and a `/`, so `/out-evil` is not under `/out` (`Location.under`). After
 `Cwl.run` returns `Ok`, every File and Directory `path` and `location` in the
 output object, declared outputs and extra `cwl.output.json` keys alike, resolves

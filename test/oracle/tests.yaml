@@ -425,3 +425,21 @@ $graph:
   tags:
   - command_line_tool
   - oracle
+- id: output_eval_staged_input
+  doc: An outputEval that returns a staged input reports it as an output File.
+  ccr:unspecified: >-
+    The spec says output files are written under the designated output
+    directory, not where an output that is an input goes; cwltool copies it
+    into the output directory under its basename.
+  tool: output-eval-input.cwl
+  job: a-txt.json
+  tags:
+  - command_line_tool
+  - oracle
+  output:
+    out:
+      class: File
+      size: 6
+      basename: a.txt
+      checksum: sha1$3620f0704e803d65098e5f2b836633b166e25474
+      location: a.txt

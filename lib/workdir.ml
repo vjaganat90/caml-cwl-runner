@@ -153,6 +153,42 @@ let sources inputs =
   in
   List.fold_left (fun acc (_, v) -> go acc v) [] inputs
 
+(* The first of [dir/b], [dir/b_2], [dir/b_3], ... that does not exist:
+   cwltool's rule for two outputs relocated to one name. *)
+let free_name (module R : Io.READ) dir b =
+  let rec go i =
+    let p =
+      Filename.concat dir (if i = 1 then b else Printf.sprintf "%s_%d" b i)
+    in
+    if R.exists p then go (i + 1) else p
+  in
+  go 1
+
+let rec copy_tree (module R : Io.RUNTIME) depth src copy =
+  if depth > Glob.max_glob_depth then
+    Error.runtime "copying a Directory exceeded the depth limit"
+  else if not (R.is_dir src) then R.copy_file src copy
+  else
+    let* () = R.mkdir_p copy in
+    let* names = R.read_dir src in
+    let copy_one n =
+      copy_tree
+        (module R : Io.RUNTIME)
+        (depth + 1) (Filename.concat src n) (Filename.concat copy n)
+    in
+    Result.map ignore (Error.map_list copy_one names)
+
+let export (module R : Io.RUNTIME) root outdir v =
+  Ty.map_result
+    (fun v ->
+      match (Ty.class_of v, Ty.path v) with
+      | Some _, Some src when Location.under root src ->
+          let dst = free_name (module R) outdir (Filename.basename src) in
+          let+ () = copy_tree (module R) 0 src dst in
+          set_paths v (Some dst, Some dst)
+      | _ -> Ok v)
+    v
+
 let relocate ~container ~host path =
   let dotdot = List.mem ".." (String.split_on_char '/' path) in
   if container = host || Filename.is_relative path || dotdot then path

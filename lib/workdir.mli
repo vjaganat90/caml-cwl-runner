@@ -85,6 +85,27 @@ val sources : Ty.object_ -> string list
     also one in the [listing] of a Directory literal: what {!stage} links to.
     Call it on the values {!locate} gives. *)
 
+val export :
+  (module Io.RUNTIME) ->
+  string ->
+  string ->
+  Ty.value ->
+  (Ty.value, Error.t) result
+(** [export (module R) root outdir v] copies each File and Directory in [v]
+    whose [path] lies under the staging root [root] (a staged input, or a File
+    or Directory literal, that an [outputEval] returns) into [outdir], a
+    Directory with its whole tree, and sets its [path] and [location] to the
+    copy; its [listing], if any, still names the staged entries. The staging
+    root is removed after the run, and invocation.md has output files "written
+    under the designated output directory". The copy is named [outdir/b], [b]
+    the last segment of the staged path (its [basename]), or, when that exists,
+    the first free [b_2], [b_3], ...: cwltool's rule for a name clash when it
+    relocates outputs. [basename] is kept. Call it after {!confine}, which gives
+    real paths. Any other value is left as it is, so a located input Directory
+    keeps its host path, which outlives the run.
+
+    Fails with [Error.Runtime] when a copy fails. *)
+
 val relocate : container:string -> host:string -> string -> string
 (** [relocate ~container ~host p] moves [p] from under [container] to under
     [host]: [p = container] gives [host], and [container/x] gives [host/x], with
