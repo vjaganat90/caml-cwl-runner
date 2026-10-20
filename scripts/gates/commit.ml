@@ -233,6 +233,8 @@ let check_expectations c =
     >? sprintf "a refactor changes test expectations in %s: a behavior change is a `fix` or `feat` commit of its own"
 
 (** No new top-level path that gates.json doesn't list, and no symbolic link. *)
+let hidden_open = Re.Perl.compile_pat {|(^|[\s(])-open\b|}
+
 let check_files c =
   let top p = List.hd (String.split_on_char '/' p) in
   let stray f = f.before = None && not (List.mem (top f.path) c.config.top_level) in
@@ -246,6 +248,13 @@ let check_files c =
         (gates.json)")
   @ (links (split '\000' (git [ "diff"; "--raw"; "--no-renames"; "-z"; c.parent; c.sha ]))
     >? sprintf "%s is a symbolic link: commit the file itself")
+
+(** No changed dune file passes [-open]: a module's opens are written at its top, where its reader sees them. *)
+let check_opens c =
+  let dune f = List.mem (Filename.basename f.path) [ "dune"; "dune-project" ] in
+  let hides f = dune f && Option.fold ~none:false ~some:(Re.execp hidden_open) f.after in
+  paths_of (List.filter hides c.files)
+  >? sprintf "%s passes -open: write the open at the top of the module that uses it"
 
 (** Every changed OCaml file parses: one that does not reads as empty to the other checks. *)
 let check_parses c =
@@ -353,6 +362,7 @@ let checks =
     check_tested;
     check_expectations;
     check_files;
+    check_opens;
     check_parses;
     check_docs;
     check_labels;
