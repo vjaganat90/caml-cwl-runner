@@ -41,6 +41,23 @@ let rec digits_end s i =
     digits_end s (i + 1)
   else i
 
+(* The key quoted by [q] from [i] on, and the index of its closing quote. As
+   in concepts.md, [\q] stands for [q] inside it. *)
+let quoted body q i =
+  let buf = Buffer.create 16 in
+  let rec go i =
+    if i >= String.length body then None
+    else if body.[i] = q then Some (Buffer.contents buf, i)
+    else if body.[i] = '\\' && i + 1 < String.length body && body.[i + 1] = q
+    then (
+      Buffer.add_char buf q;
+      go (i + 2))
+    else (
+      Buffer.add_char buf body.[i];
+      go (i + 1))
+  in
+  go i
+
 let parse_param_ref s =
   let n = String.length s in
   if n < 3 || s.[0] <> '$' || s.[1] <> '(' || s.[n - 1] <> ')' then None
@@ -62,12 +79,10 @@ let parse_param_ref s =
             && i + 1 < String.length body
             && (body.[i + 1] = '\'' || body.[i + 1] = '"')
           then
-            let q = body.[i + 1] in
-            match String.index_from_opt body (i + 2) q with
+            match quoted body body.[i + 1] (i + 2) with
             | None -> None
-            | Some k ->
+            | Some (name, k) ->
                 if k + 1 < String.length body && body.[k + 1] = ']' then
-                  let name = String.sub body (i + 2) (k - (i + 2)) in
                   segs (k + 2) (Quote name :: acc)
                 else None
           else if body.[i] = '[' then
@@ -82,12 +97,9 @@ let parse_param_ref s =
               segs (j + 1) (Index idx :: acc)
             else None
           else if body.[i] = '\'' || body.[i] = '"' then
-            let q = body.[i] in
-            match String.index_from_opt body (i + 1) q with
+            match quoted body body.[i] (i + 1) with
             | None -> None
-            | Some k ->
-                let name = String.sub body (i + 1) (k - i - 1) in
-                segs (k + 1) (Quote name :: acc)
+            | Some (name, k) -> segs (k + 1) (Quote name :: acc)
           else None
         in
         segs i []
