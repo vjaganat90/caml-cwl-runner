@@ -200,7 +200,7 @@ let typed_json_output (o : Schema.output) v =
 (* CommandLineTool.yml, [outputEval], says what [self] is beside a [glob]
    only; with none, as cwltool has it, [self] is the empty array. A File or
    Directory it gives is confined like a glob hit. *)
-let evaluated (module R : Io.READ) ~container outdir roots ctx
+let evaluated (module R : Io.RUNTIME) ~container ~stage_root outdir roots ctx
     (o : Schema.output) expr =
   let* v =
     Expr.Param_ref.eval { ctx with Expr.self = Untyped_tree.Array [] } expr
@@ -208,13 +208,15 @@ let evaluated (module R : Io.READ) ~container outdir roots ctx
   let* v =
     Workdir.confine (module R) roots (Workdir.resolve_paths ~container outdir v)
   in
+  let* v = Workdir.export (module R) stage_root outdir v in
+  let* v = Ty.map_result (listed (module R) roots 0) v in
   typed_json_output o v
 
-let collect_output (module R : Io.READ) ~container outdir roots ctx stdout_name
-    stderr_name (o : Schema.output) =
+let collect_output (module R : Io.RUNTIME) ~container ~stage_root outdir roots
+    ctx stdout_name stderr_name (o : Schema.output) =
   match o.output_binding with
   | Some { glob = []; output_eval = Some expr; _ } when o.stream = No_stream ->
-      evaluated (module R) ~container outdir roots ctx o expr
+      evaluated (module R) ~container ~stage_root outdir roots ctx o expr
   | _ ->
       let* pats = glob_patterns ctx stdout_name stderr_name o in
       if pats = [] then
@@ -405,7 +407,7 @@ let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
             Error.map_list
               (collect_output
                  (module R)
-                 ~container outdir
+                 ~container ~stage_root outdir
                  (outdir :: tmpdir :: sources)
                  ctx stdout_name stderr_name)
               tool.outputs

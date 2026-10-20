@@ -71,6 +71,27 @@ let execute_edges =
       Expect_runtime;
     edge "output_eval_no_json" "output-eval.cwl"
       (Expect_unsupported "outputEval");
+    edge "output_eval_staged_input" "output-eval-input.cwl"
+      ~job:"stdin-job.json"
+      (Expect_ok
+         (fun ann ->
+           lookup_bytes "out" "hello from file\n" ann;
+           lookup_file_basename "out" "stdin-hello.txt" ann;
+           Alcotest.(check (option string))
+             "renamed" (Some "stdin-hello.txt_2")
+             (Option.map Filename.basename (lookup_file_path "out" ann))));
+    edge "output_eval_dir_literal" "output-eval-dir.cwl"
+      ~job:"dir-literal-job.json"
+      (Expect_ok
+         (fun ann ->
+           let rec files v =
+             match Cwl.Type.get "listing" v with
+             | Some (Cwl.Untyped_tree.Array es) -> List.concat_map files es
+             | _ -> [ v ]
+           in
+           match Option.map files (lookup "out" ann) with
+           | Some [ f ] -> Alcotest.(check string) "bytes" "hi\n" (file_bytes f)
+           | _ -> Alcotest.fail "expected one File in the listing"));
     edge "output_eval_no_glob" "output-eval-no-glob.cwl"
       (Expect_ok (lookup_int "n" 3L));
     edge "json_ignores_output_eval" "json-and-eval.cwl"
