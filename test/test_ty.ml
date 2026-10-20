@@ -75,6 +75,10 @@ let type_rows =
     ( "{type: enum, symbols: [a, b]}",
       "c",
       "type error for x: expected enum, got string" );
+    ("{type: record, fields: {a: int, b: 'int?'}}", "{a: 1, c: x}", "ok");
+    ( "{type: record, fields: [{name: a, type: int}]}",
+      "{a: x}",
+      "type error for x: expected record, got record" );
   ]
 
 let type_table () =

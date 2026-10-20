@@ -93,6 +93,8 @@ let rec bind e ctx lead name ty binding v =
   | _, Ty.Union ts, _ -> bind e ctx lead name (member ts v) binding v
   | Untyped_tree.Array xs, Ty.Array { items; item_binding = Some ib }, None ->
       elements e ctx (append_name lead name) name items ib xs
+  | Untyped_tree.Object _, Ty.Record fields, None ->
+      record_fields e ctx (append_name lead name) fields v
   | _, _, None -> Ok []
   | _, _, Some (b : Ty.binding) ->
       let* p = position e ctx b.position in
@@ -114,6 +116,8 @@ and render e ctx key name ty (b : Ty.binding) v =
           xs
     | Untyped_tree.Array xs, _ ->
         elements e ctx key name Ty.String Ty.default_binding xs
+    | Untyped_tree.Object _, Ty.Record fields when b.value_from = None ->
+        record_fields e ctx key fields v
     | _ -> Ok []
   in
   { key; name; words = words b v } :: tail
@@ -127,6 +131,16 @@ and elements e ctx key name items b xs =
       items (Some b) x
   in
   let+ items = Error.map_list element (List.mapi (fun i x -> (i, x)) xs) in
+  List.concat items
+
+(* The items of the fields of the record [v], each bound by its own
+   [inputBinding] after the record's [key] (invocation.md: "Where the input
+   type is a record, ... recursively walk the schema and input object"). *)
+and record_fields e ctx key fields v =
+  let field (f : Ty.field) =
+    bind e ctx key f.name f.ty f.input_binding (Ty.field_value f v)
+  in
+  let+ items = Error.map_list field fields in
   List.concat items
 
 (* The items of the [i]-th entry of [arguments]. *)
