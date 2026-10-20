@@ -235,7 +235,7 @@ let run_edge e () =
     else
       Eio_main.run @@ fun env ->
       let local = Runtime.local env in
-      let docker image = Runtime.docker env image in
+      let docker ~network image = Runtime.docker env ~network image in
       Cwl.run local ~docker (fixture e.tool) (Some (fixture e.job))
   in
   match result with

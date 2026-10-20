@@ -323,7 +323,7 @@ let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
             match docker with
             | None ->
                 Error.runtime "DockerRequirement requires a docker runtime"
-            | Some mk -> Ok (mk image))
+            | Some mk -> Ok (mk ~network:false image))
       in
       let* outdir =
         match outdir with
