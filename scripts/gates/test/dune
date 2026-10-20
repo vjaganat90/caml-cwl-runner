@@ -1,0 +1,4 @@
+(test
+ (name test_gates)
+ (libraries gate alcotest re unix)
+ (deps ../gates.exe))
