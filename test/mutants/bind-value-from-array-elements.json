@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "elements e ctx key name Ty.String Ty.default_binding xs",
+  "new": "elements e ctx key name Ty.String Ty.default_binding (ignore xs; [])",
+  "why": "an array a valueFrom gives is its prefix, then each of its elements"
+}

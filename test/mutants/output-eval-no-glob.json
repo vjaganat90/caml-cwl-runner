@@ -1,0 +1,6 @@
+{
+  "file": "lib/cwl.ml",
+  "old": "output_eval = Some expr; _ } when o.stream = No_stream ->",
+  "new": "output_eval = Some expr; _ } when false ->",
+  "why": "an outputEval with no glob gives the output's value"
+}

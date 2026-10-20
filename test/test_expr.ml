@@ -9,14 +9,21 @@ let prop_param_ref_cores =
       let ctx =
         {
           Cwl.Expr.inputs = [];
-          self = Cwl.Type.Vnull;
+          self = Cwl.Untyped_tree.Null;
           runtime = Cwl.Expr.runtime_with_cores (float_of_int n);
         }
       in
       match Cwl.Expr.Param_ref.eval ctx "$(runtime.cores)" with
-      | Ok (Cwl.Type.Vint k) -> Int64.to_int k = n
-      | Ok (Cwl.Type.Vfloat f) -> int_of_float f = n
+      | Ok (Cwl.Untyped_tree.Int k) -> Int64.to_int k = n
+      | Ok (Cwl.Untyped_tree.Float f) -> int_of_float f = n
       | _ -> false)
+
+let interp_ctx inputs =
+  {
+    Cwl.Expr.inputs;
+    self = Cwl.Untyped_tree.Null;
+    runtime = Cwl.Expr.default_runtime;
+  }
 
 let prop_interpolate =
   let lit =
@@ -53,19 +60,10 @@ let prop_interpolate =
     (fun atoms ->
       let src = "p" ^ String.concat "" (List.map encode atoms) ^ "s" in
       let expect = "p" ^ String.concat "" (List.map decoded atoms) ^ "s" in
-      let ctx =
-        {
-          Cwl.Expr.inputs = [ ("msg", Cwl.Type.Vstring "hi") ];
-          self = Cwl.Type.Vnull;
-          runtime = Cwl.Expr.default_runtime;
-        }
-      in
+      let ctx = interp_ctx [ ("msg", Cwl.Untyped_tree.String "hi") ] in
       match Cwl.Expr.Param_ref.eval ctx src with
-      | Ok (Cwl.Type.Vstring got) -> got = expect
+      | Ok (Cwl.Untyped_tree.String got) -> got = expect
       | _ -> false)
-
-let interp_ctx inputs =
-  { Cwl.Expr.inputs; self = Cwl.Type.Vnull; runtime = Cwl.Expr.default_runtime }
 
 let show_eval = function
   | Ok v -> Cwl.Type.string_of_value v
@@ -73,27 +71,38 @@ let show_eval = function
 
 let interpolation_table () =
   let eval inputs expr = Cwl.Expr.Param_ref.eval (interp_ctx inputs) expr in
-  let msg = [ ("msg", Cwl.Type.Vstring "hi") ] in
-  let n = [ ("n", Cwl.Type.Vint 3L) ] in
+  let msg = [ ("msg", Cwl.Untyped_tree.String "hi") ] in
+  let n = [ ("n", Cwl.Untyped_tree.Int 3L) ] in
   let obj =
     [
       ( "o",
-        Cwl.Type.Vrecord [ ("b", Cwl.Type.Vint 1L); ("a", Cwl.Type.Vint 2L) ] );
+        Cwl.Untyped_tree.Object
+          [ ("b", Cwl.Untyped_tree.Int 1L); ("a", Cwl.Untyped_tree.Int 2L) ] );
     ]
   in
   (match eval n "  $(inputs.n)  " with
-  | Ok (Cwl.Type.Vint 3L) -> ()
+  | Ok (Cwl.Untyped_tree.Int 3L) -> ()
   | other -> Alcotest.failf "lone reference: %s" (show_eval other));
   (match eval msg "$(inputs.msg) tail" with
-  | Ok (Cwl.Type.Vstring "hi tail") -> ()
+  | Ok (Cwl.Untyped_tree.String "hi tail") -> ()
   | other -> Alcotest.failf "trailing text: %s" (show_eval other));
   (match eval obj "pre$(inputs.o)" with
-  | Ok (Cwl.Type.Vstring got) ->
+  | Ok (Cwl.Untyped_tree.String got) ->
       Alcotest.(check string) "sorted keys" "pre{\"a\":2,\"b\":1}" got
   | other -> Alcotest.failf "object: %s" (show_eval other));
   (match eval msg "\\$(inputs.msg)" with
-  | Ok (Cwl.Type.Vstring "$(inputs.msg)") -> ()
+  | Ok (Cwl.Untyped_tree.String "$(inputs.msg)") -> ()
   | other -> Alcotest.failf "escape: %s" (show_eval other));
+  (match
+     eval
+       [ ("o", Cwl.Untyped_tree.Object [ ("b'a", Cwl.Untyped_tree.Int 1L) ]) ]
+       "$(inputs.o['b\\'a'])"
+   with
+  | Ok (Cwl.Untyped_tree.Int 1L) -> ()
+  | other -> Alcotest.failf "escaped quote: %s" (show_eval other));
+  (match eval [] "$(runtime.tmpdirSize)" with
+  | Ok (Cwl.Untyped_tree.Int 1024L) -> ()
+  | other -> Alcotest.failf "reserved storage: %s" (show_eval other));
   (match eval [] "${return 1}" with
   | Error (Cwl.Error.Unsupported { feature = "InlineJavascriptRequirement" }) ->
       ()
@@ -101,7 +110,7 @@ let interpolation_table () =
   (match eval msg "$(inputs.msg" with
   | Error (Cwl.Error.Expr _) -> ()
   | other -> Alcotest.failf "unclosed: %s" (show_eval other));
-  let xs = [ ("xs", Cwl.Type.Varray [ Cwl.Type.Vint 1L ]) ] in
+  let xs = [ ("xs", Cwl.Untyped_tree.Array [ Cwl.Untyped_tree.Int 1L ]) ] in
   match eval xs "$(inputs.xs[99999999999999999999])" with
   | Error (Cwl.Error.Expr _) -> ()
   | other -> Alcotest.failf "index past max_int: %s" (show_eval other)
