@@ -133,8 +133,8 @@ module Type = struct
       to the copy's path as the tool sees it. [path] is the local path; after
       staging, the [basename] of the copy. Every other field ([contents],
       [format], [secondaryFiles], [listing], [dirname] and any extension) passes
-      through as it is. Any other [Object] is a record, which no [t] accepts:
-      [inputs] and [runtime] in expressions, or an undeclared key of
+      through as it is. Any other [Object] is a record: the value of a [Record]
+      type or of [Any], [inputs] and [runtime] in expressions, or an object in
       [cwl.output.json]. *)
 
   (** The [position] of a [binding], its sort key on the command line: an
@@ -169,8 +169,8 @@ module Type = struct
     | Float
     | Double
     | String
-        (** ccr also reads a type it does not implement ([record], a named type)
-            as [String], with a diagnostic. *)
+        (** ccr also reads a named type, which it does not implement, as
+            [String], with a diagnostic. *)
     | File
     | Directory
     | Array of { items : t; item_binding : binding option }
@@ -187,6 +187,15 @@ module Type = struct
     | Any
         (** Schema Salad: "The Any type validates for any non-null value." So
             [Any] is not optional; [Any?] admits null. *)
+    | Record of field list
+        (** Schema Salad [RecordSchema]: an object that is not a File or
+            Directory, whose every field has a value of its type, a missing one
+            counting as null. Keys no field names are allowed and kept. *)
+
+  and field = { name : string; ty : t; input_binding : binding option }
+  (** A CWL [CommandInputRecordField]: the [name] cut like an enum symbol, its
+      type, and its [inputBinding], which binds the field's value under the
+      record's own sort key. *)
 
   type object_ = (string * value) list
   (** Parameters by id, in order: the job's inputs, or the outputs of a run. *)

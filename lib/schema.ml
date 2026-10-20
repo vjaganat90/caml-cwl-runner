@@ -110,6 +110,45 @@ let parse_binding path = function
   | Untyped_tree.Null -> return Ty.default_binding
   | other -> expected ~json_path:path ~what:"inputBinding object" other
 
+(* A list that Schema Salad also accepts as a map (its mapSubject): in map
+   form each key is the entry's id or class, and [read] gets it. *)
+let parse_entries ~what read path = function
+  | Untyped_tree.Null -> return [] (* a null process field is absent *)
+  | Untyped_tree.Array xs -> map_i (fun path -> read path None) path xs
+  | Untyped_tree.Object kvs ->
+      all (List.map (fun (k, v) -> read (child path k) (Some k) v) kvs)
+  | other -> expected ~json_path:path ~what other
+
+(* What every input and output parameter has: an id, which a map key gives
+   when there is one, and a type, read by [parse_type]; a bare string or list
+   is the type alone (map_res.yml: a map item that is not an object is the
+   value of its [mapPredicate]). Returns the id, the type, the fields, and the diagnostics for
+   its keys, which the caller reports after those of its other fields. *)
+let parse_param ~what parse_type ~implemented ~unimplemented path key v =
+  let* kvs, type_path =
+    match v with
+    | Untyped_tree.(String _ | Array _) -> return ([ ("type", v) ], path)
+    | Untyped_tree.Object kvs -> return (kvs, child path "type")
+    | other -> expected ~json_path:path ~what:(what ^ " parameter") other
+  in
+  let* id =
+    match key with Some _ -> return key | None -> string_field path kvs "id"
+  in
+  match (id, List.assoc_opt "type" kvs) with
+  | None, _ -> Error.schema path (what ^ " missing id")
+  | _, None -> Error.schema type_path (what ^ " missing type")
+  | Some id, Some t ->
+      let+ ty = parse_type type_path t in
+      ( shortname id,
+        ty,
+        kvs,
+        diagnostics_for_keys
+          ~implemented:("id" :: "label" :: "doc" :: "type" :: implemented)
+          ~unimplemented:
+            ("secondaryFiles" :: "format" :: "streamable" :: "loadContents"
+           :: unimplemented)
+          path kvs )
+
 let rec parse_cwl_type path = function
   | Untyped_tree.String s -> parse_type_dsl path s
   | Untyped_tree.Array parts ->
@@ -170,48 +209,43 @@ and parse_type_object path kvs =
           ()
       in
       Ty.Enum (List.map symbol symbols)
-  | Some (Untyped_tree.String "record") -> warn [ diag "record" path ] Ty.String
+  | Some (Untyped_tree.String "record") ->
+      let+ fields =
+        field ~json_path:path kvs "fields"
+          (parse_entries ~what:"fields array or map" parse_field)
+          (return [])
+      and+ () =
+        warn
+          (other_keys
+             [ "type"; "fields"; "name"; "label"; "doc" ]
+             diag path kvs)
+          ()
+      in
+      Ty.Record fields
   | Some t -> parse_cwl_type path t
   | None -> Error.schema path "type object missing 'type' field"
 
-(* A list that Schema Salad also accepts as a map (its mapSubject): in map
-   form each key is the entry's id or class, and [read] gets it. *)
-let parse_entries ~what read path = function
-  | Untyped_tree.Null -> return [] (* a null process field is absent *)
-  | Untyped_tree.Array xs -> map_i (fun path -> read path None) path xs
-  | Untyped_tree.Object kvs ->
-      all (List.map (fun (k, v) -> read (child path k) (Some k) v) kvs)
-  | other -> expected ~json_path:path ~what other
-
-(* What every input and output parameter has: an id, which a map key gives
-   when there is one, and a type, read by [parse_type]; a bare string or list
-   is the type alone (map_res.yml: a map item that is not an object is the
-   value of its [mapPredicate]). Returns the id, the type, the fields, and the diagnostics for
-   its keys, which the caller reports after those of its other fields. *)
-let parse_param ~what parse_type ~implemented ~unimplemented path key v =
-  let* kvs, type_path =
-    match v with
-    | Untyped_tree.(String _ | Array _) -> return ([ ("type", v) ], path)
-    | Untyped_tree.Object kvs -> return (kvs, child path "type")
-    | other -> expected ~json_path:path ~what:(what ^ " parameter") other
+(* A record field is a parameter whose id is its [name]. Of an output
+   record's field, [outputBinding] is a diagnostic. *)
+and parse_field path key v =
+  let key =
+    match (key, v) with
+    | None, Untyped_tree.Object kvs -> (
+        match List.assoc_opt "name" kvs with
+        | Some (Untyped_tree.String name) -> Some name
+        | _ -> None)
+    | _ -> key
   in
-  let* id =
-    match key with Some _ -> return key | None -> string_field path kvs "id"
+  let* name, ty, kvs, unimplemented =
+    parse_param ~what:"field" parse_cwl_type
+      ~implemented:[ "name"; "inputBinding" ]
+      ~unimplemented:[ "outputBinding"; "loadListing" ]
+      path key v
   in
-  match (id, List.assoc_opt "type" kvs) with
-  | None, _ -> Error.schema path (what ^ " missing id")
-  | _, None -> Error.schema type_path (what ^ " missing type")
-  | Some id, Some t ->
-      let+ ty = parse_type type_path t in
-      ( shortname id,
-        ty,
-        kvs,
-        diagnostics_for_keys
-          ~implemented:("id" :: "label" :: "doc" :: "type" :: implemented)
-          ~unimplemented:
-            ("secondaryFiles" :: "format" :: "streamable" :: "loadContents"
-           :: unimplemented)
-          path kvs )
+  let+ input_binding =
+    field ~json_path:path kvs "inputBinding" (some parse_binding) (return None)
+  and+ () = warn unimplemented () in
+  { Ty.name = symbol name; ty; input_binding }
 
 let parse_input path key v =
   let* id, ty, kvs, unimplemented =

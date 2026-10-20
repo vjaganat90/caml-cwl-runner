@@ -32,8 +32,8 @@ val argv :
 
     A binding with a [valueFrom] binds what it gives, and a value is rendered by
     its own kind. Its declared type matters only for a union (the first member
-    the value matches, else [string]) and for an array (the type and binding of
-    its items).
+    the value matches, else [string]), for an array (the type and binding of its
+    items) and for a record (its fields).
     - A string, number, File or Directory ([path], else [location]) is its
       [prefix], if any, then its text; one word if [separate] is false.
     - [true] and a record are the [prefix] alone. [false] and null add nothing,
@@ -46,6 +46,10 @@ val argv :
       [Ty.Array]), else by [Ty.default_binding] when the input has a binding; an
       array with neither adds nothing. An item of an array a [valueFrom] gives
       is bound by [Ty.default_binding].
+    - A record is the [prefix] of its binding, if any, then each field that has
+      an [inputBinding], bound like an input after the record's key with the
+      field's name in place of an id. A record input with no binding still binds
+      its fields; a record a [valueFrom] gives does not.
     - A string in [arguments] is evaluated like a [valueFrom], so a [$(...)] in
       it is replaced; a string without one is a word as written.
 
