@@ -103,8 +103,13 @@ val run :
       Directory.
     - A match must resolve, symbolic links followed, into [outdir], the tool's
       [TMPDIR] or an input Directory.
+    - A Directory match gets its [listing]: every entry, dot names included,
+      sorted by name, each subdirectory listed in turn. Each entry must resolve
+      into the same directories, and a tree more than 64 levels deep is an
+      error.
 
-    Every File in the result has its [checksum] and [size].
+    Every File in the result, also inside a [listing], has its [checksum] and
+    [size].
 
     Fails with the errors of {!command_line} for the documents, the job and the
     argv, with [Error.Parse] or [Error.Schema] for a malformed

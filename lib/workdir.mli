@@ -112,11 +112,12 @@ val confine :
     path within the output directory. *)
 
 val checksum : (module Io.READ) -> Ty.value -> (Ty.value, Error.t) result
-(** [checksum (module R) v] fills in, on each File in [v], whichever of
-    [checksum] (["sha1$"] followed by the hex SHA-1 of the contents) and [size]
-    (in bytes) it lacks; a value already present is kept, not verified. The file
-    is read at its [path], else its [location], which is taken as a plain path
-    ([file://] is not stripped); a File with neither is left as it is. Fails
-    with [Error.Runtime] when a file that must be read cannot be (a File with
-    both values is not read). The Process spec makes computing output checksums
-    a condition of passing its conformance suite. *)
+(** [checksum (module R) v] fills in, on each File in [v] and in the [listing]
+    of each Directory in it, at any depth, whichever of [checksum] (["sha1$"]
+    followed by the hex SHA-1 of the contents) and [size] (in bytes) it lacks; a
+    value already present is kept, not verified. The file is read at its [path],
+    else its [location], which is taken as a plain path ([file://] is not
+    stripped); a File with neither is left as it is. Fails with [Error.Runtime]
+    when a file that must be read cannot be (a File with both values is not
+    read). The Process spec makes computing output checksums a condition of
+    passing its conformance suite. *)

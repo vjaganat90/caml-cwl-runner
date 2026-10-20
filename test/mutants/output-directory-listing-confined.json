@@ -1,0 +1,6 @@
+{
+  "file": "lib/cwl.ml",
+  "old": "let* () = R.confined roots p in",
+  "new": "let* () = Ok () in",
+  "why": "each entry of an output Directory's listing is confined to the legal roots, as a glob hit is"
+}

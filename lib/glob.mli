@@ -29,6 +29,11 @@ include module type of Data.Glob
     absolute path of [p] with symlinks resolved, or an [Error]. [Io.READ]
     includes it, so every runtime is an [FS]. *)
 
+val max_glob_depth : int
+(** How many directory levels a walk goes down before it fails with
+    [Error.Runtime]: a deeper tree is taken for a symlink loop. {!glob} and the
+    listing of an output Directory both stop there. *)
+
 val glob :
   (module FS) ->
   ?roots:string list ->
