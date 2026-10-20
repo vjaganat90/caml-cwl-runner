@@ -1,24 +1,10 @@
-(** Shared process vocabulary and the parsers both process classes use: inputs,
-    outputs, requirements, types, bindings. Does not parse a whole
-    CommandLineTool or Workflow and does not spawn. *)
-
 include Data.Schema
 open Error.Syntax
-
-let parse_cwl_version kvs =
-  match List.assoc_opt "cwlVersion" kvs with
-  | None -> Ok "v1.2"
-  | Some (Untyped_tree.String (("v1.0" | "v1.1" | "v1.2") as v)) -> Ok v
-  | Some (Untyped_tree.String s) ->
-      Error.schema "cwlVersion" ("unsupported cwlVersion " ^ s)
-  | Some other ->
-      Error.schema "cwlVersion"
-        (Format.asprintf "expected string, got %a" Untyped_tree.pp other)
 
 let diag ?(in_requirements = false) feature path =
   Error.unimplemented ~in_requirements feature path
 
-let child path name = if path = "" then name else path ^ "." ^ name
+let child = Untyped_tree.child
 let nth path i = Printf.sprintf "%s[%d]" path i
 
 let map_i f xs =
@@ -30,13 +16,45 @@ let map_i f xs =
   in
   go 0 [] [] xs
 
-let strings ~json_path ~expected xs =
+let expected ~json_path ~what value =
+  Error.schema json_path (Untyped_tree.expected what value)
+
+let parse_string ~json_path = function
+  | Untyped_tree.String s -> Ok s
+  | other -> expected ~json_path ~what:"string" other
+
+let parse_cwl_version kvs =
+  match List.assoc_opt "cwlVersion" kvs with
+  | None -> Ok "v1.2"
+  | Some v -> (
+      let* s = parse_string ~json_path:"cwlVersion" v in
+      match s with
+      | "v1.0" | "v1.1" | "v1.2" -> Ok s
+      | s -> Error.schema "cwlVersion" ("unsupported cwlVersion " ^ s))
+
+let parse_int json_path = function
+  | Untyped_tree.Int n -> Ok (Int64.to_int n)
+  | other -> expected ~json_path ~what:"int" other
+
+let parse_position ~json_path = function
+  | Untyped_tree.String s -> Ok (Ty.Expr s)
+  | other -> (
+      match parse_int json_path other with
+      | Ok n -> Ok (Ty.Pos n)
+      | Error _ -> expected ~json_path ~what:"int or expression" other)
+
+let field parse ~json_path kvs key =
+  match List.assoc_opt key kvs with
+  | None -> Ok (None, [])
+  | Some v ->
+      let+ x, diags = parse ~json_path:(child json_path key) v in
+      (Some x, diags)
+
+let strings ~json_path ~expected:what xs =
   let rec go acc = function
     | [] -> Ok (List.rev acc)
     | Untyped_tree.String s :: rest -> go (s :: acc) rest
-    | other :: _ ->
-        Error.schema json_path
-          (Format.asprintf "expected %s, got %a" expected Untyped_tree.pp other)
+    | other :: _ -> expected ~json_path ~what other
   in
   go [] xs
 
@@ -51,7 +69,7 @@ let map_assoc f kvs =
 
 let parse_opt parse key kvs =
   match List.assoc_opt key kvs with
-  | None -> Ok ([], [])
+  | None | Some Untyped_tree.Null -> Ok ([], [])
   | Some v -> parse ~json_path:key v
 
 let shortname id =
@@ -61,6 +79,10 @@ let shortname id =
 
 let is_namespaced key = String.contains key ':'
 
+(* One pair of key lists per kind of object. [implemented_*] keys need no
+   diagnostic, even those whose value is dropped (like [label] and [doc]).
+   [known_*] adds the CWL fields ccr does not implement. [diagnostics_for_keys]
+   reports each key outside [implemented_*] as known, unknown or an extension. *)
 let implemented_input_keys =
   [ "id"; "label"; "doc"; "type"; "default"; "inputBinding" ]
 
@@ -105,28 +127,19 @@ let rec parse_binding ~json_path v =
       let position =
         match List.assoc_opt "position" kvs with
         | None -> Ok Ty.default_binding.position
-        | Some (Untyped_tree.Int n) -> Ok (Ty.Pos (Int64.to_int n))
-        | Some (Untyped_tree.Float f) when Float.is_integer f ->
-            Ok (Ty.Pos (int_of_float f))
-        | Some (Untyped_tree.String s) -> Ok (Ty.Expr s)
-        | Some other ->
-            Error.schema (json_path ^ ".position")
-              (Format.asprintf "expected int or expression, got %a"
-                 Untyped_tree.pp other)
+        | Some v -> parse_position ~json_path:(json_path ^ ".position") v
       in
       let* position in
-      let prefix = Untyped_tree.string_field kvs "prefix" in
-      let separate =
-        Option.value (Untyped_tree.bool_field kvs "separate") ~default:true
+      let* prefix = Untyped_tree.string_field ~json_path kvs "prefix" in
+      let* separate = Untyped_tree.bool_field ~json_path kvs "separate" in
+      let separate = Option.value separate ~default:true in
+      let* item_separator =
+        Untyped_tree.string_field ~json_path kvs "itemSeparator"
       in
-      let item_separator = Untyped_tree.string_field kvs "itemSeparator" in
-      let value_from = Untyped_tree.string_field kvs "valueFrom" in
+      let* value_from = Untyped_tree.string_field ~json_path kvs "valueFrom" in
       Ok ({ Ty.position; prefix; separate; item_separator; value_from }, diags)
   | Untyped_tree.Null -> Ok (Ty.default_binding, [])
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected inputBinding object, got %a" Untyped_tree.pp
-           other)
+  | other -> expected ~json_path ~what:"inputBinding object" other
 
 and parse_cwl_type ~json_path v =
   match v with
@@ -135,9 +148,7 @@ and parse_cwl_type ~json_path v =
       let+ ts, diags = map_i (fun _i x -> parse_cwl_type ~json_path x) parts in
       (Ty.Union ts, diags)
   | Untyped_tree.Object kvs -> parse_type_object ~json_path kvs
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected a CWL type, got %a" Untyped_tree.pp other)
+  | other -> expected ~json_path ~what:"a CWL type" other
 
 and parse_type_dsl ~json_path s =
   if String.ends_with ~suffix:"[]" s then
@@ -165,20 +176,13 @@ and parse_type_dsl ~json_path s =
 and parse_type_object ~json_path kvs =
   match List.assoc_opt "type" kvs with
   | Some (Untyped_tree.String "array") ->
-      let items =
+      let* items, item_diags =
         match List.assoc_opt "items" kvs with
         | None -> Error.schema (json_path ^ ".items") "array type missing items"
         | Some v -> parse_cwl_type ~json_path:(json_path ^ ".items") v
       in
-      let* items, item_diags = items in
       let* item_binding, bind_diags =
-        match List.assoc_opt "inputBinding" kvs with
-        | None -> Ok (None, [])
-        | Some v ->
-            let* b, d =
-              parse_binding ~json_path:(json_path ^ ".inputBinding") v
-            in
-            Ok (Some b, d)
+        field parse_binding ~json_path kvs "inputBinding"
       in
       let extra =
         List.filter_map
@@ -198,82 +202,62 @@ and parse_type_object ~json_path kvs =
   | Some t -> parse_cwl_type ~json_path t
   | None -> Error.schema json_path "type object missing 'type' field"
 
-let parse_input ~json_path ~id_opt v =
-  match v with
-  | Untyped_tree.String s ->
-      let id = match id_opt with Some id -> id | None -> "" in
-      if id = "" then Error.schema json_path "input missing id"
-      else
-        let* ty, diags = parse_type_dsl ~json_path s in
-        Ok
-          ( {
-              id = shortname id;
-              ty;
-              default = None;
-              input_binding = None;
-              unimplemented = [];
-            },
-            diags )
-  | Untyped_tree.Object kvs ->
-      let id =
-        match id_opt with
-        | Some id -> Some id
-        | None -> Untyped_tree.string_field kvs "id"
-      in
-      let* id =
-        match id with
-        | Some id -> Ok (shortname id)
-        | None -> Error.schema json_path "input missing id"
-      in
-      let* ty, ty_diags =
-        match List.assoc_opt "type" kvs with
-        | None -> Error.schema (child json_path "type") "input missing type"
-        | Some t -> parse_cwl_type ~json_path:(child json_path "type") t
-      in
-      let* default =
-        match List.assoc_opt "default" kvs with
-        | None -> Ok None
-        | Some d ->
-            let+ v = Ty.value_of_tree id ty d in
-            Some v
-      in
-      let* input_binding, bind_diags =
-        match List.assoc_opt "inputBinding" kvs with
-        | None -> Ok (None, [])
-        | Some b ->
-            let* b, d =
-              parse_binding ~json_path:(child json_path "inputBinding") b
-            in
-            Ok (Some b, d)
-      in
-      let unimplemented =
-        diagnostics_for_keys ~implemented:implemented_input_keys
-          ~known:known_input_keys ~json_path kvs
-      in
-      Ok
-        ( { id; ty; default; input_binding; unimplemented },
-          ty_diags @ bind_diags @ unimplemented )
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected input parameter, got %a" Untyped_tree.pp
-           other)
+(* What every input and output parameter has: an id, which a map key gives
+   when there is one, and a type node with its path. A bare string in map form
+   is the type alone. Returns the id, the type node, its path and the fields. *)
+let parse_param what ~json_path id_opt v =
+  let* kvs, type_path =
+    match v with
+    | Untyped_tree.String _ -> Ok ([ ("type", v) ], json_path)
+    | Untyped_tree.Object kvs -> Ok (kvs, child json_path "type")
+    | other -> expected ~json_path ~what:(what ^ " parameter") other
+  in
+  let* id =
+    match id_opt with
+    | Some id -> Ok (Some id)
+    | None -> Untyped_tree.string_field ~json_path kvs "id"
+  in
+  match (id, List.assoc_opt "type" kvs) with
+  | None, _ -> Error.schema json_path (what ^ " missing id")
+  | _, None -> Error.schema type_path (what ^ " missing type")
+  | Some id, Some t -> Ok (shortname id, t, type_path, kvs)
 
-let parse_inputs ~json_path v =
-  match v with
+(* A parameter list: an array of parameters with ids, or a map from id to
+   parameter. *)
+let parse_params what parse ~json_path = function
   | Untyped_tree.Array xs ->
-      map_i
-        (fun i x -> parse_input ~json_path:(nth json_path i) ~id_opt:None x)
-        xs
+      map_i (fun i x -> parse what ~json_path:(nth json_path i) None x) xs
   | Untyped_tree.Object kvs ->
       map_assoc
-        (fun k v ->
-          parse_input ~json_path:(child json_path k) ~id_opt:(Some k) v)
+        (fun k v -> parse what ~json_path:(child json_path k) (Some k) v)
         kvs
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected inputs array or map, got %a" Untyped_tree.pp
-           other)
+  | other -> expected ~json_path ~what:(what ^ "s array or map") other
 
+let parse_input what ~json_path id_opt v =
+  let* id, t, type_path, kvs = parse_param what ~json_path id_opt v in
+  let* ty, ty_diags = parse_cwl_type ~json_path:type_path t in
+  let* default =
+    Option.fold ~none:(Ok None)
+      ~some:(fun d ->
+        let+ v = Ty.value_of_tree id ty d in
+        Some v)
+      (List.assoc_opt "default" kvs)
+  in
+  let+ input_binding, bind_diags =
+    field parse_binding ~json_path kvs "inputBinding"
+  in
+  let unimplemented =
+    diagnostics_for_keys ~implemented:implemented_input_keys
+      ~known:known_input_keys ~json_path kvs
+  in
+  ( { id; ty; default; input_binding; unimplemented },
+    ty_diags @ bind_diags @ unimplemented )
+
+let parse_inputs = parse_params "input" parse_input
+
+(* Only [coresMin] is kept, and only as a number: any other value of it (an
+   expression, say) is dropped without a diagnostic. Any other field but
+   [class] is a diagnostic. *)
 let parse_resource ~json_path ~in_requirements kvs =
   let cores_min =
     match List.assoc_opt "coresMin" kvs with
@@ -389,10 +373,7 @@ let parse_requirement ~json_path ~in_requirements v =
           let diag = diag ~in_requirements class_ json_path in
           Ok (Unimplemented { class_; in_requirements }, [ diag ])
       | _ -> Error.schema json_path "requirement missing class")
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected requirement object, got %a" Untyped_tree.pp
-           other)
+  | other -> expected ~json_path ~what:"requirement object" other
 
 let one_docker json_path (reqs, diags) =
   let n =
@@ -432,10 +413,7 @@ let parse_req_list ~json_path ~in_requirements v =
           kvs
       in
       one_docker json_path parsed
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected requirements/hints list or map, got %a"
-           Untyped_tree.pp other)
+  | other -> expected ~json_path ~what:"requirements/hints list or map" other
 
 let first_unimplemented reqs =
   List.find_map
@@ -449,10 +427,7 @@ let parse_glob_list ~json_path v =
   | Untyped_tree.Null -> Ok []
   | Untyped_tree.String s -> Ok [ s ]
   | Untyped_tree.Array xs -> strings ~json_path ~expected:"glob string" xs
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected glob string or array, got %a" Untyped_tree.pp
-           other)
+  | other -> expected ~json_path ~what:"glob string or array" other
 
 let parse_output_binding ~json_path v =
   match v with
@@ -462,16 +437,13 @@ let parse_output_binding ~json_path v =
           ~known:known_output_binding_keys ~json_path kvs
       in
       let* glob =
-        match List.assoc_opt "glob" kvs with
-        | None -> Ok []
-        | Some g -> parse_glob_list ~json_path:(child json_path "glob") g
+        Option.fold ~none:(Ok [])
+          ~some:(parse_glob_list ~json_path:(child json_path "glob"))
+          (List.assoc_opt "glob" kvs)
       in
       Ok ({ glob; unimplemented = diags }, diags)
   | Untyped_tree.Null -> Ok ({ glob = []; unimplemented = [] }, [])
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected outputBinding object, got %a" Untyped_tree.pp
-           other)
+  | other -> expected ~json_path ~what:"outputBinding object" other
 
 let parse_output_type ~json_path v =
   match v with
@@ -481,76 +453,30 @@ let parse_output_type ~json_path v =
       let+ t, d = parse_cwl_type ~json_path v in
       (t, No_stream, d)
 
-let parse_output ~json_path ~id_opt v =
-  match v with
-  | Untyped_tree.String s ->
-      let id = match id_opt with Some id -> id | None -> "" in
-      if id = "" then Error.schema json_path "output missing id"
-      else
-        let* ty, stream, diags =
-          parse_output_type ~json_path (Untyped_tree.String s)
-        in
-        Ok
-          ( {
-              id = shortname id;
-              ty;
-              output_binding = None;
-              stream;
-              unimplemented = [];
-            },
-            diags )
-  | Untyped_tree.Object kvs ->
-      let id =
-        match id_opt with
-        | Some id -> Some id
-        | None -> Untyped_tree.string_field kvs "id"
-      in
-      let* id =
-        match id with
-        | Some id -> Ok (shortname id)
-        | None -> Error.schema json_path "output missing id"
-      in
-      let* ty, stream, ty_diags =
-        match List.assoc_opt "type" kvs with
-        | None -> Error.schema (child json_path "type") "output missing type"
-        | Some t -> parse_output_type ~json_path:(child json_path "type") t
-      in
-      let* output_binding, bind_diags =
-        match List.assoc_opt "outputBinding" kvs with
-        | None -> Ok (None, [])
-        | Some b ->
-            let* b, d =
-              parse_output_binding
-                ~json_path:(child json_path "outputBinding")
-                b
-            in
-            Ok (Some b, d)
-      in
-      let unimplemented =
-        diagnostics_for_keys ~implemented:implemented_output_keys
-          ~known:known_output_keys ~json_path kvs
-      in
-      Ok
-        ( { id; ty; output_binding; stream; unimplemented },
-          ty_diags @ bind_diags @ unimplemented )
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected output parameter, got %a" Untyped_tree.pp
-           other)
+let parse_output what ~json_path id_opt v =
+  let* id, t, type_path, kvs = parse_param what ~json_path id_opt v in
+  let* ty, stream, ty_diags = parse_output_type ~json_path:type_path t in
+  let+ output_binding, bind_diags =
+    field parse_output_binding ~json_path kvs "outputBinding"
+  in
+  let unimplemented =
+    diagnostics_for_keys ~implemented:implemented_output_keys
+      ~known:known_output_keys ~json_path kvs
+  in
+  ( { id; ty; output_binding; stream; unimplemented },
+    ty_diags @ bind_diags @ unimplemented )
 
-let parse_outputs ~json_path v =
-  match v with
-  | Untyped_tree.Null -> Ok ([], [])
-  | Untyped_tree.Array xs ->
-      map_i
-        (fun i x -> parse_output ~json_path:(nth json_path i) ~id_opt:None x)
-        xs
-  | Untyped_tree.Object kvs ->
-      map_assoc
-        (fun k v ->
-          parse_output ~json_path:(child json_path k) ~id_opt:(Some k) v)
-        kvs
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected outputs array or map, got %a" Untyped_tree.pp
-           other)
+let parse_outputs = parse_params "output" parse_output
+
+(* The fields every process class has. Diagnostics come in reading order. *)
+let parse_process kvs =
+  let* inputs, in_diags = parse_opt parse_inputs "inputs" kvs in
+  let* outputs, out_diags = parse_opt parse_outputs "outputs" kvs in
+  let* requirements, req_diags =
+    parse_opt (parse_req_list ~in_requirements:true) "requirements" kvs
+  in
+  let+ hints, hint_diags =
+    parse_opt (parse_req_list ~in_requirements:false) "hints" kvs
+  in
+  ( (inputs, outputs, requirements, hints),
+    in_diags @ out_diags @ req_diags @ hint_diags )
