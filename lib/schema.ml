@@ -60,6 +60,12 @@ let shortname id =
   | None -> Filename.basename id
   | Some i -> String.sub id (i + 1) (String.length id - i - 1)
 
+(* An enum symbol is an IRI; a job names it by its last segment. *)
+let symbol s =
+  match List.rev (String.split_on_char '/' (shortname s)) with
+  | last :: _ -> last
+  | [] -> s
+
 let is_namespaced key = String.contains key ':'
 
 (* A diagnostic, made by [report], for each key of [kvs] outside [allowed]. *)
@@ -150,8 +156,21 @@ and parse_type_object path kvs =
           ()
       in
       Ty.Array { items; item_binding }
-  | Some (Untyped_tree.String (("record" | "enum") as feature)) ->
-      warn [ diag feature path ] Ty.String
+  | Some (Untyped_tree.String "enum") ->
+      let missing =
+        Error.schema (child path "symbols") "enum type missing symbols"
+      in
+      let+ symbols =
+        field ~json_path:path kvs "symbols" (strings ~what:"symbol") missing
+      and+ () =
+        warn
+          (other_keys
+             [ "type"; "symbols"; "name"; "label"; "doc" ]
+             diag path kvs)
+          ()
+      in
+      Ty.Enum (List.map symbol symbols)
+  | Some (Untyped_tree.String "record") -> warn [ diag "record" path ] Ty.String
   | Some t -> parse_cwl_type path t
   | None -> Error.schema path "type object missing 'type' field"
 

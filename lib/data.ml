@@ -169,8 +169,8 @@ module Type = struct
     | Float
     | Double
     | String
-        (** ccr also reads a type it does not implement ([record], [enum], a
-            named type) as [String], with a diagnostic. *)
+        (** ccr also reads a type it does not implement ([record], a named type)
+            as [String], with a diagnostic. *)
     | File
     | Directory
     | Array of { items : t; item_binding : binding option }
@@ -180,6 +180,10 @@ module Type = struct
     | Union of t list
         (** Any one of the listed types: a type list in the document, or [T?],
             which is [Union [T; Null]]. *)
+    | Enum of string list
+        (** Schema Salad [EnumSchema]: a string that is one of the [symbols].
+            Each symbol is kept as its last [/] segment after any [#], so
+            [#tool/x/a] is [a], which a job value names. *)
     | Any
         (** Schema Salad: "The Any type validates for any non-null value." So
             [Any] is not optional; [Any?] admits null. *)
