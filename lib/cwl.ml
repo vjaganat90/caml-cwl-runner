@@ -41,16 +41,26 @@ let command_line (module F : Untyped_tree.FILE) tool_path job_path =
   let+ argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
   { Error.value = argv; diagnostics }
 
-let eval_filename ctx s =
+(* The string a [stdin], [stdout] or [stderr] expression gives, if [check]
+   accepts it. *)
+let eval_filename check ctx s =
   let t = String.trim s in
   let* v = Expr.Param_ref.eval ctx t in
   match v with
-  | Untyped_tree.String name ->
-      Workdir.safe_leaf ~what:"stdout/stderr/stdin filename" name
+  | Untyped_tree.String name -> check name
   | other ->
       Error.runtime
         (Printf.sprintf "filename expression must yield string, got %s"
            (Ty.value_kind other))
+
+(* CommandLineTool.yml, [stdin]: "A path to a file whose contents must be
+   piped into the command's standard input stream." Any path, then: a
+   relative one is taken from the designated output directory, as the tool
+   would, and one under a container's maps to the host. *)
+let stdin_path ctx ~container outdir s =
+  let+ p = eval_filename Result.ok ctx s in
+  let p = Workdir.relocate ~container ~host:outdir p in
+  if Filename.is_relative p then Filename.concat outdir p else p
 
 let eval_glob_pattern ctx pat =
   let* v = Expr.Param_ref.eval ctx pat in
@@ -315,10 +325,11 @@ let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
       let runtime = Expr.runtime_with ~outdir:container ~tmpdir ~cores in
       let ctx = { Expr.inputs; self = Untyped_tree.Null; runtime } in
       let* argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
+      let stream_leaf = Workdir.safe_leaf ~what:"stdout/stderr filename" in
       let stream_filename named stream default =
         match named with
         | Some s ->
-            let+ n = eval_filename ctx s in
+            let+ n = eval_filename stream_leaf ctx s in
             Some n
         | None ->
             if
@@ -337,9 +348,7 @@ let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
       let* stdin_file =
         match tool.stdin with
         | None -> Ok None
-        | Some s ->
-            let+ n = eval_filename ctx s in
-            Some (Filename.concat outdir n)
+        | Some s -> Result.map Option.some (stdin_path ctx ~container outdir s)
       in
       let stdout_file = Option.map (Filename.concat outdir) stdout_name in
       let stderr_file = Option.map (Filename.concat outdir) stderr_name in
