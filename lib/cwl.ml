@@ -21,6 +21,12 @@ let split_fragment path =
       let frag = String.sub path (i + 1) (String.length path - i - 1) in
       if file = "" || frag = "" then (path, None) else (file, Some frag)
 
+(* [f k v] in place of each value [v] of an object, in order. *)
+let map_object f =
+  Error.map_list (fun (k, v) ->
+      let+ v = f k v in
+      (k, v))
+
 let load_command_line_tool (module F : Untyped_tree.FILE) tool_path =
   let path, fragment = split_fragment tool_path in
   let* tree = Untyped_tree.load (module F) path in
@@ -169,12 +175,36 @@ let rec listed (module R : Io.READ) roots depth v =
       Ty.set "listing" (Untyped_tree.Array entries) v
   | _ -> Ok v
 
-let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
+(* The directories of a run: the host [outdir], the [container] path the tool
+   sees it at, the tool's [tmpdir], and the [stage_root] inputs are staged
+   under. *)
+type dirs = {
+  outdir : string;
+  container : string;
+  tmpdir : string;
+  stage_root : string;
+}
+
+(* What a finished command hands to output collection: the expression
+   context, the stdout and stderr file names, and the [roots] an output is
+   confined to. *)
+type ran = {
+  ctx : Expr.context;
+  stdout_name : string option;
+  stderr_name : string option;
+  roots : string list;
+}
+
+let glob_patterns ran (o : Schema.output) =
   match o.stream with
   | Schema.Stdout -> (
-      match stdout_name with Some n -> Ok [ n ] | None -> Ok [ "cwl.stdout" ])
+      match ran.stdout_name with
+      | Some n -> Ok [ n ]
+      | None -> Ok [ "cwl.stdout" ])
   | Schema.Stderr -> (
-      match stderr_name with Some n -> Ok [ n ] | None -> Ok [ "cwl.stderr" ])
+      match ran.stderr_name with
+      | Some n -> Ok [ n ]
+      | None -> Ok [ "cwl.stderr" ])
   | Schema.No_stream -> (
       match o.output_binding with
       | None | Some { glob = []; _ } -> Ok []
@@ -187,7 +217,7 @@ let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
           with
           | Some d -> Error.unsupported d.Error.feature
           | None ->
-              let+ nested = Error.map_list (eval_glob_pattern ctx) glob in
+              let+ nested = Error.map_list (eval_glob_pattern ran.ctx) glob in
               List.concat nested))
 
 let typed_json_output (o : Schema.output) v =
@@ -200,37 +230,33 @@ let typed_json_output (o : Schema.output) v =
 (* CommandLineTool.yml, [outputEval], says what [self] is beside a [glob]
    only; with none, as cwltool has it, [self] is the empty array. A File or
    Directory it gives is confined like a glob hit. *)
-let evaluated (module R : Io.RUNTIME) ~container ~stage_root outdir roots ctx
-    (o : Schema.output) expr =
-  let* v =
-    Expr.Param_ref.eval { ctx with Expr.self = Untyped_tree.Array [] } expr
-  in
-  let* v =
-    Workdir.confine (module R) roots (Workdir.resolve_paths ~container outdir v)
-  in
-  let* v = Workdir.export (module R) stage_root outdir v in
-  let* v = Ty.map_result (listed (module R) roots 0) v in
+let evaluated (module R : Io.RUNTIME) dirs ran (o : Schema.output) expr =
+  let ctx = { ran.ctx with Expr.self = Untyped_tree.Array [] } in
+  let* v = Expr.Param_ref.eval ctx expr in
+  let v = Workdir.resolve_paths ~container:dirs.container dirs.outdir v in
+  let* v = Workdir.confine (module R) ran.roots v in
+  let* v = Workdir.export (module R) dirs.stage_root dirs.outdir v in
+  let* v = Ty.map_result (listed (module R) ran.roots 0) v in
   typed_json_output o v
 
-let collect_output (module R : Io.RUNTIME) ~container ~stage_root outdir roots
-    ctx stdout_name stderr_name (o : Schema.output) =
+let collect_output (module R : Io.RUNTIME) dirs ran (o : Schema.output) =
   match o.output_binding with
   | Some { glob = []; output_eval = Some expr; _ } when o.stream = No_stream ->
-      evaluated (module R) ~container ~stage_root outdir roots ctx o expr
+      evaluated (module R) dirs ran o expr
   | _ ->
-      let* pats = glob_patterns ctx stdout_name stderr_name o in
+      let* pats = glob_patterns ran o in
       if pats = [] then
         let+ v = absent o.ty (Printf.sprintf "output '%s' has no glob" o.id) in
         (o.id, v)
       else
-        let pats =
-          List.map
-            (fun pat ->
-              Workdir.relocate ~container ~host:outdir (String.trim pat))
-            pats
+        let { outdir; container; _ } = dirs and roots = ran.roots in
+        let relocate pat =
+          Workdir.relocate ~container ~host:outdir (String.trim pat)
         in
         let* groups =
-          Error.map_list (Glob.glob (module R) ~roots outdir) pats
+          Error.map_list
+            (Glob.glob (module R) ~roots outdir)
+            (List.map relocate pats)
         in
         let hits = List.concat groups |> List.sort_uniq String.compare in
         let* _ = Error.map_list (R.confined roots) hits in
@@ -294,12 +320,8 @@ let job_inputs (module R : Io.READ) tool tool_path job =
   (* A key no input declares is dropped by the check, so it is not read. *)
   let declared k = List.exists (fun (s : Type.input_spec) -> s.id = k) specs in
   let* job_raw =
-    Error.map_list
-      (fun (k, v) ->
-        if declared k then
-          let+ v = Workdir.locate job_dir v in
-          (k, v)
-        else Ok (k, v))
+    map_object
+      (fun k v -> if declared k then Workdir.locate job_dir v else Ok v)
       job_raw
   in
   Type.apply_defaults_and_check specs job_raw
@@ -314,109 +336,105 @@ let runtime_for (module Local : Io.RUNTIME) docker tool =
       | Some mk ->
           Ok (mk ~network:(Command_line_tool.network_access tool) image))
 
-(* Runs [f] on the tool's TMPDIR and the staging root: two fresh
-   directories, by their real paths, removed when [f] returns or raises
-   unless [rm_tmpdir] is [false]. *)
-let with_scratch (module R : Io.RUNTIME) rm_tmpdir f =
+(* Runs [f] on the {!dirs} of a run in [outdir]: the tool's TMPDIR and the
+   staging root are two fresh directories, by their real paths, removed when
+   [f] returns or raises unless [rm_tmpdir] is [false]. *)
+let with_scratch (module R : Io.RUNTIME) rm_tmpdir tool outdir f =
   let fresh prefix = Result.bind (R.mkdtemp prefix) R.realpath in
   let* tmpdir = fresh "ccr-tmp-" in
   let* stage_root = fresh "ccr-stg-" in
   Fun.protect ~finally:(fun () ->
       if rm_tmpdir then
         List.iter (fun d -> ignore (R.remove_tree d)) [ tmpdir; stage_root ])
-  @@ fun () -> f tmpdir stage_root
+  @@ fun () ->
+  f { outdir; container = designated_outdir tool outdir; tmpdir; stage_root }
+
+(* The tool at [tool_path] and its diagnostics, unless it requires a feature
+   ccr does not implement. *)
+let load (module F : Untyped_tree.FILE) tool_path =
+  let* tool, diagnostics = load_command_line_tool (module F) tool_path in
+  match Schema.first_unimplemented tool.requirements with
+  | Some feature -> Error.unsupported feature
+  | None -> Ok (tool, diagnostics)
+
+(* Runs [tool] on [inputs] in [dirs]: stages the inputs, builds the command
+   line and the stdio files, spawns it and checks its exit code. *)
+let execute (module R : Io.RUNTIME) (tool : Command_line_tool.t) inputs dirs =
+  let { outdir; container; tmpdir; stage_root } = dirs in
+  let cores = Option.value (Command_line_tool.cores_min tool) ~default:1. in
+  let sources = stage_root :: Workdir.sources inputs in
+  let* inputs = Workdir.stage (module R) stage_root inputs in
+  let runtime = Expr.runtime_with ~outdir:container ~tmpdir ~cores in
+  let ctx = { Expr.inputs; self = Untyped_tree.Null; runtime } in
+  let* argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
+  let stream_leaf = Workdir.safe_leaf ~what:"stdout/stderr filename" in
+  let stream_filename named stream default =
+    match named with
+    | Some s ->
+        let+ n = eval_filename stream_leaf ctx s in
+        Some n
+    | None ->
+        if
+          List.exists
+            (fun (o : Schema.output) -> o.stream = stream)
+            tool.outputs
+        then Ok (Some default)
+        else Ok None
+  in
+  let* stdout_name = stream_filename tool.stdout Schema.Stdout "cwl.stdout" in
+  let* stderr_name = stream_filename tool.stderr Schema.Stderr "cwl.stderr" in
+  let* stdin_file =
+    match tool.stdin with
+    | None -> Ok None
+    | Some s -> Result.map Option.some (stdin_path ctx ~container outdir s)
+  in
+  let stdout_file = Option.map (Filename.concat outdir) stdout_name in
+  let stderr_file = Option.map (Filename.concat outdir) stderr_name in
+  let* code =
+    R.spawn
+      { home = container; tmpdir; inputs = sources }
+      outdir
+      { stdin_file; stdout_file; stderr_file }
+      argv
+  in
+  if not (List.mem code tool.success_codes) then
+    Error.runtime (Printf.sprintf "command failed with exit code %d" code)
+  else Ok { ctx; stdout_name; stderr_name; roots = outdir :: tmpdir :: sources }
+
+(* The output object of [tool] after [ran]: from [cwl.output.json] when the
+   tool wrote one, else from its declared outputs; then checksummed. *)
+let collect (module R : Io.RUNTIME) (tool : Command_line_tool.t) dirs ran =
+  let { outdir; container; _ } = dirs in
+  let json_path = Filename.concat outdir "cwl.output.json" in
+  let* outputs =
+    if R.exists json_path then
+      let* s = R.read_file json_path in
+      let* tree = Untyped_tree.of_yaml_string ~path:json_path s in
+      let* obj = Type.object_of_tree tree in
+      let obj =
+        List.map
+          (fun (k, v) -> (k, Workdir.resolve_paths ~container outdir v))
+          obj
+      in
+      let* obj = check_json_outputs tool.outputs obj in
+      map_object (fun _ -> Workdir.confine (module R) [ outdir ]) obj
+    else Error.map_list (collect_output (module R) dirs ran) tool.outputs
+  in
+  map_object (fun _ -> Workdir.checksum (module R)) outputs
 
 let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
     tool_path job =
-  let* tool, diagnostics = load_command_line_tool (module Local) tool_path in
-  match Schema.first_unimplemented tool.requirements with
-  | Some feature -> Error.unsupported feature
-  | None ->
-      let* (module R : Io.RUNTIME) = runtime_for (module Local) docker tool in
-      let* outdir =
-        match outdir with
-        | Some d ->
-            let* () = R.mkdir_p d in
-            R.abspath d
-        | None -> R.mkdtemp "ccr-"
-      in
-      with_scratch (module R) rm_tmpdir @@ fun tmpdir stage_root ->
-      let* inputs = job_inputs (module Local) tool tool_path job in
-      let cores = Option.value (Command_line_tool.cores_min tool) ~default:1. in
-      let container = designated_outdir tool outdir in
-      let sources = stage_root :: Workdir.sources inputs in
-      let* inputs = Workdir.stage (module R) stage_root inputs in
-      let runtime = Expr.runtime_with ~outdir:container ~tmpdir ~cores in
-      let ctx = { Expr.inputs; self = Untyped_tree.Null; runtime } in
-      let* argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
-      let stream_leaf = Workdir.safe_leaf ~what:"stdout/stderr filename" in
-      let stream_filename named stream default =
-        match named with
-        | Some s ->
-            let+ n = eval_filename stream_leaf ctx s in
-            Some n
-        | None ->
-            if
-              List.exists
-                (fun (o : Schema.output) -> o.stream = stream)
-                tool.outputs
-            then Ok (Some default)
-            else Ok None
-      in
-      let* stdout_name =
-        stream_filename tool.stdout Schema.Stdout "cwl.stdout"
-      in
-      let* stderr_name =
-        stream_filename tool.stderr Schema.Stderr "cwl.stderr"
-      in
-      let* stdin_file =
-        match tool.stdin with
-        | None -> Ok None
-        | Some s -> Result.map Option.some (stdin_path ctx ~container outdir s)
-      in
-      let stdout_file = Option.map (Filename.concat outdir) stdout_name in
-      let stderr_file = Option.map (Filename.concat outdir) stderr_name in
-      let* code =
-        R.spawn
-          { home = container; tmpdir; inputs = sources }
-          outdir
-          { stdin_file; stdout_file; stderr_file }
-          argv
-      in
-      if not (List.mem code tool.success_codes) then
-        Error.runtime (Printf.sprintf "command failed with exit code %d" code)
-      else
-        let json_path = Filename.concat outdir "cwl.output.json" in
-        let* outputs =
-          if R.exists json_path then
-            let* s = R.read_file json_path in
-            let* tree = Untyped_tree.of_yaml_string ~path:json_path s in
-            let* obj = Type.object_of_tree tree in
-            let obj =
-              List.map
-                (fun (k, v) -> (k, Workdir.resolve_paths ~container outdir v))
-                obj
-            in
-            let* obj = check_json_outputs tool.outputs obj in
-            Error.map_list
-              (fun (k, v) ->
-                let* v = Workdir.confine (module R) [ outdir ] v in
-                Ok (k, v))
-              obj
-          else
-            Error.map_list
-              (collect_output
-                 (module R)
-                 ~container ~stage_root outdir
-                 (outdir :: tmpdir :: sources)
-                 ctx stdout_name stderr_name)
-              tool.outputs
-        in
-        let* outputs =
-          Error.map_list
-            (fun (k, v) ->
-              let+ v = Workdir.checksum (module R) v in
-              (k, v))
-            outputs
-        in
-        Ok { Error.value = outputs; diagnostics }
+  let* tool, diagnostics = load (module Local) tool_path in
+  let* (module R : Io.RUNTIME) = runtime_for (module Local) docker tool in
+  let* outdir =
+    match outdir with
+    | Some d ->
+        let* () = R.mkdir_p d in
+        R.abspath d
+    | None -> R.mkdtemp "ccr-"
+  in
+  with_scratch (module R) rm_tmpdir tool outdir @@ fun dirs ->
+  let* inputs = job_inputs (module Local) tool tool_path job in
+  let* ran = execute (module R) tool inputs dirs in
+  let+ value = collect (module R) tool dirs ran in
+  { Error.value; diagnostics }

@@ -18,8 +18,9 @@ from cwltool.
 2. `lib/data.ml`: every type and module signature (`FILE`, `FS`, `READ`,
    `WRITE`, `SPAWN`, `RUNTIME`, `ENGINE`). An `.mli` re-exports its part with
    `include module type of Data.X` and adds the functions.
-3. `lib/cwl.mli`, then `lib/cwl.ml`: the helpers first, then `run`, which is
-   one whole run from loading the tool to the checksums.
+3. `lib/cwl.mli`, then `lib/cwl.ml`: the helpers first, then the stages of a
+   run (`load`, `job_inputs`, `execute`, `collect`) and `run`, which composes
+   them from loading the tool to the checksums.
 4. One module at a time, `.mli` first; its first paragraph says what the module
    is for and what it leaves out.
 
