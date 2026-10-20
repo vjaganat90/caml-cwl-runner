@@ -121,11 +121,10 @@ val parse_process :
     from the document object [kvs] and returns
     [(inputs, outputs, requirements, hints)], the diagnostics in that order. A
     missing or [null] field is empty. Each field may be an array or the map form
-    of the spec; in an [inputs] or [outputs] map a bare string is the type (a
-    bare list is not accepted), and every [id] is cut to the part after its last
-    [#] (or [/] if it has no [#]). An output of type [stdout] or [stderr] is a
-    [File] output with [stream] set. Of a [ResourceRequirement] only a numeric
-    [coresMin] is kept.
+    of the spec; in an [inputs] or [outputs] map a bare string or list is the
+    type, and every [id] is cut to the part after its last [#] (or [/] if it has
+    no [#]). An output of type [stdout] or [stderr] is a [File] output with
+    [stream] set. Of a [ResourceRequirement] only a numeric [coresMin] is kept.
 
     It stops at the first error, reading the four fields in that order. The
     error is an [Error.Schema] for a malformed field, a [DockerRequirement]

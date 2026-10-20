@@ -165,13 +165,14 @@ let parse_entries ~what read path = function
   | other -> expected ~json_path:path ~what other
 
 (* What every input and output parameter has: an id, which a map key gives
-   when there is one, and a type, read by [parse_type]; a bare string is the
-   type alone. Returns the id, the type, the fields, and the diagnostics for
+   when there is one, and a type, read by [parse_type]; a bare string or list
+   is the type alone (map_res.yml: a map item that is not an object is the
+   value of its [mapPredicate]). Returns the id, the type, the fields, and the diagnostics for
    its keys, which the caller reports after those of its other fields. *)
 let parse_param ~what parse_type ~implemented ~unimplemented path key v =
   let* kvs, type_path =
     match v with
-    | Untyped_tree.String _ -> return ([ ("type", v) ], path)
+    | Untyped_tree.(String _ | Array _) -> return ([ ("type", v) ], path)
     | Untyped_tree.Object kvs -> return (kvs, child path "type")
     | other -> expected ~json_path:path ~what:(what ^ " parameter") other
   in
