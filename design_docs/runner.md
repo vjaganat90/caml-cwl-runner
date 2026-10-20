@@ -190,7 +190,8 @@ What the diagram leaves out:
   `Error.Unsupported` with feature `InlineJavascriptRequirement`.
   `runtime.cores` is `coresMin` of a `ResourceRequirement` in `requirements`,
   else in `hints`, else 1 (a `coresMin` that is not a number is ignored);
-  `runtime.ram` is always 256.
+  `runtime.ram` is always 256, and `runtime.outdirSize` and
+  `runtime.tmpdirSize` 1024, the defaults of `outdirMin` and `tmpdirMin`.
 - **Output JSON.** `Type.to_json` prints it; there is no JSON library.
   Every File has `location` (`file://` and the path), `path`, `basename`,
   `nameroot` and `nameext` (`basename` split at its last dot; `nameext` is empty

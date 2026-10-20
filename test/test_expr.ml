@@ -100,6 +100,9 @@ let interpolation_table () =
    with
   | Ok (Cwl.Untyped_tree.Int 1L) -> ()
   | other -> Alcotest.failf "escaped quote: %s" (show_eval other));
+  (match eval [] "$(runtime.tmpdirSize)" with
+  | Ok (Cwl.Untyped_tree.Int 1024L) -> ()
+  | other -> Alcotest.failf "reserved storage: %s" (show_eval other));
   (match eval [] "${return 1}" with
   | Error (Cwl.Error.Unsupported { feature = "InlineJavascriptRequirement" }) ->
       ()
