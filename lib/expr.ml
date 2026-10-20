@@ -1,7 +1,3 @@
-(** Parameter references ([$(inputs…)], [$(self…)], [$(runtime…)]) and string
-    interpolation. A sole reference keeps its type. Inline JavaScript is a
-    separate [ENGINE] of the same signature. Pure: no filesystem. *)
-
 include Data.Expr
 
 let default_runtime =
@@ -45,6 +41,23 @@ let rec digits_end s i =
     digits_end s (i + 1)
   else i
 
+(* The key quoted by [q] from [i] on, and the index of its closing quote. As
+   in concepts.md, [\q] stands for [q] inside it. *)
+let quoted body q i =
+  let buf = Buffer.create 16 in
+  let rec go i =
+    if i >= String.length body then None
+    else if body.[i] = q then Some (Buffer.contents buf, i)
+    else if body.[i] = '\\' && i + 1 < String.length body && body.[i + 1] = q
+    then (
+      Buffer.add_char buf q;
+      go (i + 2))
+    else (
+      Buffer.add_char buf body.[i];
+      go (i + 1))
+  in
+  go i
+
 let parse_param_ref s =
   let n = String.length s in
   if n < 3 || s.[0] <> '$' || s.[1] <> '(' || s.[n - 1] <> ')' then None
@@ -66,12 +79,10 @@ let parse_param_ref s =
             && i + 1 < String.length body
             && (body.[i + 1] = '\'' || body.[i + 1] = '"')
           then
-            let q = body.[i + 1] in
-            match String.index_from_opt body (i + 2) q with
+            match quoted body body.[i + 1] (i + 2) with
             | None -> None
-            | Some k ->
+            | Some (name, k) ->
                 if k + 1 < String.length body && body.[k + 1] = ']' then
-                  let name = String.sub body (i + 2) (k - (i + 2)) in
                   segs (k + 2) (Quote name :: acc)
                 else None
           else if body.[i] = '[' then
@@ -86,55 +97,39 @@ let parse_param_ref s =
               segs (j + 1) (Index idx :: acc)
             else None
           else if body.[i] = '\'' || body.[i] = '"' then
-            let q = body.[i] in
-            match String.index_from_opt body (i + 1) q with
+            match quoted body body.[i] (i + 1) with
             | None -> None
-            | Some k ->
-                let name = String.sub body (i + 1) (k - i - 1) in
-                segs (k + 1) (Quote name :: acc)
+            | Some (name, k) -> segs (k + 1) (Quote name :: acc)
           else None
         in
         segs i []
 
-let opt conv = function None -> Some Ty.Vnull | Some x -> Some (conv x)
-let str = opt (fun s -> Ty.Vstring s)
-let long = opt (fun n -> Ty.Vint n)
-
-let file_field (f : Ty.file) = function
-  | "location" -> str f.location
-  | "path" -> str f.path
-  | "basename" -> str f.basename
-  | "nameroot" -> str f.nameroot
-  | "nameext" -> str f.nameext
-  | "checksum" -> str f.checksum
-  | "size" -> long f.size
-  | "class" -> Some (Ty.Vstring "File")
-  | _ -> None
-
-let dir_field (d : Ty.directory) = function
-  | "location" -> str d.location
-  | "path" -> str d.path
-  | "class" -> Some (Ty.Vstring "Directory")
-  | _ -> None
-
 let number_of_float f =
-  if Float.is_integer f then Ty.Vint (Int64.of_float f) else Ty.Vfloat f
+  if Float.is_integer f then Untyped_tree.Int (Int64.of_float f)
+  else Untyped_tree.Float f
+
+(* invocation.md: a runner that cannot give the reserved storage "should
+   report back the minimal requested amount", and ResourceRequirement's
+   [outdirMin] and [tmpdirMin] default to 1024 MiB. Neither is read. *)
+let reserved_storage = Untyped_tree.Int 1024L
 
 let eval_path ctx root segs =
   let start =
     match root with
-    | "inputs" -> Ok (Ty.Vrecord ctx.inputs)
+    | "inputs" -> Ok (Untyped_tree.Object ctx.inputs)
     | "self" -> Ok ctx.self
     | "runtime" ->
         Ok
-          (Ty.Vrecord
+          (Untyped_tree.Object
              [
-               ("outdir", Ty.Vstring ctx.runtime.outdir);
-               ("tmpdir", Ty.Vstring ctx.runtime.tmpdir);
+               ("outdir", Untyped_tree.String ctx.runtime.outdir);
+               ("tmpdir", Untyped_tree.String ctx.runtime.tmpdir);
                ("cores", number_of_float ctx.runtime.cores);
                ("ram", number_of_float ctx.runtime.ram);
+               ("outdirSize", reserved_storage);
+               ("tmpdirSize", reserved_storage);
              ])
-    | "null" -> Ok Ty.Vnull
+    | "null" -> Ok Untyped_tree.Null
     | other ->
         Error.expr (Printf.sprintf "unknown parameter context '%s'" other)
   in
@@ -148,25 +143,20 @@ let eval_path ctx root segs =
           match found with Some v -> step v rest | None -> Error.expr missing
         in
         match (current, seg) with
-        | Ty.Vnull, _ ->
+        | Untyped_tree.Null, _ ->
             Error.expr (Printf.sprintf "cannot look up '%s' on null" key)
-        | Ty.Vrecord kvs, (Dot k | Quote k) ->
+        | Untyped_tree.Object kvs, (Dot k | Quote k) ->
             descend (List.assoc_opt k kvs)
               (Printf.sprintf "missing field '%s' in object" k)
-        | Ty.Vfile f, (Dot k | Quote k) ->
-            descend (file_field f k)
-              (Printf.sprintf "unknown File field '%s'" k)
-        | Ty.Vdir d, (Dot k | Quote k) ->
-            descend (dir_field d k)
-              (Printf.sprintf "unknown Directory field '%s'" k)
-        | Ty.Varray xs, (Dot "length" | Quote "length") when rest = [] ->
-            Ok (Ty.Vint (Int64.of_int (List.length xs)))
-        | Ty.Varray xs, Index i ->
+        | Untyped_tree.Array xs, (Dot "length" | Quote "length") when rest = []
+          ->
+            Ok (Untyped_tree.Int (Int64.of_int (List.length xs)))
+        | Untyped_tree.Array xs, Index i ->
             descend (List.nth_opt xs i)
               (Printf.sprintf "array index %d out of range" i)
-        | Ty.Vstring s, Index i ->
+        | Untyped_tree.String s, Index i ->
             if i >= 0 && i < String.length s then
-              step (Ty.Vstring (String.make 1 s.[i])) rest
+              step (Untyped_tree.String (String.make 1 s.[i])) rest
             else Error.expr (Printf.sprintf "string index %d out of range" i)
         | _ ->
             Error.expr
@@ -175,7 +165,9 @@ let eval_path ctx root segs =
   in
   match start with Error _ as e -> e | Ok current -> step current segs
 
-let text_of = function Ty.Vstring s -> s | v -> Ty.to_json_sorted v
+let text_of = function
+  | Untyped_tree.String s -> s
+  | v -> Ty.to_json ~sorted:true v
 
 let rec close_at s i depth open_c close_c quote =
   if i >= String.length s then None
@@ -239,6 +231,6 @@ module Param_ref : ENGINE = struct
         if String.exists (fun c -> c = '$' || c = '\\') expr then
           match scan ctx expr 0 (Buffer.create (String.length expr)) with
           | Error _ as e -> e
-          | Ok text -> Ok (Ty.Vstring text)
-        else Ok (Ty.Vstring expr)
+          | Ok text -> Ok (Untyped_tree.String text)
+        else Ok (Untyped_tree.String expr)
 end

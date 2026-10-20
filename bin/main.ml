@@ -1,11 +1,16 @@
+(** The [ccr] command. It reads the flags, starts the Eio scheduler, runs one
+    process through [Cwl.run], prints the output object as JSON on stdout, and
+    turns an error into an exit code: 33 for an unsupported feature, 1 for
+    anything else. No CWL logic lives here. *)
+
 open Cmdliner
 
 let version = "0.1.0"
 
 let run outdir quiet rm_tmpdir tool_path job =
   Eio_main.run @@ fun env ->
-  let local = Cwl.Runtime.local env in
-  let docker image = Cwl.Runtime.docker env image in
+  let local = Runtime.local env in
+  let docker ~network image = Runtime.docker env ~network image in
   match Cwl.run local ~docker ?outdir ~rm_tmpdir tool_path job with
   | Error (Cwl.Error.Unsupported { feature }) ->
       Printf.eprintf "ccr: unsupported feature: %s\n" feature;
@@ -19,7 +24,8 @@ let run outdir quiet rm_tmpdir tool_path job =
           (fun d ->
             Printf.eprintf "ccr: %s\n" (Cwl.Error.diagnostic_to_string d))
           ann.diagnostics;
-      print_endline (Cwl.Type.object_to_json ann.value);
+      print_endline
+        (Cwl.Type.to_json ~sorted:false (Cwl.Untyped_tree.Object ann.value));
       0
 
 let outdir =
