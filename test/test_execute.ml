@@ -101,6 +101,8 @@ let execute_edges =
     edge "dir_literal_file_literal" "dir-literal.cwl"
       ~job:"dir-literal-job.json"
       (Expect_ok (lookup_bytes "out" "hi\n"));
+    edge "stdin_in_subdir" "stdin-dir.cwl" ~job:"dir-literal-job.json"
+      (Expect_ok (lookup_bytes "out" "hi\n"));
     edge "dir_literal_located_file" "dir-literal.cwl"
       ~job:"dir-located-job.json"
       (Expect_ok (lookup_bytes "out" "hello from file\n"));

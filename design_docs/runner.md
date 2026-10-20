@@ -150,9 +150,13 @@ What the diagram leaves out:
   `valueFrom` is that string, so a `$(...)` in it is evaluated. `Cwl.command_line` stops here, with placeholder
   `runtime.outdir` and `runtime.tmpdir` and without the requirement check, so
   argv tests start no process.
-- **Streams.** `stdin`, `stdout` and `stderr` are expressions that name a file
-  in the outdir, so `stdin` can be a staged input's `path`. An output of type
-  `stdout` or `stderr` with no named stream uses `cwl.stdout` or `cwl.stderr`.
+- **Streams.** `stdout` and `stderr` are expressions that name a file in the
+  outdir. `stdin` is an expression that gives any path ("A path to a file",
+  CommandLineTool.yml): a relative one is taken from the outdir, so `stdin`
+  can be a staged input's `path`, such as `cwl/a.txt` in a staged Directory
+  literal, and one under a `dockerOutputDirectory` is relocated. An output of
+  type `stdout` or `stderr` with no named stream uses `cwl.stdout` or
+  `cwl.stderr`.
   The tool's stdout or stderr with no file goes to ccr's stderr, and an unnamed
   stdin reads `/dev/null`, so ccr's stdout carries only the JSON.
 - **Spawn.** The tool starts in the designated output directory. It gets `HOME`
@@ -290,8 +294,8 @@ with symlinks followed to a path under a legal root.
   directory, is `Error.Type`.
 - **Names and links.** `Workdir.safe_leaf` accepts a single path segment: not
   empty, not `.` or `..`, and containing none of slash, backslash, NUL. It
-  checks staged File basenames and stream names. A `stdin`, `stdout` or
-  `stderr` file that is already a symlink is `Error.Runtime`.
+  checks staged basenames and the `stdout` and `stderr` names. A `stdin`,
+  `stdout` or `stderr` file that is already a symlink is `Error.Runtime`.
 
 ## Glob
 
