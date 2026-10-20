@@ -1,0 +1,6 @@
+{
+  "file": "lib/ty.ml",
+  "old": "when formats <> [] -> fail f",
+  "new": "when false -> fail f",
+  "why": "a File given to a parameter with format must have one of its formats"
+}

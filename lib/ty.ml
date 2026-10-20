@@ -273,6 +273,42 @@ let object_of_tree doc =
                  (Format.asprintf "%a" Untyped_tree.pp doc);
            })
 
+(* Process.yml, InputFormat: the formats "allowed as input to this
+   parameter". No ontology is read, so they are "tested by exact match", and
+   a File with no [format] has none of them. A field's formats apply to its
+   own value. *)
+let rec check_format param ty formats v =
+  let allowed f =
+    class_of f <> Some "File"
+    || Option.fold ~none:false
+         ~some:(fun x -> List.mem x formats)
+         (get_string "format" f)
+  in
+  let fail f =
+    let got = Option.value (get_string "format" f) ~default:"no format" in
+    Error (Error.Type { param; expected = String.concat " or " formats; got })
+  in
+  let* () =
+    match fold (fun bad f -> if allowed f then bad else f :: bad) [] v with
+    | f :: _ when formats <> [] -> fail f
+    | _ -> Ok ()
+  in
+  let nested t x = check_format param t [] x in
+  match (ty, v) with
+  | Record fields, Untyped_tree.Object _ ->
+      Error.map_list
+        (fun (f : field) ->
+          check_format (param ^ "." ^ f.name) f.ty f.format (field_value f v))
+        fields
+      |> Result.map ignore
+  | Array { items; _ }, Untyped_tree.Array xs ->
+      Result.map ignore (Error.map_list (nested items) xs)
+  | Union ts, _ -> (
+      match List.find_opt (fun t -> matches t v) ts with
+      | Some t -> nested t v
+      | None -> Ok ())
+  | _ -> Ok ()
+
 let apply_defaults_and_check inputs job =
   let rec go acc = function
     | [] -> Ok (List.rev acc)
@@ -297,7 +333,9 @@ let apply_defaults_and_check inputs job =
               match v with
               | Untyped_tree.Null -> is_optional spec.ty
               | _ -> false
-            then go ((spec.id, fill_file_paths v) :: acc) rest
+            then
+              let* () = check_format spec.id spec.ty spec.format v in
+              go ((spec.id, fill_file_paths v) :: acc) rest
             else
               Error
                 (Error.Type

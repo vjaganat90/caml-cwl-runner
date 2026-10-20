@@ -192,7 +192,12 @@ module Type = struct
             Directory, whose every field has a value of its type, a missing one
             counting as null. Keys no field names are allowed and kept. *)
 
-  and field = { name : string; ty : t; input_binding : binding option }
+  and field = {
+    name : string;
+    ty : t;
+    input_binding : binding option;
+    format : string list;  (** As [input_spec.format], for this field. *)
+  }
   (** A CWL [CommandInputRecordField]: the [name] cut like an enum symbol, its
       type, and its [inputBinding], which binds the field's value under the
       record's own sort key. *)
@@ -200,10 +205,17 @@ module Type = struct
   type object_ = (string * value) list
   (** Parameters by id, in order: the job's inputs, or the outputs of a run. *)
 
-  type input_spec = { id : string; ty : t; default : value option }
-  (** What checking a job needs of an input: its name, type and default. It is
-      [Schema.input] without [input_binding] and [unimplemented]; it lives here
-      because [Type] cannot see [Schema]. *)
+  type input_spec = {
+    id : string;
+    ty : t;
+    default : value option;
+    format : string list;
+        (** [format]: the formats a File in the value may have, compared
+            exactly; empty when any format is allowed. *)
+  }
+  (** What checking a job needs of an input: its name, type, default and
+      formats. It is [Schema.input] without [input_binding] and [unimplemented];
+      it lives here because [Type] cannot see [Schema]. *)
 end
 
 module Schema = struct
@@ -217,10 +229,13 @@ module Schema = struct
     input_binding : Type.binding option;
         (** The input's [inputBinding]; [None] when the key is absent. A null or
             empty [inputBinding] is [Some] with the default binding. *)
+    format : string list;
+        (** [format], one IRI or a list; empty when absent, or when it is an
+            expression, which is a diagnostic. *)
     unimplemented : Error.diagnostic list;
         (** Diagnostics for the fields of this input that ccr does not implement
-            ([secondaryFiles], [format], extensions, unknown fields). The
-            document's [annotated] result holds them too. *)
+            ([secondaryFiles], extensions, unknown fields). The document's
+            [annotated] result holds them too. *)
   }
   (** A CWL [CommandInputParameter]. Fields ccr does not implement are not kept;
       they become diagnostics. [label] and [doc] are accepted and dropped. *)
