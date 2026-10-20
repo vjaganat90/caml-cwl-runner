@@ -5,12 +5,12 @@
     module is [Ty]; it is exported as [Cwl.Type], and its types are declared in
     [Data.Type].
 
-    The types are the Schema Salad primitives, [File], [Directory], arrays and
-    unions; an optional type is a union with [Null]. There is no record, enum or
-    [Any] type: [Schema] reads each as [String], with a diagnostic. [Int] and
-    [Long] share the value [Int] ([int64]), [Float] and [Double] the value
-    [Float], and no range or precision is checked. An array type carries the
-    [inputBinding] written in it as [item_binding]. The type [binding] is
+    The types are the Schema Salad primitives, [Any], [File], [Directory],
+    arrays and unions; an optional type is a union with [Null]. There is no
+    record or enum type: [Schema] reads each as [String], with a diagnostic.
+    [Int] and [Long] share the value [Int] ([int64]), [Float] and [Double] the
+    value [Float], and no range or precision is checked. An array type carries
+    the [inputBinding] written in it as [item_binding]. The type [binding] is
     defined here, not in [Schema] (which parses types and bindings), so this
     module needs nothing from [Schema].
 
@@ -51,10 +51,10 @@ val matches : t -> value -> bool
 (** [matches t v] is [true] when [v] is a valid value of type [t]. [Int] and
     [Long] take an integer, [Float] and [Double] any number, [String] only a
     string, [File] and [Directory] an object of that [class_of]; an array needs
-    every item to match, a [Union] one member, and no type takes a record.
-    [apply_defaults_and_check] uses it on job inputs and [Cwl.run] on the
-    entries of a [cwl.output.json]; [Bind] uses it to pick the member of a union
-    that fits a value. *)
+    every item to match, a [Union] one member, [Any] every value but [null], and
+    no other type takes a record. [apply_defaults_and_check] uses it on job
+    inputs and [Cwl.run] on the entries of a [cwl.output.json]; [Bind] uses it
+    to pick the member of a union that fits a value. *)
 
 val type_name : t -> string
 (** [type_name t] is the name of [t] in an error message: [int], [File],
@@ -137,10 +137,11 @@ val coerce : string -> t -> value -> (value, Error.t) result
 (** [coerce param ty doc] is [doc] checked as a value of type [ty]; [Schema]
     uses it for an input's [default], and [param] is the input id that errors
     name. A union takes its first member that fits: [Null] members are tried
-    last, or first when [doc] is [null]. Numbers fit loosely: an integer a
-    [Float] or [Double], and any number a [String], as which it is converted. A
-    File or Directory is an object whose optional [class] must match; it gets
-    that [class], keeps every field, and gets [fill_file_paths].
+    last, or first when [doc] is [null]. [Any] takes any [doc] but [null], as it
+    is. Numbers fit loosely: an integer a [Float] or [Double], and any number a
+    [String], as which it is converted. A File or Directory is an object whose
+    optional [class] must match; it gets that [class], keeps every field, and
+    gets [fill_file_paths].
 
     A mismatch is [Error.Type], naming in [expected] the type that failed (the
     item type for a bad array item, the whole union for a union) and printing in

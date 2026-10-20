@@ -25,6 +25,7 @@ let rec type_name = function
   | String -> "string"
   | File -> "File"
   | Directory -> "Directory"
+  | Any -> "Any"
   | Array { items; _ } -> type_name items ^ "[]"
   | Union ts -> "[" ^ String.concat ", " (List.map type_name ts) ^ "]"
 
@@ -173,6 +174,8 @@ let rec matches ty v =
   | Directory, v -> class_of v = Some "Directory"
   | Array { items; _ }, Untyped_tree.Array xs -> List.for_all (matches items) xs
   | Union ts, v -> List.exists (fun t -> matches t v) ts
+  | Any, Untyped_tree.Null -> false
+  | Any, _ -> true
   | _ -> false
 
 let require_class param expected kvs =
@@ -220,6 +223,9 @@ let rec coerce param ty doc =
   | (Int | Long), Untyped_tree.Int _
   | (Float | Double), Untyped_tree.(Float _ | Int _)
   | String, Untyped_tree.String _ ->
+      Ok doc
+  | Any, Untyped_tree.(Bool _ | Int _ | Float _ | String _ | Array _ | Object _)
+    ->
       Ok doc
   | String, Untyped_tree.Int n -> Ok (Untyped_tree.String (Int64.to_string n))
   | String, Untyped_tree.Float f -> Ok (Untyped_tree.String (string_of_float f))

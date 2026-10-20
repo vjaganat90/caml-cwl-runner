@@ -158,9 +158,9 @@ module Type = struct
       The fields are the spec's, read with the spec's defaults. [shellQuote] and
       [loadContents] are not read; they are diagnostics. *)
 
-  (** A CWL type. [Null] to [Directory] are the types of that name. [Int] and
-      [Long] accept the same values, as do [Float] and [Double]: no range is
-      checked. *)
+  (** A CWL type. [Null] to [Directory], and [Any], are the types of that name.
+      [Int] and [Long] accept the same values, as do [Float] and [Double]: no
+      range is checked. *)
   type t =
     | Null
     | Boolean
@@ -169,8 +169,8 @@ module Type = struct
     | Float
     | Double
     | String
-        (** ccr also reads a type it does not implement ([Any], [record],
-            [enum], a named type) as [String], with a diagnostic. *)
+        (** ccr also reads a type it does not implement ([record], [enum], a
+            named type) as [String], with a diagnostic. *)
     | File
     | Directory
     | Array of { items : t; item_binding : binding option }
@@ -180,6 +180,9 @@ module Type = struct
     | Union of t list
         (** Any one of the listed types: a type list in the document, or [T?],
             which is [Union [T; Null]]. *)
+    | Any
+        (** Schema Salad: "The Any type validates for any non-null value." So
+            [Any] is not optional; [Any?] admits null. *)
 
   type object_ = (string * value) list
   (** Parameters by id, in order: the job's inputs, or the outputs of a run. *)
