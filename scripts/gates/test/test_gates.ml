@@ -104,6 +104,10 @@ let cases =
       "refactor: Hide g",
       Some "must not grow" );
     ("stray top-level file", [ "notes.md" => "scratch\n" ], "docs: Add notes", Some "at the top level");
+    ( "open in dune flags",
+      [ "lib/dune" => "(library\n (name a)\n (flags (:standard -open Stdlib)))\n" ],
+      "chore: Open Stdlib",
+      Some "passes -open" );
     ( "new copy in a subfolder",
       [ "lib/b/c.ml" => "(** C. *)\n\nlet f x =\n  let y = x in\n  y\n\nlet g z =\n  let w = z in\n  w\n" ],
       "refactor: Add c",

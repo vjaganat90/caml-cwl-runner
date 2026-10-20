@@ -59,6 +59,9 @@ Architecture:
   module uses stays in it. No objects, no ppx. The signatures `READ`,
   `WRITE`, `SPAWN` and `RUNTIME` are in `Io`, which the core exports; the
   `runtime` library implements them.
+- Every `open` is a line at the top of the module that uses it. No `-open`
+  in a dune file: a reader of the module must see where each name comes
+  from. [CI: a changed `dune` or `dune-project` file holding `-open`]
 - A failure is an `Error.t`. Build it with `Error.schema` (the process
   document is wrong, at a JSON path), `Error.runtime` (running failed: I/O, a
   collision, confinement), `Error.expr` (an expression failed) or
