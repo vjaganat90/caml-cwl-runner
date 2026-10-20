@@ -64,10 +64,37 @@ let prop_fields_kept =
           && eval "basename" = Ok (Cwl.Untyped_tree.String "a.txt")
       | Error _ -> false)
 
+(* Which job values a declared type takes: the input [x] of the type, as
+   YAML, its value, and the check's result. *)
+let type_rows =
+  [
+    ("Any", "3", "ok");
+    ("Any", "{a: [1]}", "ok");
+    ("Any", "null", "missing required input parameter 'x'");
+  ]
+
+let type_table () =
+  let check (ty, value, want) =
+    let open Cwl.Error.Syntax in
+    let yaml s = Cwl.Untyped_tree.of_yaml_string s in
+    (let* tool =
+       yaml ("class: CommandLineTool\noutputs: []\ninputs: {x: " ^ ty ^ "}")
+     in
+     let* tool = Cwl.Command_line_tool.of_tree tool in
+     let* job = Result.bind (yaml ("x: " ^ value)) Cwl.Type.object_of_tree in
+     Cwl.Type.apply_defaults_and_check
+       (Cwl.Command_line_tool.input_specs tool.value)
+       job)
+    |> Result.fold ~ok:(fun _ -> "ok") ~error:Cwl.Error.to_string
+    |> Alcotest.(check string) (ty ^ " takes " ^ value) want
+  in
+  List.iter check type_rows
+
 let tests =
   [
     ( "type_walk",
-      List.map
-        (QCheck_alcotest.to_alcotest ~speed_level:`Quick)
-        [ identity; prop_fields_kept ] );
+      ("type_table", `Quick, type_table)
+      :: List.map
+           (QCheck_alcotest.to_alcotest ~speed_level:`Quick)
+           [ identity; prop_fields_kept ] );
   ]
