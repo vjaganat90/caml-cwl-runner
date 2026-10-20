@@ -1,0 +1,6 @@
+{
+  "file": "lib/schema.ml",
+  "old": "  | Some (Untyped_tree.Bool b) -> warn unknown (Network_access b)",
+  "new": "  | Some (Untyped_tree.Bool b) -> warn unknown (Network_access (not b))",
+  "why": "networkAccess true grants the network, false does not"
+}

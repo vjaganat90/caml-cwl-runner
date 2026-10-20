@@ -1,0 +1,6 @@
+{
+  "file": "lib/ty.ml",
+  "old": "  | Enum symbols, Untyped_tree.String s -> List.mem s symbols",
+  "new": "  | Enum symbols, Untyped_tree.String s -> List.mem s (s :: symbols)",
+  "why": "an enum value must be one of its symbols"
+}

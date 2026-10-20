@@ -40,8 +40,10 @@ def build(root):
 
 
 def baseline_worktree():
+    """A worktree of this run's own, so that two runs on one machine don't
+    remove each other's."""
     return os.path.join(git("rev-parse", "--path-format=absolute", "--git-common-dir"),
-                        "conformance-baseline")
+                        f"conformance-baseline-{os.getpid()}")
 
 
 def drop_baseline():
