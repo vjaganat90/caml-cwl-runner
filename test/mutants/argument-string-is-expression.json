@@ -1,0 +1,6 @@
+{
+  "file": "lib/command_line_tool.ml",
+  "old": "value_from = Some s }",
+  "new": "value_from = Some (\"\\\\\" ^ s) }",
+  "why": "a string in arguments is evaluated: a $(...) in it is replaced, not kept as written"
+}
