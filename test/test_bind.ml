@@ -4,6 +4,21 @@
 open Harness
 open QCheck2
 
+let union_array_item_prefixes () =
+  let arr items prefix =
+    Cwl.Type.Array { items; item_binding = Some (binding ~prefix ()) }
+  in
+  let inputs =
+    [
+      bound "xs"
+        ~ty:(Cwl.Type.Union [ arr Cwl.Type.Int "-n"; arr Cwl.Type.String "-s" ]);
+    ]
+  in
+  match argv inputs [ ("xs", strings [ "a"; "b" ]) ] with
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok got ->
+      Alcotest.(check (list string)) "argv" [ "echo"; "-s"; "a"; "-s"; "b" ] got
+
 let example_cases =
   [
     example_case ~docker:true "cl_basic_generation" "bwa-mem-tool.cwl"
@@ -38,6 +53,52 @@ let example_cases =
         "example_human_Illumina.pe_2.fastq";
       ];
   ]
+
+(* One row per binding rule of CommandLineTool.yml: a name, the tool's
+   [inputs] and [arguments] as YAML lines, the job, and the argv. *)
+let rules =
+  [
+    ( "a string argument is an expression",
+      "inputs: []\narguments: [$(runtime.cores)]",
+      [],
+      [ "echo"; "1" ] );
+    ( "an empty array adds nothing, not even its prefix",
+      "inputs: {xs: {type: 'string[]', inputBinding: {prefix: -x}}}",
+      [ ("xs", strings []) ],
+      [ "echo" ] );
+    ( "an array with no binding adds nothing",
+      "inputs: {xs: 'string[]'}",
+      [ ("xs", strings [ "a" ]) ],
+      [ "echo" ] );
+    ( "valueFrom on an array binding replaces the array",
+      "inputs: {xs: {type: 'string[]', inputBinding: {valueFrom: \
+       $(self.length)}}}",
+      [ ("xs", strings [ "a"; "b" ]) ],
+      [ "echo"; "2" ] );
+    ( "an array from valueFrom is its prefix, then its elements",
+      "inputs: {xs: 'string[]'}\n\
+       arguments: [{prefix: -x, valueFrom: $(inputs.xs)}]",
+      [ ("xs", strings [ "a"; "b" ]) ],
+      [ "echo"; "-x"; "a"; "b" ] );
+  ]
+
+let rule (name, fields, job, expected) =
+  let header =
+    "cwlVersion: v1.2\nclass: CommandLineTool\nbaseCommand: echo\n"
+  in
+  let got =
+    let open Cwl.Error.Syntax in
+    let* tree =
+      Cwl.Untyped_tree.of_yaml_string (header ^ "outputs: []\n" ^ fields)
+    in
+    let* tool = Cwl.Command_line_tool.of_tree tree in
+    Cwl.Bind.argv
+      (module Cwl.Expr.Param_ref)
+      tool.value job Cwl.Expr.default_runtime
+  in
+  ( name,
+    `Quick,
+    fun () -> Alcotest.(check (list string)) name expected (expect_ok got) )
 
 let prop_boolean_flag =
   Test.make ~name:"boolean flag" ~count:100 Gen.bool (fun b ->
@@ -103,7 +164,9 @@ let prop_position_order =
 
 let tests =
   [
-    ("bind_examples", example_cases);
+    ( "bind_examples",
+      ("union_array_item_prefixes", `Quick, union_array_item_prefixes)
+      :: (example_cases @ List.map rule rules) );
     ( "bind_properties",
       List.map
         (QCheck_alcotest.to_alcotest ~speed_level:`Quick)

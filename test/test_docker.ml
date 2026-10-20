@@ -33,7 +33,7 @@ let prop_docker_argv_suffix =
       let argv = List.map (fun s -> "c" ^ s) raw in
       let spec =
         {
-          Cwl.Runtime.bin = "/bin/docker";
+          Runtime.bin = "/bin/docker";
           user = "1:1";
           cwd = "/host-out";
           workdir;
@@ -42,7 +42,7 @@ let prop_docker_argv_suffix =
           container_env = [];
         }
       in
-      let got = Cwl.Runtime.docker_run_argv spec argv in
+      let got = Runtime.docker_run_argv spec argv in
       let n = List.length argv in
       let pre_len = List.length got - n in
       let flag name =
@@ -280,7 +280,7 @@ let docker_mount_table () =
   Unix.symlink real link;
   let real = Unix.realpath real in
   let check_ok ~host ~workdir ~source ~target =
-    match Cwl.Runtime.docker_mount ~host ~workdir with
+    match Runtime.docker_mount ~host ~workdir with
     | Ok (got_source, got_target) ->
         Alcotest.(check string) "source" source got_source;
         Alcotest.(check string) "target" target got_target
@@ -290,7 +290,7 @@ let docker_mount_table () =
   check_ok ~host:link ~workdir:link ~source:real ~target:link;
   List.iter
     (fun workdir ->
-      match Cwl.Runtime.docker_mount ~host:real ~workdir with
+      match Runtime.docker_mount ~host:real ~workdir with
       | Error (Cwl.Error.Runtime _) -> ()
       | Ok (src, dst) ->
           Alcotest.failf "accepted mount %S -> %S:%S" workdir src dst
@@ -317,7 +317,7 @@ let designated_outdir_table () =
       let argv_ok = ref false in
       let result =
         Eio_main.run @@ fun env ->
-        let (module Local) = Cwl.Runtime.local env in
+        let (module Local) = Runtime.local env in
         let module R = struct
           include Local
 
@@ -388,7 +388,7 @@ let designated_outdir_table () =
     designated_cases
 
 let docker_prefix () =
-  let bin = Eio_main.run Cwl.Runtime.docker_executable in
+  let bin = Eio_main.run Runtime.docker_executable in
   let q = Filename.quote bin in
   let prefix =
     if Filename.is_relative bin then ""
@@ -396,16 +396,20 @@ let docker_prefix () =
   in
   (prefix, q)
 
-let run_archive_tool ~dir ~template ~archive () =
-  let tool =
-    write_text
-      (Filename.concat dir "tool.cwl")
-      (substitute template "@ARCHIVE@" archive)
+(** Runs the tool [template] from [dir] after each [(placeholder, value)]
+    substitution. [@TAG@] always becomes the name of [dir], so the images of two
+    test runs on one machine never share a name. *)
+let run_template ~dir template substitutions =
+  let fill text (placeholder, value) = substitute text placeholder value in
+  let text =
+    List.fold_left fill template
+      (("@TAG@", Filename.basename dir) :: substitutions)
   in
+  let tool = write_text (Filename.concat dir "tool.cwl") text in
   let job = write_text (Filename.concat dir "job.json") "{}\n" in
   Eio_main.run @@ fun env ->
-  let local = Cwl.Runtime.local env in
-  let docker image = Cwl.Runtime.docker env image in
+  let local = Runtime.local env in
+  let docker image = Runtime.docker env image in
   match Cwl.run local ~docker tool (Some job) with
   | Ok _ -> ()
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
@@ -417,6 +421,11 @@ let gzip_to ~src ~dst =
          (Filename.quote dst))
     <> 0
   then Alcotest.fail "gzip failed"
+
+let remove_image tag =
+  let prefix, q = docker_prefix () in
+  ignore
+    (Sys.command (Printf.sprintf "%s%s rmi -f %s >/dev/null 2>&1" prefix q tag))
 
 let with_cwd dir f =
   let back = Sys.getcwd () in
@@ -438,9 +447,8 @@ let docker_load_saved =
              prefix q (Filename.quote tar))
       in
       if code <> 0 then Alcotest.fail "docker save failed";
-      run_archive_tool ~dir
-        ~template:(read_fixture "docker-load.cwl")
-        ~archive:tar () )
+      run_template ~dir (read_fixture "docker-load.cwl") [ ("@ARCHIVE@", tar) ]
+  )
 
 let docker_import_saved =
   ( "docker_import_saved",
@@ -449,30 +457,42 @@ let docker_import_saved =
       require_docker ();
       let dir = Filename.temp_dir "ccr-import-" "" in
       let tar = Filename.concat dir "rootfs.tar" in
+      let name = Filename.basename dir in
       let prefix, q = docker_prefix () in
       let code =
         Sys.command
           (Printf.sprintf
-             "%s%s rm -f ccr-export >/dev/null 2>&1; %s%s create --name \
-              ccr-export alpine true >/dev/null && %s%s export ccr-export -o \
-              %s && %s%s rm ccr-export >/dev/null"
-             prefix q prefix q prefix q (Filename.quote tar) prefix q)
+             "%s%s create --name %s alpine true >/dev/null && %s%s export %s \
+              -o %s && %s%s rm %s >/dev/null"
+             prefix q name prefix q name (Filename.quote tar) prefix q name)
       in
       if code <> 0 then Alcotest.fail "docker export failed";
+      Fun.protect ~finally:(fun () -> remove_image name) @@ fun () ->
       let template = read_fixture "docker-import.cwl" in
-      let import ~archive = run_archive_tool ~dir ~template ~archive () in
+      let import archive =
+        run_template ~dir template [ ("@ARCHIVE@", archive) ]
+      in
       let gz = Filename.concat dir "rootfs.tar.gz" in
       gzip_to ~src:tar ~dst:gz;
-      import ~archive:gz;
-      with_cwd dir (fun () -> import ~archive:"rootfs.tar.gz");
+      import gz;
+      with_cwd dir (fun () -> import "rootfs.tar.gz");
       let tgz = Filename.concat dir "rootfs.tgz" in
       gzip_to ~src:tar ~dst:tgz;
-      with_cwd dir (fun () -> import ~archive:"rootfs.tgz") )
+      with_cwd dir (fun () -> import "rootfs.tgz") )
+
+let docker_file_built =
+  ( "docker_file",
+    `Slow,
+    fun () ->
+      require_docker ();
+      let dir = Filename.temp_dir "ccr-file-" "" in
+      Fun.protect ~finally:(fun () -> remove_image (Filename.basename dir))
+      @@ fun () -> run_template ~dir (read_fixture "docker-file.cwl") [] )
 
 let docker_run_argv_env_and_mounts () =
   let spec =
     {
-      Cwl.Runtime.bin = "docker";
+      Runtime.bin = "docker";
       user = "501:20";
       cwd = "/host/out";
       workdir = "/out";
@@ -503,7 +523,7 @@ let docker_run_argv_env_and_mounts () =
       "echo";
       "hi";
     ]
-    (Cwl.Runtime.docker_run_argv spec [ "echo"; "hi" ])
+    (Runtime.docker_run_argv spec [ "echo"; "hi" ])
 
 let tests =
   [
@@ -521,5 +541,6 @@ let tests =
         ("run_argv_env_and_mounts", `Quick, docker_run_argv_env_and_mounts);
         ("designated", `Quick, designated_outdir_table);
       ] );
-    ("docker_image", [ docker_load_saved; docker_import_saved ]);
+    ( "docker_image",
+      [ docker_load_saved; docker_import_saved; docker_file_built ] );
   ]

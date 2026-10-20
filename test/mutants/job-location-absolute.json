@@ -1,0 +1,6 @@
+{
+  "file": "lib/cwl.ml",
+  "old": "let+ job_dir = R.realpath (Filename.dirname job_path) in",
+  "new": "let+ job_dir = Ok (Filename.dirname job_path) in",
+  "why": "a relative job location becomes an absolute path the tool can use from its own directory"
+}

@@ -1,8 +1,3 @@
-(** CommandLineTool facade: load, argv, spawn, capture outputs. Staging,
-    relocation, confinement, and checksums are [Workdir]. [command_line] stops
-    at argv; [run] executes. Does not implement Workflow or a JavaScript engine.
-*)
-
 module Error = Error
 module Untyped_tree = Untyped_tree
 module Schema = Schema
@@ -13,8 +8,9 @@ module Type = Ty
 module Expr = Expr
 module Bind = Bind
 module Glob = Glob
+module Location = Location
 module Workdir = Workdir
-module Runtime = Runtime
+module Io = Io
 open Error.Syntax
 
 let split_fragment path =
@@ -75,7 +71,7 @@ let eval_glob_pattern ctx pat =
         (Printf.sprintf "glob expression must yield string, got %s"
            (Ty.value_kind other))
 
-let file_of (module R : Runtime.READ) path =
+let file_of (module R : Io.READ) path =
   let* size = R.file_size path in
   Ok
     (Ty.fill_file_paths
@@ -96,7 +92,7 @@ let rec contains target = function
   | Ty.Union ts -> List.exists (contains target) ts
   | t -> t = target
 
-let value_of_hit (module R : Runtime.READ) ty path =
+let value_of_hit (module R : Io.READ) ty path =
   let rec go ty path =
     match ty with
     | Ty.Array { items; _ } -> go items path
@@ -118,7 +114,7 @@ let value_of_hit (module R : Runtime.READ) ty path =
   in
   go ty path
 
-let pack_hits (module R : Runtime.READ) id ty hits =
+let pack_hits (module R : Io.READ) id ty hits =
   let optional = Ty.is_optional ty in
   let inner = match ty with Ty.Array { items; _ } -> items | _ -> ty in
   let is_array = match ty with Ty.Array _ -> true | _ -> false in
@@ -157,8 +153,8 @@ let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
               let+ nested = Error.map_list (eval_glob_pattern ctx) glob in
               List.concat nested))
 
-let collect_output (module R : Runtime.READ) ~container outdir roots ctx
-    stdout_name stderr_name (o : Schema.output) =
+let collect_output (module R : Io.READ) ~container outdir roots ctx stdout_name
+    stderr_name (o : Schema.output) =
   let* pats = glob_patterns ctx stdout_name stderr_name o in
   if pats = [] then
     if Ty.is_optional o.ty then Ok (o.id, Ty.Vnull)
@@ -223,15 +219,54 @@ let designated_outdir (tool : Command_line_tool.t) host =
   | Some { output_directory = Some path; _ } -> (path :> string)
   | _ -> host
 
-let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
+(* Process.yml, File: a relative [location] "must be resolved relative to
+   the IRI of the document it appears in". So a job value is located against
+   the job file's directory and a [default] against the tool's, each made
+   absolute, since the tool runs in another directory. With no job file, the
+   job is empty. *)
+let job_inputs (module R : Io.READ) tool tool_path job =
+  let* tool_dir =
+    R.realpath (Filename.dirname (fst (split_fragment tool_path)))
+  in
+  let* job_dir, job_raw =
+    match job with
+    | None -> Ok (tool_dir, [])
+    | Some job_path ->
+        let* job_tree = Untyped_tree.load (module R) job_path in
+        let* job_raw = Type.object_of_tree job_tree in
+        let+ job_dir = R.realpath (Filename.dirname job_path) in
+        (job_dir, job_raw)
+  in
+  let locate_default (spec : Type.input_spec) =
+    let locate d = Result.map Option.some (Workdir.locate tool_dir d) in
+    let+ default = Option.fold ~none:(Ok None) ~some:locate spec.default in
+    { spec with default }
+  in
+  let* specs =
+    Error.map_list locate_default (Command_line_tool.input_specs tool)
+  in
+  (* A key no input declares is dropped by the check, so it is not read. *)
+  let declared k = List.exists (fun (s : Type.input_spec) -> s.id = k) specs in
+  let* job_raw =
+    Error.map_list
+      (fun (k, v) ->
+        if declared k then
+          let+ v = Workdir.locate job_dir v in
+          (k, v)
+        else Ok (k, v))
+      job_raw
+  in
+  Type.apply_defaults_and_check specs job_raw
+
+let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
     tool_path job =
   let* tool, diagnostics = load_command_line_tool (module Local) tool_path in
   match Schema.first_unimplemented tool.requirements with
   | Some feature -> Error.unsupported feature
   | None ->
-      let* (module R : Runtime.RUNTIME) =
+      let* (module R : Io.RUNTIME) =
         match docker_image tool with
-        | None -> Ok (module Local : Runtime.RUNTIME)
+        | None -> Ok (module Local : Io.RUNTIME)
         | Some image -> (
             match docker with
             | None ->
@@ -250,24 +285,10 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
       Fun.protect ~finally:(fun () ->
           if rm_tmpdir then ignore (R.remove_tree tmpdir))
       @@ fun () ->
-      let* job_dir, job_raw =
-        match job with
-        | None -> Ok (Filename.dirname (fst (split_fragment tool_path)), [])
-        | Some job_path ->
-            let* job_tree = Untyped_tree.load (module Local) job_path in
-            let+ job_raw = Type.object_of_tree job_tree in
-            (Filename.dirname job_path, job_raw)
-      in
-      let* inputs =
-        Type.apply_defaults_and_check
-          (Command_line_tool.input_specs tool)
-          job_raw
-      in
+      let* inputs = job_inputs (module Local) tool tool_path job in
       let cores = Option.value (Command_line_tool.cores_min tool) ~default:1. in
       let container = designated_outdir tool outdir in
-      let* inputs =
-        Workdir.stage (module R) ~container ~outdir ~job_dir inputs
-      in
+      let* inputs = Workdir.stage (module R) ~container ~outdir inputs in
       let runtime = Expr.runtime_with ~outdir:container ~tmpdir ~cores in
       let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
       let* argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
