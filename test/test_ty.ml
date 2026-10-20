@@ -52,7 +52,7 @@ let prop_fields_kept =
             (key, x);
           ]
       in
-      let spec = { Cwl.Type.id = "f"; ty; default = None } in
+      let spec = { Cwl.Type.id = "f"; ty; default = None; format = [] } in
       match Cwl.Type.apply_defaults_and_check [ spec ] [ ("f", f) ] with
       | Ok inputs ->
           let runtime = Cwl.Expr.default_runtime in
@@ -79,6 +79,13 @@ let type_rows =
     ( "{type: record, fields: [{name: a, type: int}]}",
       "{a: x}",
       "type error for x: expected record, got record" );
+    ("File, format: [f, g]", "{class: File, location: a, format: g}", "ok");
+    ( "File, format: f",
+      "{class: File, location: a}",
+      "type error for x: expected f, got no format" );
+    ( "{type: record, fields: {g: {type: File, format: f}}}",
+      "{g: {class: File, location: a, format: z}}",
+      "type error for x.g: expected f, got z" );
   ]
 
 let type_table () =

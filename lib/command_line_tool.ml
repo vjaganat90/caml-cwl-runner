@@ -5,7 +5,7 @@ open Error.Annotated
    process, Schema Salad's, the process fields and the tool's own. *)
 let implemented_tool_keys =
   [ "cwlVersion"; "class"; "id"; "label"; "doc" ]
-  @ [ "$namespaces"; "$schemas"; "$base" ]
+  @ [ "$namespaces"; "$base" ]
   @ [ "inputs"; "outputs"; "requirements"; "hints" ]
   @ [ "baseCommand"; "arguments"; "stdin"; "stdout"; "stderr"; "successCodes" ]
 
@@ -45,7 +45,12 @@ let of_tree doc =
         warn
           (Schema.diagnostics_for_keys ~implemented:implemented_tool_keys
              ~unimplemented:
-               [ "intent"; "temporaryFailCodes"; "permanentFailCodes" ]
+               [
+                 "$schemas";
+                 "intent";
+                 "temporaryFailCodes";
+                 "permanentFailCodes";
+               ]
              "" kvs)
           ()
       and+ () =
@@ -92,5 +97,6 @@ let cores_min tool =
 
 let input_specs tool =
   List.map
-    (fun (i : Schema.input) -> { Ty.id = i.id; ty = i.ty; default = i.default })
+    (fun (i : Schema.input) ->
+      { Ty.id = i.id; ty = i.ty; default = i.default; format = i.format })
     tool.inputs
