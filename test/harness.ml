@@ -34,6 +34,7 @@ let bound ?(ty = Cwl.Type.String) ?prefix ?separate ?item_separator
     default = None;
     input_binding =
       Some (binding ~position ?prefix ?separate ?item_separator ());
+    format = [];
     unimplemented = [];
   }
 

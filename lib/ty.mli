@@ -178,7 +178,9 @@ val apply_defaults_and_check :
     of a missing input. It fails at the first [input_spec], in order, that has
     no value ([Error.Missing]) or a value that does not match ([Error.Type],
     with [expected] the [type_name] of its [ty] and [got] the [value_kind] of
-    the value). *)
+    the value), or a File in it whose [format] is not one of its [format], or of
+    the [format] of the record field that holds it ([Error.Type], with
+    [expected] those formats and [got] the File's, or [no format]). *)
 
 val string_of_value : value -> string
 (** [string_of_value v] is the text [v] shows on a command line; [Bind] builds

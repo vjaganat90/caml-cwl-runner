@@ -129,7 +129,10 @@ What the diagram leaves out:
   against the document it appears in; a scheme other than `file` is
   `Error.Runtime`. `Type.apply_defaults_and_check` then
   fills missing or null inputs from their defaults and checks types
-  (`Error.Missing`, `Error.Type`).
+  (`Error.Missing`, `Error.Type`). A File given to an input or record field
+  with a `format` must have one of those formats, compared exactly
+  (`Error.Type`): ontologies in `$schemas` are not read, a diagnostic, and a
+  `format` expression is a diagnostic and checks nothing.
 - **Staging.** `Workdir.stage` copies each File into the outdir under its
   basename. The copy's `path` is that basename, so the tool finds it from its
   working directory; its `location` is the path under the designated output

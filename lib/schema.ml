@@ -145,9 +145,16 @@ let parse_param ~what parse_type ~implemented ~unimplemented path key v =
         diagnostics_for_keys
           ~implemented:("id" :: "label" :: "doc" :: "type" :: implemented)
           ~unimplemented:
-            ("secondaryFiles" :: "format" :: "streamable" :: "loadContents"
-           :: unimplemented)
+            ("secondaryFiles" :: "streamable" :: "loadContents" :: unimplemented)
           path kvs )
+
+(* Process.yml, InputFormat: one or more IRIs, or an expression, which is
+   not evaluated. *)
+let parse_format path v =
+  let* formats = strings ~what:"format IRI" path v in
+  if List.exists (fun f -> String.contains f '$') formats then
+    warn [ diag "format expression" path ] []
+  else return formats
 
 let rec parse_cwl_type path = function
   | Untyped_tree.String s -> parse_type_dsl path s
@@ -240,27 +247,29 @@ and parse_field path key v =
   in
   let* name, ty, kvs, unimplemented =
     parse_param ~what:"field" parse_cwl_type
-      ~implemented:[ "name"; "inputBinding" ]
+      ~implemented:[ "name"; "inputBinding"; "format" ]
       ~unimplemented:[ "outputBinding"; "loadListing" ]
       path key v
   in
-  let+ input_binding =
-    field ~json_path:path kvs "inputBinding" (some parse_binding) (return None)
+  let get key = field ~json_path:path kvs key in
+  let+ input_binding = get "inputBinding" (some parse_binding) (return None)
+  and+ format = get "format" parse_format (return [])
   and+ () = warn unimplemented () in
-  { Ty.name = symbol name; ty; input_binding }
+  { Ty.name = symbol name; ty; input_binding; format }
 
 let parse_input path key v =
   let* id, ty, kvs, unimplemented =
     parse_param ~what:"input" parse_cwl_type
-      ~implemented:[ "default"; "inputBinding" ]
+      ~implemented:[ "default"; "inputBinding"; "format" ]
       ~unimplemented:[ "loadListing" ] path key v
   in
   let get key = field ~json_path:path kvs key in
   let default _ d = Result.bind (Ty.coerce id ty d) return in
   let+ default = get "default" (some default) (return None)
   and+ input_binding = get "inputBinding" (some parse_binding) (return None)
+  and+ format = get "format" parse_format (return [])
   and+ () = warn unimplemented () in
-  { id; ty; default; input_binding; unimplemented }
+  { id; ty; default; input_binding; format; unimplemented }
 
 (* Only [coresMin] is kept, and only as a number: any other value of it (an
    expression, say) is dropped without a diagnostic. Any other field but
@@ -401,10 +410,25 @@ let parse_output_type path = function
       let+ t = parse_cwl_type path v in
       (t, No_stream)
 
+(* Whether a record field in [ty] has a [format]: for an output, which
+   assigns it, that is not implemented. *)
+let rec field_format = function
+  | Ty.Record fields ->
+      List.exists
+        (fun (f : Ty.field) -> f.format <> [] || field_format f.ty)
+        fields
+  | Ty.Array { items; _ } -> field_format items
+  | Ty.Union ts -> List.exists field_format ts
+  | _ -> false
+
 let parse_output path key v =
   let* id, (ty, stream), kvs, unimplemented =
     parse_param ~what:"output" parse_output_type
-      ~implemented:[ "outputBinding" ] ~unimplemented:[] path key v
+      ~implemented:[ "outputBinding" ] ~unimplemented:[ "format" ] path key v
+  in
+  let unimplemented =
+    if field_format ty then diag "format" path :: unimplemented
+    else unimplemented
   in
   let+ output_binding =
     field ~json_path:path kvs "outputBinding"
