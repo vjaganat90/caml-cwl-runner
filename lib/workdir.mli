@@ -38,11 +38,13 @@ val locate : string -> Ty.value -> (Ty.value, Error.t) result
     is not checked to exist. Pass the directory of the document that holds [v]
     (Process.yml, File and Directory [location]): the job file's for a job
     value, the tool's for a [default]. A File literal, one with [contents] and
-    neither [location] nor [path], is left as it is for {!stage}.
+    neither [location] nor [path], is left as it is for {!stage}; so is a
+    Directory literal, one with a [listing] and neither field, except that the
+    entries of its [listing] are located in turn.
 
-    Fails with [Error.Runtime] when a File that is not a literal, or a
-    Directory, has neither [location] nor [path], or its location has a scheme
-    other than [file]. *)
+    Fails with [Error.Runtime] when a File or Directory that is not a literal
+    has neither [location] nor [path], or its location has a scheme other than
+    [file]. *)
 
 val stage :
   (module Io.WRITE) ->
@@ -59,13 +61,18 @@ val stage :
     and a missing [nameroot] and [nameext] are filled from [b]. A File literal
     (see {!locate}) is written there instead, its [contents] as the file's text,
     and named [literal-<n>] when it has no [basename], [n] being the number of
-    Files staged before it (Process.yml, File [contents]). Any other File
-    without a [location], and a Directory, are left as they are.
+    Files and Directories staged before it in that directory (Process.yml, File
+    [contents]). A Directory literal (see {!locate}) is created there as a
+    directory, named as a File literal is, and the entries of its [listing] are
+    staged into it the same way, so their [path] is [b/] and their own name
+    (Process.yml, Directory: "Directories must be recursively staged first and
+    have local values of [path] assigned"). Any other File without a [location],
+    and any other Directory, are left as they are.
 
     Fails with [Error.Runtime] when a basename is not a {!safe_leaf}, two Files
-    share a basename (even when they are the same file), or a File cannot be
-    copied or written: its source is missing or not a regular file, or [outdir]
-    does not exist. *)
+    share a basename (even when they are the same file) in one directory, or a
+    File or Directory cannot be copied or written: its source is missing or not
+    a regular file, or [outdir] does not exist. *)
 
 val relocate : container:string -> host:string -> string -> string
 (** [relocate ~container ~host p] moves [p] from under [container] to under

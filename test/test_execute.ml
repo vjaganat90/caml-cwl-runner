@@ -98,6 +98,12 @@ let execute_edges =
              ]
              (listing "d" ann)));
     edge "dir_listing_symlink_out" "dir-symlink.cwl" Expect_runtime;
+    edge "dir_literal_file_literal" "dir-literal.cwl"
+      ~job:"dir-literal-job.json"
+      (Expect_ok (lookup_bytes "out" "hi\n"));
+    edge "dir_literal_located_file" "dir-literal.cwl"
+      ~job:"dir-located-job.json"
+      (Expect_ok (lookup_bytes "out" "hello from file\n"));
     edge "param_ref_glob" "param-ref-glob.cwl" ~job:"param-ref-job.json"
       (Expect_ok (lookup_file_basename "f" "hello.txt"));
     edge "json_relative_file" "json-relative.cwl"
