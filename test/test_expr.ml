@@ -93,6 +93,13 @@ let interpolation_table () =
   (match eval msg "\\$(inputs.msg)" with
   | Ok (Cwl.Untyped_tree.String "$(inputs.msg)") -> ()
   | other -> Alcotest.failf "escape: %s" (show_eval other));
+  (match
+     eval
+       [ ("o", Cwl.Untyped_tree.Object [ ("b'a", Cwl.Untyped_tree.Int 1L) ]) ]
+       "$(inputs.o['b\\'a'])"
+   with
+  | Ok (Cwl.Untyped_tree.Int 1L) -> ()
+  | other -> Alcotest.failf "escaped quote: %s" (show_eval other));
   (match eval [] "${return 1}" with
   | Error (Cwl.Error.Unsupported { feature = "InlineJavascriptRequirement" }) ->
       ()
