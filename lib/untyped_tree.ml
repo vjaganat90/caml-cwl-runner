@@ -1,43 +1,66 @@
-(** Nested YAML/JSON file contents, before CWL types. The only document reader.
-    [load] resolves local [$import] and [$include], reading every file through
-    the [FILE] it is given. Does not leak [Yaml.value]. Not [Document]
-    (CommandLineTool | Workflow) and not [Type.value]. *)
-
 include Data.Untyped_tree
 open Error.Syntax
 
-let rec of_yaml = function
-  | `Null -> Null
-  | `Bool b -> Bool b
-  | `Float f ->
-      if
-        Float.is_integer f
-        && f >= Int64.to_float Int64.min_int
-        && f <= Int64.to_float Int64.max_int
-      then Int (Int64.of_float f)
-      else Float f
-  | `String s -> String s
-  | `A xs -> Array (List.map of_yaml xs)
-  | `O kvs -> Object (List.map (fun (k, v) -> (k, of_yaml v)) kvs)
+(* A plain scalar by the YAML 1.2 core schema: only [true], [True], [TRUE] and
+   the [false] forms are booleans, an integer is exact, and one outside the
+   [int64] range is a [Float]. *)
+let resolve_plain s =
+  let all_in ok from =
+    from < String.length s && Seq.for_all ok (Seq.drop from (String.to_seq s))
+  in
+  let starts prefix = String.starts_with ~prefix s in
+  let sign = if starts "-" || starts "+" then 1 else 0 in
+  let is_int =
+    if starts "0x" then
+      all_in
+        (function '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true | _ -> false)
+        2
+    else if starts "0o" then
+      all_in (function '0' .. '7' -> true | _ -> false) 2
+    else all_in (function '0' .. '9' -> true | _ -> false) sign
+  in
+  let is_float =
+    all_in
+      (function '0' .. '9' | '.' | '+' | '-' | 'e' | 'E' -> true | _ -> false)
+      0
+  in
+  match s with
+  | "" | "~" | "null" | "Null" | "NULL" -> Null
+  | "true" | "True" | "TRUE" -> Bool true
+  | "false" | "False" | "FALSE" -> Bool false
+  | ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" -> Float infinity
+  | "-.inf" | "-.Inf" | "-.INF" -> Float neg_infinity
+  | ".nan" | ".NaN" | ".NAN" -> Float nan
+  | _ -> (
+      match (Int64.of_string_opt s, float_of_string_opt s) with
+      | Some n, _ when is_int && (n >= 0L || sign = 1) -> Int n
+      | _, Some f when is_int || is_float -> Float f
+      | _ -> String s)
+
+let rec of_yaml ~path : Yaml.yaml -> (value, Error.t) result =
+  let fail message = Error (Error.Parse { path; message }) in
+  function
+  | `Scalar { style = `Plain; value; _ } -> Ok (resolve_plain value)
+  | `Scalar { value; _ } -> Ok (String value)
+  | `Alias _ -> fail "aliases are not supported"
+  | `A { s_members; _ } ->
+      let* xs = Error.map_list (of_yaml ~path) s_members in
+      Ok (Array xs)
+  | `O { m_members; _ } ->
+      let entry = function
+        | `Scalar { Yaml.value = k; _ }, v ->
+            let* v = of_yaml ~path v in
+            Ok (k, v)
+        | _ -> fail "a key is not a scalar"
+      in
+      let* kvs = Error.map_list entry m_members in
+      Ok (Object kvs)
 
 let of_yaml_string ?(path = "") s =
-  match Yaml.of_string s with
-  | Ok v -> Ok (of_yaml v)
-  | Error (`Msg msg) ->
-      let path = if path = "" then None else Some path in
-      Error (Error.Parse { path; message = msg })
-
-let string_field kvs key =
-  match List.assoc_opt key kvs with Some (String s) -> Some s | _ -> None
-
-let bool_field kvs key =
-  match List.assoc_opt key kvs with Some (Bool b) -> Some b | _ -> None
-
-let int_field kvs key =
-  match List.assoc_opt key kvs with
-  | Some (Int n) -> Some n
-  | Some (Float f) when Float.is_integer f -> Some (Int64.of_float f)
-  | _ -> None
+  let path = if path = "" then None else Some path in
+  match Yaml.yaml_of_string s with
+  | Ok y -> of_yaml ~path y
+  | Error (`Msg message) -> Error (Error.Parse { path; message })
 
 let rec pp fmt = function
   | Null -> Format.pp_print_string fmt "null"
@@ -57,6 +80,23 @@ let rec pp fmt = function
            ~pp_sep:(fun fmt () -> Format.pp_print_string fmt ", ")
            (fun fmt (k, v) -> Format.fprintf fmt "%s: %a" k pp v))
         kvs
+
+let child path key = if path = "" then key else path ^ "." ^ key
+let expected what value = Format.asprintf "expected %s, got %a" what pp value
+
+(* A missing key and [null] are both absent. A present value that [read] does
+   not accept is a schema error at the key's path, never [None]. *)
+let field what read ~json_path kvs key =
+  match List.assoc_opt key kvs with
+  | None | Some Null -> Ok None
+  | Some v -> (
+      match read v with
+      | Some x -> Ok (Some x)
+      | None -> Error.schema (child json_path key) (expected what v))
+
+let string_field = field "string" (function String s -> Some s | _ -> None)
+let bool_field = field "boolean" (function Bool b -> Some b | _ -> None)
+let int_field = field "int" (function Int n -> Some n | _ -> None)
 
 let is_remote s =
   String.starts_with ~prefix:"http://" s
@@ -130,9 +170,7 @@ let resolve (module F : FILE) ~base ~stack tree =
           let* path = locate ~feature:"remote $base" ~base raw in
           if String.ends_with ~suffix:"/" (strip_file raw) then Ok (`Dir path)
           else Ok (`File path)
-      | Some other ->
-          Error.schema "$base"
-            (Format.asprintf "expected string, got %a" pp other)
+      | Some other -> Error.schema "$base" (expected "string" other)
     in
     match (List.assoc_opt "$import" kvs, List.assoc_opt "$include" kvs) with
     | Some _, Some _ ->

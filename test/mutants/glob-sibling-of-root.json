@@ -1,0 +1,6 @@
+{
+  "file": "lib/glob.ml",
+  "old": "~prefix:(root ^ \"/\")",
+  "new": "~prefix:root",
+  "why": "a sibling that shares the root's name is not under the root"
+}
