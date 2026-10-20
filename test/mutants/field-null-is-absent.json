@@ -1,0 +1,6 @@
+{
+  "file": "lib/untyped_tree.ml",
+  "old": "| None | Some Null -> Ok None",
+  "new": "| None -> Ok None",
+  "why": "a null field is absent, not a wrong type"
+}
