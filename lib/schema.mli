@@ -126,6 +126,8 @@ val parse_process :
     type, and every [id] is cut to the part after its last [#] (or [/] if it has
     no [#]). An output of type [stdout] or [stderr] is a [File] output with
     [stream] set. Of a [ResourceRequirement] only a numeric [coresMin] is kept.
+    A [NetworkAccess] keeps a boolean [networkAccess]; an expression there is
+    [Unimplemented], and a repeated or non-boolean one is an error.
 
     It stops at the first error, reading the four fields in that order. The
     error is an [Error.Schema] for a malformed field, a [DockerRequirement]

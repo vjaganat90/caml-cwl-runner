@@ -317,6 +317,9 @@ module Schema = struct
             literal number: an expression, or no value, gives [None]. Its other
             fields are diagnostics. *)
     | Docker of docker
+    | Network_access of bool
+        (** A [NetworkAccess] with a boolean [networkAccess]. With an expression
+            it is [Unimplemented]. *)
     | Unimplemented of { class_ : string; in_requirements : bool }
         (** A requirement class ccr does not implement; [class_] is its name as
             written. [in_requirements] is [true] under [requirements] and

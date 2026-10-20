@@ -30,6 +30,12 @@ val of_tree : Untyped_tree.value -> (t Error.annotated, Error.t) result
     field of the wrong shape. It also fails with the errors of
     [Schema.parse_process]. *)
 
+val network_access : t -> bool
+(** [network_access t] is the [networkAccess] of the first [NetworkAccess] in
+    [requirements], else in [hints], else [false]. Only a Docker run acts on it:
+    a local run cannot restrict the network, and the spec only says a tool must
+    not assume access. *)
+
 val cores_min : t -> float option
 (** [cores_min t] is the [coresMin] of the first [ResourceRequirement] in
     [t.requirements] that has a numeric one, else the same in [t.hints], else

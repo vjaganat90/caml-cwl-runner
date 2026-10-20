@@ -95,6 +95,14 @@ let cores_min tool =
   | Some _ as c -> c
   | None -> from_list tool.hints
 
+let network_access tool =
+  let from_list rs =
+    List.find_map (function Schema.Network_access b -> Some b | _ -> None) rs
+  in
+  match from_list tool.requirements with
+  | Some b -> b
+  | None -> Option.value (from_list tool.hints) ~default:false
+
 let input_specs tool =
   List.map
     (fun (i : Schema.input) ->

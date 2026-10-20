@@ -68,11 +68,14 @@ val run :
     diagnostics. [Local] reads the two documents. It also does the rest of the
     file work and starts the tool, unless the tool's [requirements] (not its
     [hints]) hold a [DockerRequirement]: then the runtime that [docker] returns
-    for it does, called with [~network:false] (a container has no network), and
-    without [docker] the run fails with [Error.Runtime]. With [job = None] the
-    input object is empty. A relative location in the job is relative to the
-    directory of [job], and one in a [default] to that of [tool]; either becomes
-    an absolute path, so the tool finds it from its own working directory.
+    for it does, called with [~network] true only when a [NetworkAccess] in
+    [requirements] (else [hints]) is [true]; otherwise the container has no
+    network. A local run cannot restrict the network, so it ignores
+    [NetworkAccess]. Without [docker] the run fails with [Error.Runtime]. With
+    [job = None] the input object is empty. A relative location in the job is
+    relative to the directory of [job], and one in a [default] to that of
+    [tool]; either becomes an absolute path, so the tool finds it from its own
+    working directory.
 
     [outdir] is the designated output directory, created if missing; by default
     it is a fresh directory. A relative [outdir] is not made absolute, so [HOME]
