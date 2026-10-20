@@ -125,6 +125,7 @@ let field_rows =
       "schema error at f.size: expected int, got \"b\"" );
     (tool "inputs: {x: {type: string, inputBinding: {prefix: null}}}", "ok");
     (tool "inputs: null\nhints: null", "ok");
+    (tool "inputs: {x: ['null', string]}", "ok");
     ( "cwlVersion: v1.2\nclass: 5\n",
       "schema error at class: expected string, got 5" );
     ( "cwlVersion: v1.2\n$graph:\n- {id: 5, class: CommandLineTool}\n",
