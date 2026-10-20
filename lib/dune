@@ -1,5 +1,18 @@
 (library
  (name cwl)
  (public_name caml-cwl-runner)
- (libraries yaml re eio eio.unix unix digestif.c)
+ (modules :standard \ runtime)
+ (libraries yaml re)
+ ; Unix still resolves from the compiler directory; make that an error.
+ (flags
+  (:standard -alert ++ocaml_deprecated_auto_include))
  (private_modules data))
+
+; The only library that may use Eio, Unix or digestif: the core above cannot
+; name them, so the compiler enforces it.
+
+(library
+ (name runtime)
+ (public_name caml-cwl-runner.runtime)
+ (modules runtime)
+ (libraries cwl eio eio.unix unix digestif.c))

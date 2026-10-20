@@ -1,0 +1,6 @@
+{
+  "file": "lib/workdir.ml",
+  "old": "| Some \"Directory\", _ -> (",
+  "new": "| Some \"Directory\", _ when false -> (",
+  "why": "the Files in an output Directory's listing get their checksum"
+}

@@ -1,0 +1,36 @@
+name: pr
+
+# The PR's title, body and branches (AGENTS.md, "PR text"). A separate
+# workflow so that editing the PR text reruns only this. The gate is built
+# from the base branch, like the gates job in ci.yml.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  pr-text:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: pr-text-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    env:
+      BASE: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5"
+      - run: opam install . --deps-only -y
+      - name: build the gate from the base branch
+        run: |
+          src=.
+          if git cat-file -e "origin/$BASE:scripts/gates/dune" 2> /dev/null; then
+            src="$RUNNER_TEMP/base"
+            git worktree add --detach "$src" "origin/$BASE"
+          fi
+          (cd "$src" && opam exec -- dune build scripts/gates/gates.exe)
+          cp "$src/_build/default/scripts/gates/gates.exe" "$RUNNER_TEMP/gates"
+      - run: opam exec -- "$RUNNER_TEMP/gates" --pr "$GITHUB_EVENT_PATH"
