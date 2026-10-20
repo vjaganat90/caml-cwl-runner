@@ -24,6 +24,22 @@ $graph:
       checksum: sha1$f572d396fae9206628714fb2ce00f72e94f2258f
       size: 6
       location: out.txt
+- id: binding_prefix_not_string
+  doc: >-
+    CommandLineTool.yml types a binding prefix as string?, so an int there
+    makes the document invalid, and the tool must not run.
+  ccr:spec: vendor/cwl-v1.2/concepts.md
+  ccr:quote:
+  - Load, process and validate a CWL document, yielding one or more process objects.
+  - >-
+    Conforming implementations must not continue to execute the current
+    process and may report an error.
+  tool: binding-prefix-int.cwl
+  job: empty.json
+  should_fail: true
+  tags:
+  - command_line_tool
+  - oracle
 - id: array_no_binding
   doc: An array input with no inputBinding contributes nothing to argv.
   ccr:spec: vendor/cwl-v1.2/invocation.md
