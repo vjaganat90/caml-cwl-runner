@@ -183,8 +183,14 @@ What the diagram leaves out:
   entry, dot names included, sorted by name, each subdirectory listed in turn
   (the spec leaves the depth open; cwltool lists the whole tree). Each entry is
   confined like a hit, and more than 64 levels is `Error.Runtime`.
+- **Outputs by `outputEval`.** Without `cwl.output.json`, an output with an
+  `outputEval` and no `glob` is the value of that expression, evaluated with
+  `self` the empty array (the spec defines `self` only beside a `glob`; this is
+  cwltool's). It must satisfy `Type.matches` (`Error.Type`), and each File or
+  Directory in it is resolved and confined like a `cwl.output.json` path, to
+  every legal root. Beside a `glob`, `outputEval` is `Unsupported`.
 - **Expressions.** `Expr.Param_ref` evaluates `position`, `valueFrom`, stream
-  names and `glob`. A string that is one `$(…)` reference keeps the value's
+  names, `glob` and `outputEval`. A string that is one `$(…)` reference keeps the value's
   type. A string that mixes text and references is interpolated; `\$(`, `\${`
   and `\\` are escapes. A reference that does not resolve is `Error.Expr`.
   Beyond parameter references, `${…}` or a `$(…)` that is not a reference is

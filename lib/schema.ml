@@ -380,17 +380,18 @@ let first_unimplemented reqs =
 let parse_output_binding path = function
   | Untyped_tree.Object kvs ->
       let unimplemented =
-        diagnostics_for_keys ~implemented:[ "glob" ]
-          ~unimplemented:[ "loadContents"; "outputEval" ]
-          path kvs
+        diagnostics_for_keys ~implemented:[ "glob"; "outputEval" ]
+          ~unimplemented:[ "loadContents" ] path kvs
       in
       let+ glob =
         field ~json_path:path kvs "glob"
           (strings ~what:"glob string")
           (return [])
+      and+ output_eval = string_field path kvs "outputEval"
       and+ () = warn unimplemented () in
-      { glob; unimplemented }
-  | Untyped_tree.Null -> return { glob = []; unimplemented = [] }
+      { glob; output_eval; unimplemented }
+  | Untyped_tree.Null ->
+      return { glob = []; output_eval = None; unimplemented = [] }
   | other -> expected ~json_path:path ~what:"outputBinding object" other
 
 let parse_output_type path = function
