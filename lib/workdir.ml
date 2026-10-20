@@ -81,10 +81,10 @@ let rec locate dir v =
           set_paths v (path, Some src))
     v
 
-(* Stages [v] at [rel], a path relative to [outdir]: an entry of a
-   Directory literal goes inside it, under that Directory's [rel]. [used]
-   holds the basenames already staged at [rel]. *)
-let rec stage_leaf (module R : Io.WRITE) ~container ~outdir rel used v =
+(* Stages [v] into the host directory [dir]: an entry of a Directory literal
+   goes inside it. [used] holds the basenames already
+   staged in [dir]. A located File is copied, a located Directory linked. *)
+let rec stage_leaf (module R : Io.WRITE) dir used v =
   let place fallback write =
     let raw_base =
       Option.value (Ty.get_string "basename" v) ~default:fallback
@@ -93,13 +93,12 @@ let rec stage_leaf (module R : Io.WRITE) ~container ~outdir rel used v =
     if List.mem base used then
       Error.runtime (Printf.sprintf "staging collision on basename '%s'" base)
     else
-      let rel = Filename.concat rel base in
-      let* v = write (Filename.concat outdir rel) rel in
-      let seen = Location.trim_slash container ^ "/" ^ rel in
+      let dst = Filename.concat dir base in
+      let* v = write dst in
       let v = Ty.set "basename" (Untyped_tree.String base) v in
-      Ok (Ty.fill_file_paths (set_paths v (Some rel, Some seen)), base :: used)
+      Ok (Ty.fill_file_paths (set_paths v (Some dst, Some dst)), base :: used)
   in
-  let file write dst _ =
+  let file write dst =
     let+ () = write dst in
     v
   in
@@ -107,32 +106,52 @@ let rec stage_leaf (module R : Io.WRITE) ~container ~outdir rel used v =
   match
     (Ty.class_of v, Ty.get_string "location" v, Ty.get_string "contents" v)
   with
-  | Some "File", Some src, _ ->
-      place (Filename.basename src) (file (R.copy_file src))
-  | Some "File", None, Some text ->
-      place literal (file (fun dst -> R.write_file dst text))
   | Some "Directory", _, _ when is_literal v ->
-      place literal (fun dst rel ->
+      place literal (fun dst ->
           let* () = R.mkdir_p dst in
           let+ entries, _ =
-            stage_value
-              (module R : Io.WRITE)
-              ~container ~outdir rel [] (listing v)
+            stage_value (module R : Io.WRITE) dst [] (listing v)
           in
           Ty.set "listing" entries v)
+  | Some "File", Some src, _ ->
+      place (Filename.basename src) (file (R.copy_file src))
+  | Some "Directory", Some src, _ ->
+      place (Filename.basename src) (file (R.symlink src))
+  | Some "File", None, Some text ->
+      place literal (file (fun dst -> R.write_file dst text))
   | _ -> Ok (v, used)
 
-and stage_value (module R : Io.WRITE) ~container ~outdir rel used v =
-  Ty.fold_map (stage_leaf (module R : Io.WRITE) ~container ~outdir rel) used v
+and stage_value (module R : Io.WRITE) dir used v =
+  Ty.fold_map (stage_leaf (module R : Io.WRITE) dir) used v
 
-let stage (module R : Io.WRITE) ~container ~outdir inputs =
-  let rec go used acc = function
+let stage (module R : Io.WRITE) root inputs =
+  let leaf n v =
+    let dir = Filename.concat root (string_of_int n) in
+    if Ty.class_of v = None then Ok (v, n)
+    else
+      let* () = R.mkdir_p dir in
+      let+ v, _ = stage_leaf (module R) dir [] v in
+      (v, n + 1)
+  in
+  let rec go n acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
-        let* v, used = stage_value (module R) ~container ~outdir "" used v in
-        go used ((k, v) :: acc) rest
+        let* v, n = Ty.fold_map leaf n v in
+        go n ((k, v) :: acc) rest
   in
-  go [] [] inputs
+  go 0 [] inputs
+
+let sources inputs =
+  let rec go acc v =
+    Ty.fold
+      (fun acc v ->
+        match (Ty.class_of v, Ty.get_string "location" v) with
+        | Some "Directory", _ when is_literal v -> go acc (listing v)
+        | Some "Directory", Some src -> src :: acc
+        | _ -> acc)
+      acc v
+  in
+  List.fold_left (fun acc (_, v) -> go acc v) [] inputs
 
 let relocate ~container ~host path =
   let dotdot = List.mem ".." (String.split_on_char '/' path) in

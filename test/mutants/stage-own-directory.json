@@ -1,0 +1,6 @@
+{
+  "file": "lib/workdir.ml",
+  "old": "let dir = Filename.concat root (string_of_int n) in",
+  "new": "let dir = root in",
+  "why": "each input is staged in a directory of its own, so two inputs with one basename both reach the tool"
+}

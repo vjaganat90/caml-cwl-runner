@@ -169,8 +169,9 @@ let execute_edges =
            | _ -> Alcotest.fail "expected Directory"));
     edge "glob_hidden_star" "glob-hidden.cwl"
       (Expect_ok (lookup_basenames "files" [ "vis" ]));
-    edge "basename_collision" "two-files.cwl" ~job:"collide-job.json"
-      Expect_runtime;
+    edge "same_basename_inputs" "two-files.cwl" ~job:"collide-job.json"
+      (Expect_ok
+         (lookup_bytes "out" "hello from file\n{\n  \"message\": \"hello\"\n}\n"));
     edge "json_path_over_location" "json-path-wins.cwl"
       (Expect_ok
          (fun ann ->
@@ -219,7 +220,8 @@ let execute_edges =
            match List.assoc_opt "out" ann.value with
            | Some v ->
                let p = String.trim (file_bytes v) in
-               Alcotest.(check bool) "is dir" true (Sys.is_directory p)
+               Alcotest.(check string)
+                 "basename" "fixtures" (Filename.basename p)
            | None -> Alcotest.fail "missing out"));
     edge "glob_overlap_uniq" "glob-overlap.cwl"
       (Expect_ok (lookup_basenames "files" [ "a.txt" ]));
@@ -325,9 +327,31 @@ let output_under_outdir =
           in
           List.iter (fun p -> expect_ok (R.confined [ outdir ] p)) paths )
 
+(* A relative job location names a file beside the job, by its absolute
+   path, whether or not the file is there. *)
+let missing_input_absolute =
+  ( "missing_input_absolute",
+    `Quick,
+    fun () ->
+      match run_tool "file-in.cwl" "missing-job.json" with
+      | Error (Cwl.Error.Runtime { message }) ->
+          let src =
+            Filename.concat (Unix.realpath "fixtures") "no-such-file.txt"
+          in
+          Alcotest.(check string)
+            "message"
+            ("copy source not found: " ^ src)
+            message
+      | _ -> Alcotest.fail "expected a runtime error" )
+
 let tests =
   [
     ( "execute",
       edge_cases
-      @ [ stdout_symlink_dest; stdin_symlink_out; output_under_outdir ] );
+      @ [
+          stdout_symlink_dest;
+          stdin_symlink_out;
+          output_under_outdir;
+          missing_input_absolute;
+        ] );
   ]

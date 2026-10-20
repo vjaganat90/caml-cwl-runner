@@ -124,8 +124,8 @@ val fold_map :
 (** [fold_map f acc v] is [map_result] with state: [f] is called on each leaf in
     walk order with the accumulator so far, and returns the new leaf and the
     next accumulator. The result is the rebuilt [v] and the last accumulator;
-    the first [Error] stops the walk. [Workdir] threads the basenames it has
-    already staged through it, to catch two Files staged under one name. *)
+    the first [Error] stops the walk. [Workdir] threads through it the basenames
+    it has staged in a directory, or the count of inputs staged. *)
 
 val fill_file_paths : value -> value
 (** [fill_file_paths v] sets the derived fields that a File or Directory in [v],
@@ -134,11 +134,12 @@ val fill_file_paths : value -> value
     [nameext] (Process.yml, File and Directory). A missing [path] is the last
     component of [location] read as a path by [Location.to_path] (a name, not a
     full path, with percent escapes decoded), a missing [basename] is the last
-    component of [path], and a File's missing [nameroot] and [nameext] split
-    [basename] at the last dot. So a [location] of [file:///d/a.tar.gz] gives
-    [path] and [basename] [a.tar.gz], [nameroot] [a.tar] and [nameext] [.gz];
-    [.cshrc] has an empty [nameext]. [checksum] and [size] are not computed
-    here, nor is [dirname]. *)
+    component of [path], each once [.] and [..] components are dropped (so [d/.]
+    gives [d], and [.] gives none), and a File's missing [nameroot] and
+    [nameext] split [basename] at the last dot. So a [location] of
+    [file:///d/a.tar.gz] gives [path] and [basename] [a.tar.gz], [nameroot]
+    [a.tar] and [nameext] [.gz]; [.cshrc] has an empty [nameext]. [checksum] and
+    [size] are not computed here, nor is [dirname]. *)
 
 val coerce : string -> t -> value -> (value, Error.t) result
 (** [coerce param ty doc] is [doc] checked as a value of type [ty]; [Schema]

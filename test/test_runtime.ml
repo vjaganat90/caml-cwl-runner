@@ -132,7 +132,7 @@ let local_env_inherits_only_path () =
     Eio_main.run @@ fun env ->
     let (module R) = Runtime.local env in
     R.spawn
-      { home = dir; tmpdir = dir }
+      { home = dir; tmpdir = dir; inputs = [] }
       dir
       { stdin_file = None; stdout_file = Some out; stderr_file = None }
       [ "/usr/bin/env" ]

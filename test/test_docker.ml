@@ -39,6 +39,7 @@ let prop_docker_argv_suffix =
           workdir;
           tag = "alpine";
           mounts = [];
+          read_only = [];
           container_env = [];
           network = true;
         }
@@ -268,8 +269,8 @@ let designated_cases =
     ("glob trimmed", Glob_file " /other/thing", true);
     ("glob trimmed outside", Glob_file " /etc/passwd", false);
     ("absent is host outdir", Host_outdir, true);
-    ("staged location is container path", Input_container, true);
-    ("staged location stays host path", Input_host, true);
+    ("staged location outside container outdir", Input_container, true);
+    ("staged location outside host outdir", Input_host, true);
   ]
 
 let docker_mount_table () =
@@ -322,14 +323,19 @@ let designated_outdir_table () =
         let module R = struct
           include Local
 
-          let spawn _env cwd _stdio argv =
+          let spawn (env : Cwl.Io.tool_env) cwd _stdio argv =
             (argv_ok :=
                match case with
                | Host_outdir -> List.mem cwd argv
-               | Input_host -> List.mem (Filename.concat cwd "hello.txt") argv
-               | Input_container ->
-                   List.mem "/other/hello.txt" argv
-                   && not (List.mem (Filename.concat cwd "hello.txt") argv)
+               | Input_host | Input_container ->
+                   (* staged outside the outdir, under a mounted input root *)
+                   List.exists
+                     (fun a ->
+                       Filename.basename a = "hello.txt"
+                       && List.mem
+                            (Filename.dirname (Filename.dirname a))
+                            env.inputs)
+                     argv
                | _ -> List.mem "/other" argv);
             match write_file (Filename.concat cwd "thing") "ok\n" with
             | Error _ as e -> e
@@ -502,6 +508,7 @@ let docker_run_argv_env_and_mounts () =
       workdir = "/out";
       tag = "alpine";
       mounts = [ ("/host/tmp", "/host/tmp") ];
+      read_only = [ "/host/stg" ];
       container_env = [ "HOME=/out"; "TMPDIR=/host/tmp" ];
       network = true;
     }
@@ -518,6 +525,8 @@ let docker_run_argv_env_and_mounts () =
       "/host/out:/out";
       "-v";
       "/host/tmp:/host/tmp";
+      "-v";
+      "/host/stg:/host/stg:ro";
       "--env";
       "HOME=/out";
       "--env";
@@ -539,6 +548,7 @@ let docker_run_argv_network () =
       workdir = "/w";
       tag = "alpine";
       mounts = [];
+      read_only = [];
       container_env = [];
       network;
     }

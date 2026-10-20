@@ -53,6 +53,8 @@ type docker_spec = {
       (** Container path of that mount, and the working directory ([-w]). *)
   tag : string;  (** Image to run. *)
   mounts : (string * string) list;  (** Extra [-v source:target] pairs. *)
+  read_only : string list;
+      (** Host paths mounted read-only at the same path ([-v p:p:ro]). *)
   container_env : string list;  (** [NAME=value] set inside the container. *)
   network : bool;
       (** Whether the container has a network; without it, [--network=none]. *)
@@ -75,12 +77,12 @@ val docker_run_argv : docker_spec -> string list -> string list
 (** [docker_run_argv spec argv] is the command line of the Docker client:
     [spec.bin run --rm], [--network=none] unless [spec.network],
     [--user spec.user], the [-v] mounts ([spec.cwd] at [spec.workdir], then
-    [spec.mounts]), a [--env] for each of [spec.container_env],
-    [-w spec.workdir], the image [spec.tag], and [argv] last. As [argv] follows
-    the image name, Docker runs it as the container's command (or, if the image
-    has an [ENTRYPOINT], passes it as that program's arguments) with no shell in
-    between (exec form). There is no [-i], so the container's stdin is not
-    connected to the client's. *)
+    [spec.mounts], then [spec.read_only]), a [--env] for each of
+    [spec.container_env], [-w spec.workdir], the image [spec.tag], and [argv]
+    last. As [argv] follows the image name, Docker runs it as the container's
+    command (or, if the image has an [ENTRYPOINT], passes it as that program's
+    arguments) with no shell in between (exec form). There is no [-i], so the
+    container's stdin is not connected to the client's. *)
 
 val docker :
   ?console:console ->
@@ -96,12 +98,13 @@ val docker :
     [--network=none] otherwise). The [cwd] given to [spawn] is bind-mounted, by
     its [realpath], at [req.output_directory] ([dockerOutputDirectory]) or, when
     that is absent, at the [cwd] path itself; the mount is the container's
-    working directory. The tmpdir is mounted at its own path. Nothing else of
-    the host is mounted, so a host path outside those two, such as an input
-    Directory, is not visible in the container. [HOME] and [TMPDIR] come from
-    the [tool_env] given to [spawn]; the Docker client itself runs with the
-    runner's environment. The container gets no standard input: [stdin_file] is
-    opened for the client only (see {!docker_run_argv}). [spawn] returns the
-    exit code of the [docker run] client, and fails with [Error.Runtime] when a
-    [docker] command fails or a mount path is not canonical. [console] defaults
-    to the runner's stderr. *)
+    working directory. The tmpdir is mounted at its own path, and each of the
+    [tool_env]'s [inputs], by its [realpath], read-only at that real path, so a
+    staged input's link resolves inside the container as on the host. Nothing
+    else of the host is mounted. [HOME] and [TMPDIR] come from the [tool_env]
+    given to [spawn]; the Docker client itself runs with the runner's
+    environment. The container gets no standard input: [stdin_file] is opened
+    for the client only (see {!docker_run_argv}). [spawn] returns the exit code
+    of the [docker run] client, and fails with [Error.Runtime] when a [docker]
+    command fails or a mount path is not canonical. [console] defaults to the
+    runner's stderr. *)
