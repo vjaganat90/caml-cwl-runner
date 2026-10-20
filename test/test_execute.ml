@@ -31,6 +31,16 @@ let collect_paths acc v =
       Option.fold ~none:acc ~some:(fun p -> p :: acc) (Cwl.Type.path v))
     acc v
 
+(* The basename and checksum of each entry in the [listing] of output [id]. *)
+let listing id ann =
+  match Option.bind (lookup id ann) (Cwl.Type.get "listing") with
+  | Some (Cwl.Untyped_tree.Array entries) ->
+      List.map
+        (fun e ->
+          (Cwl.Type.get_string "basename" e, Cwl.Type.get_string "checksum" e))
+        entries
+  | _ -> []
+
 let execute_edges =
   [
     edge "echo_stdout" "echo-stdout.cwl" ~job:"echo-job.json"
@@ -77,7 +87,17 @@ let execute_edges =
       (Expect_ok (fun _ -> ()));
     edge "stderr_stream" "stderr-stream.cwl"
       (Expect_ok (lookup_bytes "err" "err\n"));
-    edge "dir_glob" "dir-glob.cwl" (Expect_ok (lookup_dir "d"));
+    edge "dir_glob" "dir-glob.cwl"
+      (Expect_ok
+         (fun ann ->
+           lookup_dir "d" ann;
+           Alcotest.(check (list (pair (option string) (option string))))
+             "listing"
+             [
+               (Some "f", Some "sha1$6fcf9dfbd479ed82697fee719b9f8c610a11ff2a");
+             ]
+             (listing "d" ann)));
+    edge "dir_listing_symlink_out" "dir-symlink.cwl" Expect_runtime;
     edge "param_ref_glob" "param-ref-glob.cwl" ~job:"param-ref-job.json"
       (Expect_ok (lookup_file_basename "f" "hello.txt"));
     edge "json_relative_file" "json-relative.cwl"
