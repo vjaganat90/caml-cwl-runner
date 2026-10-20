@@ -46,8 +46,10 @@ module Param_ref : ENGINE
     followed by segments: [.name], a quoted key in brackets ([['k']], or with
     double quotes) or an index ([[0]]). A quoted key without brackets is
     accepted too. A name is ASCII letters, digits and [_], not starting with a
-    digit, and a quoted key ends at its first closing quote. Spaces and tabs are
-    allowed inside the parentheses and before a segment, not within one.
+    digit, and a quoted key ends at its first closing quote that no backslash
+    escapes: a backslash before the quote character puts that character in the
+    key. Spaces and tabs are allowed inside the parentheses and before a
+    segment, not within one.
 
     A segment looks up a field of an object, a File or Directory included, as it
     holds it: every field it was given, and those [Ty] fills in; item [n] of an
