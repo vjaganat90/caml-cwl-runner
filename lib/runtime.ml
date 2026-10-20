@@ -207,6 +207,7 @@ type docker_spec = {
   tag : string;
   mounts : (string * string) list;
   container_env : string list;
+  network : bool;
 }
 
 let mount_target s =
@@ -221,15 +222,9 @@ let docker_mount ~host ~workdir =
   (source, workdir)
 
 let docker_run_argv spec argv =
-  [
-    spec.bin;
-    "run";
-    "--rm";
-    "--user";
-    spec.user;
-    "-v";
-    spec.cwd ^ ":" ^ spec.workdir;
-  ]
+  [ spec.bin; "run"; "--rm" ]
+  @ (if spec.network then [] else [ "--network=none" ])
+  @ [ "--user"; spec.user; "-v"; spec.cwd ^ ":" ^ spec.workdir ]
   @ List.concat_map (fun (src, dst) -> [ "-v"; src ^ ":" ^ dst ]) spec.mounts
   @ List.concat_map (fun e -> [ "--env"; e ]) spec.container_env
   @ [ "-w"; spec.workdir; spec.tag ]
@@ -359,7 +354,7 @@ let prepare_image env console image =
       let+ _ = run_docker env console [ bin; "build"; "-t"; tag; dir ] in
       tag
 
-let docker ?console env (req : Schema.docker) =
+let docker ?console env ~network (req : Schema.docker) =
   let console = Option.value console ~default:(default_console env) in
   filesystem env console (fun tool cwd argv ->
       let* tag = prepare_image env console req.image in
@@ -382,6 +377,7 @@ let docker ?console env (req : Schema.docker) =
           tag;
           mounts = [ tmp ];
           container_env;
+          network;
         }
       in
       Ok { cwd = "/"; argv = docker_run_argv spec argv; env = client_env bin })

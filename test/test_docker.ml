@@ -40,6 +40,7 @@ let prop_docker_argv_suffix =
           tag = "alpine";
           mounts = [];
           container_env = [];
+          network = true;
         }
       in
       let got = Runtime.docker_run_argv spec argv in
@@ -354,7 +355,10 @@ let designated_outdir_table () =
                     | Ok () -> Ok 0
                     | Error _ as e -> e))
         end in
-        Cwl.run (module Local) ~docker:(fun _req -> (module R)) tool (Some job)
+        Cwl.run
+          (module Local)
+          ~docker:(fun ~network:_ _req -> (module R))
+          tool (Some job)
       in
       if not !argv_ok then
         Alcotest.failf "%s: $(runtime.outdir) was not the designated directory"
@@ -409,7 +413,7 @@ let run_template ~dir template substitutions =
   let job = write_text (Filename.concat dir "job.json") "{}\n" in
   Eio_main.run @@ fun env ->
   let local = Runtime.local env in
-  let docker image = Runtime.docker env image in
+  let docker ~network image = Runtime.docker env ~network image in
   match Cwl.run local ~docker tool (Some job) with
   | Ok _ -> ()
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
@@ -499,6 +503,7 @@ let docker_run_argv_env_and_mounts () =
       tag = "alpine";
       mounts = [ ("/host/tmp", "/host/tmp") ];
       container_env = [ "HOME=/out"; "TMPDIR=/host/tmp" ];
+      network = true;
     }
   in
   Alcotest.(check (list string))
@@ -525,6 +530,26 @@ let docker_run_argv_env_and_mounts () =
     ]
     (Runtime.docker_run_argv spec [ "echo"; "hi" ])
 
+let docker_run_argv_network () =
+  let spec network =
+    {
+      Runtime.bin = "docker";
+      user = "1:1";
+      cwd = "/h";
+      workdir = "/w";
+      tag = "alpine";
+      mounts = [];
+      container_env = [];
+      network;
+    }
+  in
+  let has network =
+    List.mem "--network=none" (Runtime.docker_run_argv (spec network) [ "x" ])
+  in
+  Alcotest.(check (pair bool bool))
+    "none unless granted" (true, false)
+    (has false, has true)
+
 let tests =
   [
     ( "docker_properties",
@@ -539,6 +564,7 @@ let tests =
         ("documents", `Quick, docker_output_documents);
         ("mount", `Quick, docker_mount_table);
         ("run_argv_env_and_mounts", `Quick, docker_run_argv_env_and_mounts);
+        ("network", `Quick, docker_run_argv_network);
         ("designated", `Quick, designated_outdir_table);
       ] );
     ( "docker_image",
