@@ -25,8 +25,8 @@ val safe_leaf : what:string -> string -> (string, Error.t) result
 (** [safe_leaf ~what s] is [Ok s] when [s] is a single path segment: not empty,
     not [.] or [..], and without slash, backslash or NUL. Otherwise it is an
     [Error.Runtime] whose message starts with [what]. It guards the names the
-    runner joins onto [outdir] (File basenames and the [stdin], [stdout] and
-    [stderr] file names), so none can point outside it. *)
+    runner joins onto [outdir] (staged basenames and the [stdout] and [stderr]
+    file names), so none can point outside it. *)
 
 val locate : string -> Ty.value -> (Ty.value, Error.t) result
 (** [locate dir v] is [v] with the [location] of each File and Directory (also
