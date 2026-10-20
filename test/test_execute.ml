@@ -71,6 +71,8 @@ let execute_edges =
       Expect_runtime;
     edge "output_eval_no_json" "output-eval.cwl"
       (Expect_unsupported "outputEval");
+    edge "output_eval_no_glob" "output-eval-no-glob.cwl"
+      (Expect_ok (lookup_int "n" 3L));
     edge "json_ignores_output_eval" "json-and-eval.cwl"
       (Expect_ok (lookup_int "n" 1L));
     edge "stdin_cat" "stdin-cat.cwl" ~job:"stdin-job.json"
