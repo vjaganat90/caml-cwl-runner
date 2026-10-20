@@ -1,0 +1,6 @@
+{
+  "file": "lib/schema.ml",
+  "old": "Untyped_tree.(String _ | Array _) -> return",
+  "new": "Untyped_tree.String _ -> return",
+  "why": "a list as the value of a map item is that parameter's type"
+}
