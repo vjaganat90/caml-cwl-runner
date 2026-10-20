@@ -1,7 +1,3 @@
-(** File and Directory values against a work directory. Stages inputs, relocates
-    container paths, confines outputs, and fills checksums. Does not glob,
-    spawn, or build argv. *)
-
 open Error.Syntax
 
 let safe_leaf ~what s =
@@ -14,143 +10,124 @@ let safe_leaf ~what s =
       (Printf.sprintf "%s must be a single path segment, got %S" what s)
   else Ok s
 
-let strip_file_uri loc =
-  if String.starts_with ~prefix:"file://" loc then
-    let rest = String.sub loc 7 (String.length loc - 7) in
-    if String.starts_with ~prefix:"//" rest then
-      match String.index_from_opt rest 2 '/' with
-      | Some i -> String.sub rest i (String.length rest - i)
-      | None -> rest
-    else rest
-  else loc
+(* Only a [file] URI, or a reference with no scheme, names a local file. *)
+let local_path s =
+  let scheme =
+    match String.index_opt s ':' with
+    | Some i
+      when i > 0
+           && String.length s > i + 2
+           && s.[i + 1] = '/'
+           && s.[i + 2] = '/' ->
+        (* cannot raise: i is an index of s *)
+        String.lowercase_ascii (String.sub s 0 i)
+    | _ -> "file"
+  in
+  if scheme = "file" then Ok (Location.to_path s)
+  else Error.runtime (Printf.sprintf "unsupported location scheme %S" scheme)
 
-let ensure_local_path s =
-  match String.index_opt s ':' with
-  | Some i
-    when i > 0 && String.length s > i + 2 && s.[i + 1] = '/' && s.[i + 2] = '/'
-    ->
-      let scheme = String.lowercase_ascii (String.sub s 0 i) in
-      if scheme = "file" then Ok (strip_file_uri s)
-      else
-        Error.runtime (Printf.sprintf "unsupported location scheme %S" scheme)
-  | _ -> Ok s
+(* A [location] is a URI reference and a [path] a plain path. *)
+let source ~dir ~what location path =
+  let+ src =
+    match (location, path) with
+    | Some loc, _ -> local_path loc
+    | None, Some path -> Ok path
+    | None, None ->
+        Error.runtime (Printf.sprintf "%s input missing location" what)
+  in
+  if Filename.is_relative src then Filename.concat dir src else src
 
-let resolve ~job_dir loc =
-  let loc = strip_file_uri loc in
-  if Filename.is_relative loc then Filename.concat job_dir loc else loc
+(* [v] with its [path] and [location] set to [path] and [location], each
+   where it is [Some]. A leaf that is not a File or Directory has neither. *)
+let set_paths v (path, location) =
+  let set key x v =
+    Option.fold ~none:v ~some:(fun s -> Ty.set key (Untyped_tree.String s) v) x
+  in
+  set "path" path v |> set "location" location
 
-let trim_slash s =
-  if String.length s > 1 && String.ends_with ~suffix:"/" s then
-    String.sub s 0 (String.length s - 1)
-  else s
+(* Process.yml, File [contents]: a File with neither [location] nor [path] is
+   a literal, and staging writes its [contents] to a file. With no [basename],
+   ccr names it [literal-<n>], [n] the count of Files staged before it. *)
+let is_literal v =
+  Ty.class_of v = Some "File" && Ty.path v = None && Ty.get "contents" v <> None
 
-let source ~job_dir ~what loc =
-  match Option.map (resolve ~job_dir) loc with
-  | None -> Error.runtime (Printf.sprintf "%s input missing location" what)
-  | Some s -> ensure_local_path s
+let locate dir v =
+  Ty.map_result
+    (fun v ->
+      match Ty.class_of v with
+      | None -> Ok v
+      | Some _ when is_literal v -> Ok v
+      | Some what ->
+          let+ src =
+            source ~dir ~what
+              (Ty.get_string "location" v)
+              (Ty.get_string "path" v)
+          in
+          let path = if what = "File" then None else Some src in
+          set_paths v (path, Some src))
+    v
 
-let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
-  function
-  | Ty.Vfile f ->
-      let* src = source ~job_dir ~what:"File" (Ty.file_loc f) in
-      let raw_base = Option.value f.basename ~default:(Filename.basename src) in
-      let* base = safe_leaf ~what:"File basename" raw_base in
-      if List.mem base used then
-        Error.runtime (Printf.sprintf "staging collision on basename '%s'" base)
-      else
-        let dst = Filename.concat outdir base in
-        let* () = R.copy_file src dst in
-        let seen = trim_slash container ^ "/" ^ base in
-        Ok
-          ( Ty.Vfile
-              {
-                f with
-                path = Some base;
-                basename = Some base;
-                location = Some seen;
-              },
-            base :: used )
-  | Ty.Vdir d ->
-      let* src = source ~job_dir ~what:"Directory" (Ty.dir_loc d) in
-      Ok (Ty.Vdir { location = Some src; path = Some src }, used)
-  | v -> Ok (v, used)
+let stage_leaf (module R : Io.WRITE) ~container ~outdir used v =
+  let place write fallback =
+    let raw_base =
+      Option.value (Ty.get_string "basename" v) ~default:fallback
+    in
+    let* base = safe_leaf ~what:"File basename" raw_base in
+    if List.mem base used then
+      Error.runtime (Printf.sprintf "staging collision on basename '%s'" base)
+    else
+      let* () = write (Filename.concat outdir base) in
+      let seen = Location.trim_slash container ^ "/" ^ base in
+      let v = Ty.set "basename" (Untyped_tree.String base) v in
+      Ok (Ty.fill_file_paths (set_paths v (Some base, Some seen)), base :: used)
+  in
+  match
+    (Ty.class_of v, Ty.get_string "location" v, Ty.get_string "contents" v)
+  with
+  | Some "File", Some src, _ -> place (R.copy_file src) (Filename.basename src)
+  | Some "File", None, Some text ->
+      let name = Printf.sprintf "literal-%d" (List.length used) in
+      place (fun dst -> R.write_file dst text) name
+  | _ -> Ok (v, used)
 
-let stage_value (module R : Runtime.WRITE) ~container ~outdir ~job_dir used v =
-  Ty.fold_map (stage_leaf (module R) ~container ~outdir ~job_dir) used v
+let stage_value (module R : Io.WRITE) ~container ~outdir used v =
+  Ty.fold_map (stage_leaf (module R) ~container ~outdir) used v
 
-let stage (module R : Runtime.WRITE) ~container ~outdir ~job_dir inputs =
+let stage (module R : Io.WRITE) ~container ~outdir inputs =
   let rec go used acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
-        let* v, used =
-          stage_value (module R) ~container ~outdir ~job_dir used v
-        in
+        let* v, used = stage_value (module R) ~container ~outdir used v in
         go used ((k, v) :: acc) rest
   in
   go [] [] inputs
 
-let normalize_abs path =
-  let segs = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
-  let rec go acc = function
-    | [] -> Some (List.rev acc)
-    | "." :: rest -> go acc rest
-    | ".." :: _ -> None
-    | seg :: rest -> go (seg :: acc) rest
-  in
-  match go [] segs with
-  | None -> None
-  | Some [] -> Some "/"
-  | Some segs -> Some ("/" ^ String.concat "/" segs)
-
 let relocate ~container ~host path =
-  if container = host || not (String.starts_with ~prefix:"/" path) then path
+  let dotdot = List.mem ".." (String.split_on_char '/' path) in
+  if container = host || Filename.is_relative path || dotdot then path
   else
-    match normalize_abs path with
+    match Location.relative container (Location.normalize path) with
     | None -> path
-    | Some normalized ->
-        let container = trim_slash container in
-        let host = trim_slash host in
-        if normalized = container then host
-        else
-          let prefix = container ^ "/" in
-          if String.starts_with ~prefix normalized then
-            host
-            ^ String.sub normalized (String.length container)
-                (String.length normalized - String.length container)
-          else path
-
-let map_paths f = function
-  | Ty.Vfile file ->
-      let path, location = f (Ty.file_path file) file.location in
-      Ty.Vfile { file with path; location }
-  | Ty.Vdir dir ->
-      let path, location = f (Ty.dir_path dir) dir.location in
-      Ty.Vdir { path; location }
-  | v -> v
-
-let map_paths_result f = function
-  | Ty.Vfile file ->
-      let+ path, location = f `File (Ty.file_path file) in
-      Ty.fill_file_paths (Ty.Vfile { file with path; location })
-  | Ty.Vdir dir ->
-      let+ path, location = f `Directory (Ty.dir_path dir) in
-      Ty.Vdir { path; location }
-  | v -> Ok v
+    | Some "" -> Location.trim_slash host
+    | Some rest -> Location.trim_slash host ^ "/" ^ rest
 
 let resolve_paths ~container host v =
   let abs p =
-    let p = strip_file_uri p in
     let p = relocate ~container ~host p in
     if Filename.is_relative p then Filename.concat host p else p
   in
   let endpoints preferred location =
     let path = Option.map abs preferred in
     let location =
-      match Option.map abs location with Some _ as kept -> kept | None -> path
+      match Option.map (fun l -> abs (Location.to_path l)) location with
+      | Some _ as kept -> kept
+      | None -> path
     in
     (path, location)
   in
-  Ty.map (map_paths endpoints) v
+  Ty.map
+    (fun v -> set_paths v (endpoints (Ty.path v) (Ty.get_string "location" v)))
+    v
 
 let kind_name = function `File -> "File" | `Directory -> "Directory"
 
@@ -174,40 +151,45 @@ let node_matches path expected got =
              got = got_name expected got;
            })
 
-let confine (module R : Runtime.READ) roots v =
+let confine (module R : Io.READ) roots v =
   let confine_path raw =
     if raw = "" then Error.runtime "File or Directory output missing path"
     else
       let* () = R.confined roots raw in
       match R.realpath raw with Ok p -> Ok p | Error _ -> Ok raw
   in
-  let one kind preferred =
-    let* path = confine_path (Option.value preferred ~default:"") in
-    let+ () = node_matches path kind (R.stat path) in
-    (Some path, Some path)
+  let one v =
+    match Ty.class_of v with
+    | None -> Ok v
+    | Some cls ->
+        let kind = if cls = "File" then `File else `Directory in
+        let* path = confine_path (Option.value (Ty.path v) ~default:"") in
+        let+ () = node_matches path kind (R.stat path) in
+        Ty.fill_file_paths (set_paths v (Some path, Some path))
   in
-  Ty.map_result (map_paths_result one) v
+  Ty.map_result one v
 
-let or_fill present compute =
-  match present with
-  | Some _ as kept -> Ok kept
-  | None ->
-      let+ value = compute () in
-      Some value
+(* [v] with [key] set to what [compute] gives, unless [v] already has it. *)
+let or_fill key compute v =
+  if Ty.get key v <> None then Ok v
+  else
+    let+ x = compute () in
+    Ty.set key x v
 
-let checksum (module R : Runtime.READ) v =
+let checksum (module R : Io.READ) v =
   Ty.map_result
-    (function
-      | Ty.Vfile f -> (
-          match Ty.file_path f with
-          | None -> Ok (Ty.Vfile f)
-          | Some path ->
-              let* checksum =
-                or_fill f.checksum (fun () ->
-                    let+ hex = R.sha1 path in
-                    "sha1$" ^ hex)
-              in
-              let* size = or_fill f.size (fun () -> R.file_size path) in
-              Ok (Ty.Vfile { f with checksum; size }))
-      | v -> Ok v)
+    (fun v ->
+      match (Ty.class_of v, Ty.path v) with
+      | Some "File", Some path ->
+          let sha1 () =
+            let+ hex = R.sha1 path in
+            Untyped_tree.String ("sha1$" ^ hex)
+          in
+          let size () =
+            let+ n = R.file_size path in
+            Untyped_tree.Int n
+          in
+          let* v = or_fill "checksum" sha1 v in
+          or_fill "size" size v
+      | _ -> Ok v)
     v
