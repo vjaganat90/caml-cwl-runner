@@ -37,10 +37,12 @@ val locate : string -> Ty.value -> (Ty.value, Error.t) result
     gives an absolute source. A Directory's [path] becomes that source too; it
     is not checked to exist. Pass the directory of the document that holds [v]
     (Process.yml, File and Directory [location]): the job file's for a job
-    value, the tool's for a [default].
+    value, the tool's for a [default]. A File literal, one with [contents] and
+    neither [location] nor [path], is left as it is for {!stage}.
 
-    Fails with [Error.Runtime] when a File or Directory has neither [location]
-    nor [path], or its location has a scheme other than [file]. *)
+    Fails with [Error.Runtime] when a File that is not a literal, or a
+    Directory, has neither [location] nor [path], or its location has a scheme
+    other than [file]. *)
 
 val stage :
   (module Io.WRITE) ->
@@ -53,13 +55,17 @@ val stage :
     [basename], else the last segment of its source, the host path in its
     [location] (see {!locate}, which must come first). The copy's [path] and
     [basename] are [b], a bare name that resolves from the tool's working
-    directory, and its [location] is [container/b]; its other fields are kept. A
-    File without a [location] and a Directory are left as they are.
+    directory, and its [location] is [container/b]; its other fields are kept,
+    and a missing [nameroot] and [nameext] are filled from [b]. A File literal
+    (see {!locate}) is written there instead, its [contents] as the file's text,
+    and named [literal-<n>] when it has no [basename], [n] being the number of
+    Files staged before it (Process.yml, File [contents]). Any other File
+    without a [location], and a Directory, are left as they are.
 
     Fails with [Error.Runtime] when a basename is not a {!safe_leaf}, two Files
     share a basename (even when they are the same file), or a File cannot be
-    copied: its source is missing or not a regular file, or [outdir] does not
-    exist. *)
+    copied or written: its source is missing or not a regular file, or [outdir]
+    does not exist. *)
 
 val relocate : container:string -> host:string -> string -> string
 (** [relocate ~container ~host p] moves [p] from under [container] to under
