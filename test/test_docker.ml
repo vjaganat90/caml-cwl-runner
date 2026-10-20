@@ -553,6 +553,52 @@ let docker_run_argv_network () =
     "none unless granted" (true, false)
     (has false, has true)
 
+let network_access_of src =
+  match parse_src src with
+  | Ok { Cwl.Error.value = tool; _ } ->
+      Ok (Cwl.Command_line_tool.network_access tool)
+  | Error _ as e -> e
+
+let network_access_documents () =
+  let doc section body =
+    "cwlVersion: v1.2\nclass: CommandLineTool\n" ^ section
+    ^ ":\n  NetworkAccess:\n    networkAccess: " ^ body
+    ^ "\nbaseCommand: echo\ninputs: []\noutputs: []\n"
+  in
+  let check name expect src =
+    match (network_access_of src, expect) with
+    | Ok got, `Net want -> Alcotest.(check bool) name want got
+    | Error (Cwl.Error.Schema _), `Schema -> ()
+    | _ -> Alcotest.failf "%s: unexpected result" name
+  in
+  check "required" (`Net true) (doc "requirements" "true");
+  check "hint" (`Net true) (doc "hints" "true");
+  check "false" (`Net false) (doc "requirements" "false");
+  check "absent" (`Net false)
+    "cwlVersion: v1.2\n\
+     class: CommandLineTool\n\
+     baseCommand: echo\n\
+     inputs: []\n\
+     outputs: []\n";
+  check "int" `Schema (doc "requirements" "1");
+  check "repeated" `Schema
+    "cwlVersion: v1.2\n\
+     class: CommandLineTool\n\
+     baseCommand: echo\n\
+     inputs: []\n\
+     outputs: []\n\
+     requirements:\n\
+    \  - class: NetworkAccess\n\
+    \    networkAccess: true\n\
+    \  - class: NetworkAccess\n\
+    \    networkAccess: false\n";
+  match parse_src (doc "requirements" "$(inputs.n)") with
+  | Ok { Cwl.Error.value = tool; _ } ->
+      Alcotest.(check (option string))
+        "expression" (Some "NetworkAccess")
+        (Cwl.Schema.first_unimplemented tool.requirements)
+  | Error _ -> Alcotest.fail "expression rejected"
+
 let tests =
   [
     ( "docker_properties",
@@ -568,6 +614,7 @@ let tests =
         ("mount", `Quick, docker_mount_table);
         ("run_argv_env_and_mounts", `Quick, docker_run_argv_env_and_mounts);
         ("network", `Quick, docker_run_argv_network);
+        ("network_access", `Quick, network_access_documents);
         ("designated", `Quick, designated_outdir_table);
       ] );
     ( "docker_image",

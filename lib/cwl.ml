@@ -310,21 +310,23 @@ let job_inputs (module R : Io.READ) tool tool_path job =
   in
   Type.apply_defaults_and_check specs job_raw
 
+(* The runtime of a tool: [Local] unless its requirements select docker. *)
+let runtime_for (module Local : Io.RUNTIME) docker tool =
+  match docker_image tool with
+  | None -> Ok (module Local : Io.RUNTIME)
+  | Some image -> (
+      match docker with
+      | None -> Error.runtime "DockerRequirement requires a docker runtime"
+      | Some mk ->
+          Ok (mk ~network:(Command_line_tool.network_access tool) image))
+
 let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
     tool_path job =
   let* tool, diagnostics = load_command_line_tool (module Local) tool_path in
   match Schema.first_unimplemented tool.requirements with
   | Some feature -> Error.unsupported feature
   | None ->
-      let* (module R : Io.RUNTIME) =
-        match docker_image tool with
-        | None -> Ok (module Local : Io.RUNTIME)
-        | Some image -> (
-            match docker with
-            | None ->
-                Error.runtime "DockerRequirement requires a docker runtime"
-            | Some mk -> Ok (mk ~network:false image))
-      in
+      let* (module R : Io.RUNTIME) = runtime_for (module Local) docker tool in
       let* outdir =
         match outdir with
         | Some d ->

@@ -341,6 +341,24 @@ let parse_docker path ~in_requirements kvs =
   in
   warn (hint @ unknown) (Docker { image; output_directory })
 
+(* A string [networkAccess] is an expression: ccr does not evaluate it, so the
+   requirement is [Unimplemented]. *)
+let parse_network path ~in_requirements kvs =
+  let unknown =
+    other_keys
+      [ "class"; "networkAccess" ]
+      (fun k -> diag ~in_requirements ("NetworkAccess." ^ k))
+      path kvs
+  in
+  match List.assoc_opt "networkAccess" kvs with
+  | Some (Untyped_tree.Bool b) -> warn unknown (Network_access b)
+  | Some (Untyped_tree.String _) ->
+      warn
+        (diag ~in_requirements "NetworkAccess.networkAccess expression" path
+        :: unknown)
+        (Unimplemented { class_ = "NetworkAccess"; in_requirements })
+  | _ -> Error.schema path "NetworkAccess networkAccess must be a boolean"
+
 (* In map form the key is the class, and a [null] body has no other field. *)
 let parse_requirement ~in_requirements path key v =
   let v =
@@ -358,6 +376,8 @@ let parse_requirement ~in_requirements path key v =
           parse_resource path ~in_requirements kvs
       | Some (Untyped_tree.String "DockerRequirement") ->
           parse_docker path ~in_requirements kvs
+      | Some (Untyped_tree.String "NetworkAccess") ->
+          parse_network path ~in_requirements kvs
       | Some (Untyped_tree.String class_) ->
           warn
             [ diag ~in_requirements class_ path ]
@@ -371,12 +391,12 @@ let parse_req_list ~in_requirements path v =
       (parse_requirement ~in_requirements)
       path v
   in
-  if
-    List.length (List.filter (function Docker _ -> true | _ -> false) reqs)
-    > 1
-  then
+  let count p = List.length (List.filter p reqs) in
+  if count (function Docker _ -> true | _ -> false) > 1 then
     Error.schema path
       "DockerRequirement is repeated; the mount target would be ambiguous"
+  else if count (function Network_access _ -> true | _ -> false) > 1 then
+    Error.schema path "NetworkAccess is repeated"
   else return reqs
 
 let first_unimplemented reqs =
