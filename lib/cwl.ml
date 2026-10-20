@@ -135,6 +135,30 @@ let pack_hits (module R : Io.READ) id ty hits =
         (Printf.sprintf "output '%s' matched %d paths, expected one" id
            (List.length ps))
 
+(* Process.yml, Directory [listing]: "List of files or subdirectories
+   contained in this directory." The spec does not say how deep an output's
+   listing goes; as cwltool does, a found Directory is listed to the bottom,
+   sorted by name, with dot names. Each entry is confined to [roots] like a
+   glob hit, and a walk deeper than [Glob.max_glob_depth] (a symlink loop)
+   is [Error.Runtime]. *)
+let rec listed (module R : Io.READ) roots depth v =
+  match (Ty.class_of v, Ty.path v) with
+  | Some "Directory", Some _ when depth > Glob.max_glob_depth ->
+      Error.runtime "Directory listing exceeded the depth limit"
+  | Some "Directory", Some dir ->
+      let* names = R.read_dir dir in
+      let entry name =
+        let p = Filename.concat dir name in
+        let* () = R.confined roots p in
+        listed
+          (module R : Io.READ)
+          roots (depth + 1)
+          (if R.is_dir p then dir_of p else found "File" p)
+      in
+      let+ entries = Error.map_list entry (List.sort String.compare names) in
+      Ty.set "listing" (Untyped_tree.Array entries) v
+  | _ -> Ok v
+
 let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
   match o.stream with
   | Schema.Stdout -> (
@@ -172,7 +196,8 @@ let collect_output (module R : Io.READ) ~container outdir roots ctx stdout_name
     let* groups = Error.map_list (Glob.glob (module R) ~roots outdir) pats in
     let hits = List.concat groups |> List.sort_uniq String.compare in
     let* _ = Error.map_list (R.confined roots) hits in
-    let+ v = pack_hits (module R) o.id o.ty hits in
+    let* v = pack_hits (module R) o.id o.ty hits in
+    let+ v = Ty.map_result (listed (module R) roots 0) v in
     (o.id, v)
 
 let collect_dir_roots acc v =

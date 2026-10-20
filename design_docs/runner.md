@@ -169,7 +169,11 @@ What the diagram leaves out:
   give `Error.Runtime`. An array takes any number, none giving `[]`. An optional
   array (`File[]?`) is handled like an optional File: one hit gives a File and
   several give `Error.Runtime`. An output with no `glob` is `null` if optional,
-  `[]` if an array, else `Error.Runtime`. `secondaryFiles` is a diagnostic.
+  `[]` if an array, else `Error.Runtime`. `secondaryFiles` is a diagnostic. A
+  Directory hit gets its `listing`, read through `Io.READ.read_dir`: every
+  entry, dot names included, sorted by name, each subdirectory listed in turn
+  (the spec leaves the depth open; cwltool lists the whole tree). Each entry is
+  confined like a hit, and more than 64 levels is `Error.Runtime`.
 - **Expressions.** `Expr.Param_ref` evaluates `position`, `valueFrom`, stream
   names and `glob`. A string that is one `$(…)` reference keeps the value's
   type. A string that mixes text and references is interpolated; `\$(`, `\${`
@@ -183,8 +187,8 @@ What the diagram leaves out:
   Every File has `location` (`file://` and the path), `path`, `basename`,
   `nameroot` and `nameext` (`basename` split at its last dot; `nameext` is empty
   with no dot or only a leading one), `checksum` (`sha1$` and the hex from
-  `Io.READ.sha1`) and `size`; a Directory has `location`, `path` and
-  `basename`. Every other field a File or Directory was given, such as
+  `Io.READ.sha1`) and `size`, also inside a `listing`; a Directory has
+  `location`, `path` and `basename`. Every other field a File or Directory was given, such as
   `format` or `secondaryFiles` in `cwl.output.json`, prints as it was given.
   No outputs print `{}`.
 

@@ -176,10 +176,16 @@ let or_fill key compute v =
     let+ x = compute () in
     Ty.set key x v
 
-let checksum (module R : Io.READ) v =
+let rec checksum (module R : Io.READ) v =
   Ty.map_result
     (fun v ->
       match (Ty.class_of v, Ty.path v) with
+      | Some "Directory", _ -> (
+          match Ty.get "listing" v with
+          | None -> Ok v
+          | Some entries ->
+              let+ entries = checksum (module R : Io.READ) entries in
+              Ty.set "listing" entries v)
       | Some "File", Some path ->
           let sha1 () =
             let+ hex = R.sha1 path in
