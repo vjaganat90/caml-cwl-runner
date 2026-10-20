@@ -5,9 +5,9 @@
     module is [Ty]; it is exported as [Cwl.Type], and its types are declared in
     [Data.Type].
 
-    The types are the Schema Salad primitives, [Any], [File], [Directory],
-    arrays and unions; an optional type is a union with [Null]. There is no
-    record or enum type: [Schema] reads each as [String], with a diagnostic.
+    The types are the Schema Salad primitives, [Any], enums, [File],
+    [Directory], arrays and unions; an optional type is a union with [Null].
+    There is no record type: [Schema] reads it as [String], with a diagnostic.
     [Int] and [Long] share the value [Int] ([int64]), [Float] and [Double] the
     value [Float], and no range or precision is checked. An array type carries
     the [inputBinding] written in it as [item_binding]. The type [binding] is
@@ -50,11 +50,12 @@ val is_optional : t -> bool
 val matches : t -> value -> bool
 (** [matches t v] is [true] when [v] is a valid value of type [t]. [Int] and
     [Long] take an integer, [Float] and [Double] any number, [String] only a
-    string, [File] and [Directory] an object of that [class_of]; an array needs
-    every item to match, a [Union] one member, [Any] every value but [null], and
-    no other type takes a record. [apply_defaults_and_check] uses it on job
-    inputs and [Cwl.run] on the entries of a [cwl.output.json]; [Bind] uses it
-    to pick the member of a union that fits a value. *)
+    string, an [Enum] one of its symbols, [File] and [Directory] an object of
+    that [class_of]; an array needs every item to match, a [Union] one member,
+    [Any] every value but [null], and no other type takes a record.
+    [apply_defaults_and_check] uses it on job inputs and [Cwl.run] on the
+    entries of a [cwl.output.json]; [Bind] uses it to pick the member of a union
+    that fits a value. *)
 
 val type_name : t -> string
 (** [type_name t] is the name of [t] in an error message: [int], [File],
