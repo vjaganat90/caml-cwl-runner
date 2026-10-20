@@ -24,7 +24,8 @@ let run outdir quiet rm_tmpdir tool_path job =
           (fun d ->
             Printf.eprintf "ccr: %s\n" (Cwl.Error.diagnostic_to_string d))
           ann.diagnostics;
-      print_endline (Cwl.Type.object_to_json ann.value);
+      print_endline
+        (Cwl.Type.to_json ~sorted:false (Cwl.Untyped_tree.Object ann.value));
       0
 
 let outdir =

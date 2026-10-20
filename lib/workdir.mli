@@ -7,7 +7,9 @@
     call it [host]. [container] is the path the tool sees for it: [outdir]
     itself, or the [dockerOutputDirectory] when the tool's [requirements] hold a
     [DockerRequirement] that sets one. The locations these functions produce are
-    plain paths; [Ty.to_json] adds [file://] when it prints a [location].
+    plain paths; [Ty.to_json] adds [file://] when it prints a [location]. Each
+    function changes only the fields it names and keeps every other field of a
+    File or Directory.
 
     Follows the File and Directory rules of the Process spec and "Output
     binding" in [invocation.md]: a relative output path is relative to [outdir],
@@ -90,13 +92,12 @@ val confine :
   (module Io.READ) -> string list -> Ty.value -> (Ty.value, Error.t) result
 (** [confine (module R) roots v] takes the [path], else the [location], of each
     File and Directory in [v], and returns the value with [path] and [location]
-    both set to that path's real path (symlinks resolved). A File's missing
-    [basename] becomes the last segment of the real path, and its missing
-    [nameroot] and [nameext] are split from its [basename]. The path must exist,
-    lie in or under one of the directories [roots], and be a regular file for a
-    File and a directory for a Directory. A relative path is looked up from the
-    runner's working directory, not from [roots], so call {!resolve_paths}
-    first.
+    both set to that path's real path (symlinks resolved). A missing [basename]
+    becomes the last segment of the real path, and a File's missing [nameroot]
+    and [nameext] are split from its [basename]. The path must exist, lie in or
+    under one of the directories [roots], and be a regular file for a File and a
+    directory for a Directory. A relative path is looked up from the runner's
+    working directory, not from [roots], so call {!resolve_paths} first.
 
     Fails with [Error.Runtime] when a File or Directory has no path, the path
     does not exist, or it is outside every root (or [roots] is empty), and with

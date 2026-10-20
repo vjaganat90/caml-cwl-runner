@@ -1,26 +1,28 @@
-(** CWL types ([t]), the runtime values ([value]) they describe, and the
-    operations the runner needs on both: checking a value against a type,
-    reading a document into values, walking nested values, and printing them
-    (for a command line, or as JSON). Inside the library this module is [Ty]; it
-    is exported as [Cwl.Type], and its types are declared in [Data.Type].
+(** CWL types ([t]), the values ([value]) they describe, and the operations the
+    runner needs on both: checking a value against a type, filling the fields of
+    a File or Directory that the spec computes, walking nested values, and
+    printing them (for a command line, or as JSON). Inside the library this
+    module is [Ty]; it is exported as [Cwl.Type], and its types are declared in
+    [Data.Type].
 
     The types are the Schema Salad primitives, [File], [Directory], arrays and
     unions; an optional type is a union with [Null]. There is no record, enum or
     [Any] type: [Schema] reads each as [String], with a diagnostic. [Int] and
-    [Long] share [Vint] ([int64]), [Float] and [Double] share [Vfloat], and no
-    range or precision is checked. An array type carries the [inputBinding]
-    written in it as [item_binding]. The type [binding] is defined here, not in
-    [Schema] (which parses types and bindings), so this module needs nothing
-    from [Schema]. A [Vrecord] is an object that is not a File or Directory,
-    such as a nested object in a job (the input object); no type describes it.
-    An [object_] is a job or an output object: an association list from
-    parameter id to value, in order.
+    [Long] share the value [Int] ([int64]), [Float] and [Double] the value
+    [Float], and no range or precision is checked. An array type carries the
+    [inputBinding] written in it as [item_binding]. The type [binding] is
+    defined here, not in [Schema] (which parses types and bindings), so this
+    module needs nothing from [Schema].
 
-    A {i leaf} is a value that is not an array or a record. File and Directory
-    are leaves, and hold only the fields of [file] and [directory]: reading a
-    document into values drops any other field ([dirname], [format], [contents],
-    [secondaryFiles], and for a Directory [basename] and [listing]). The walkers
-    [map], [map_result], [fold] and [fold_map] visit the leaves in
+    A [value] is the YAML/JSON tree ([Untyped_tree.value]) itself. A File or a
+    Directory is an [Object] by its [class] (see [class_of]), and keeps every
+    field it was given. Any other [Object] is a record, such as a nested object
+    in a job; no type describes it. An [object_] is a job or an output object:
+    an association list from parameter id to value, in order.
+
+    A {i leaf} is a value that is not an array or a record: File and Directory
+    are leaves, so a walker does not enter their [secondaryFiles] or [listing].
+    The walkers [map], [map_result], [fold] and [fold_map] visit the leaves in
     {i walk order}: depth first, in list order.
 
     Pure: no I/O (a document arrives already loaded, as an
@@ -48,10 +50,11 @@ val is_optional : t -> bool
 val matches : t -> value -> bool
 (** [matches t v] is [true] when [v] is a valid value of type [t]. [Int] and
     [Long] take an integer, [Float] and [Double] any number, [String] only a
-    string; an array needs every item to match, a [Union] one member, and no
-    type takes a [Vrecord]. [apply_defaults_and_check] uses it on job inputs and
-    [Cwl.run] on the entries of a [cwl.output.json]; [Bind] uses it to pick the
-    member of a union that fits a value. *)
+    string, [File] and [Directory] an object of that [class_of]; an array needs
+    every item to match, a [Union] one member, and no type takes a record.
+    [apply_defaults_and_check] uses it on job inputs and [Cwl.run] on the
+    entries of a [cwl.output.json]; [Bind] uses it to pick the member of a union
+    that fits a value. *)
 
 val type_name : t -> string
 (** [type_name t] is the name of [t] in an error message: [int], [File],
@@ -60,17 +63,36 @@ val type_name : t -> string
 
 val value_kind : value -> string
 (** [value_kind v] names what kind of value [v] is, for an error message: the
-    CWL name of a scalar, [File] or [Directory], and [array] or [record] with no
-    item type. A [Vint] is [int] and a [Vfloat] is [float], never [long] or
-    [double]. *)
+    CWL name of a scalar, [File] or [Directory] (its [class_of]), and [array] or
+    [record] with no item type. An [Int] is [int] and a [Float] is [float],
+    never [long] or [double]. *)
 
-val file_path : file -> string option
-(** [file_path f] is the [path] of [f], else its [location] as written
-    ([file://] included), else [None]. It is the path a command line shows, and
-    the one [Workdir] relocates, confines and hashes. *)
+val class_of : value -> string option
+(** [class_of v] is [Some "File"] or [Some "Directory"] when [v] is an object
+    with that [class] whose [location] and [path] (and for a File [basename],
+    [nameroot], [nameext] and [checksum]) are strings or absent, and whose File
+    [size] is an int or absent. Otherwise it is [None]: [v] is a record or not
+    an object. It is the one test of what a File or a Directory is. *)
 
-val dir_path : directory -> string option
-(** Like [file_path], for a Directory. *)
+val get : string -> value -> value option
+(** [get key v] is the field [key] of the object [v]: the first one when it is
+    repeated, and [None] when [v] is not an object or the field is missing or
+    [null], which CWL reads as absent. It is how code reads a field of a File or
+    Directory, such as its [size]. *)
+
+val get_string : string -> value -> string option
+(** [get_string key v] is [get key v] when that is a string, else [None]: the
+    [basename] of a File, say. *)
+
+val set : string -> value -> value -> value
+(** [set key x v] is the object [v] with the field [key] set to [x]: in place
+    when [v] has it, else added last. A [v] that is not an object is returned as
+    it is. It is how code changes a field of a File or Directory. *)
+
+val path : value -> string option
+(** [path v] is the [path] of the File or Directory [v], else its [location] as
+    written ([file://] included), else [None]. It is the path a command line
+    shows, and the one [Workdir] relocates, confines and hashes. *)
 
 val map : (value -> value) -> value -> value
 (** [map f v] is [v] with [f] applied to each leaf. Arrays and records keep
@@ -101,23 +123,24 @@ val fold_map :
 val fill_file_paths : value -> value
 (** [fill_file_paths v] sets the derived fields that a File or Directory in [v],
     at any depth, leaves unset, and keeps those already set. The spec has an
-    implementation fill in [path], [basename], [nameroot] and [nameext]. A
-    missing [path] is the last component of [location] read as a path by
-    [Location.to_path] (a name, not a full path, with percent escapes decoded),
-    a File's missing [basename] is the last component of [path], and its missing
-    [nameroot] and [nameext] split [basename] at the last dot. So a [location]
-    of [file:///d/a.tar.gz] gives [path] and [basename] [a.tar.gz], [nameroot]
-    [a.tar] and [nameext] [.gz]; [.cshrc] has an empty [nameext]. [checksum] and
-    [size] are not computed here. *)
+    implementation fill in [path], [basename], and for a File [nameroot] and
+    [nameext] (Process.yml, File and Directory). A missing [path] is the last
+    component of [location] read as a path by [Location.to_path] (a name, not a
+    full path, with percent escapes decoded), a missing [basename] is the last
+    component of [path], and a File's missing [nameroot] and [nameext] split
+    [basename] at the last dot. So a [location] of [file:///d/a.tar.gz] gives
+    [path] and [basename] [a.tar.gz], [nameroot] [a.tar] and [nameext] [.gz];
+    [.cshrc] has an empty [nameext]. [checksum] and [size] are not computed
+    here, nor is [dirname]. *)
 
-val value_of_tree : string -> t -> Untyped_tree.value -> (value, Error.t) result
-(** [value_of_tree param ty doc] reads [doc] as a value of type [ty]; [Schema]
+val coerce : string -> t -> value -> (value, Error.t) result
+(** [coerce param ty doc] is [doc] checked as a value of type [ty]; [Schema]
     uses it for an input's [default], and [param] is the input id that errors
-    name. A union takes its first member that reads: [Null] members are tried
-    last, or first when [doc] is [null]. Numbers read loosely: an integer a
-    [Float] or [Double], any number a [String]. A File or Directory reads from
-    an object whose optional [class] must match, drops the fields it does not
-    model, and gets [fill_file_paths].
+    name. A union takes its first member that fits: [Null] members are tried
+    last, or first when [doc] is [null]. Numbers fit loosely: an integer a
+    [Float] or [Double], and any number a [String], as which it is converted. A
+    File or Directory is an object whose optional [class] must match; it gets
+    that [class], keeps every field, and gets [fill_file_paths].
 
     A mismatch is [Error.Type], naming in [expected] the type that failed (the
     item type for a bad array item, the whole union for a union) and printing in
@@ -129,9 +152,9 @@ val value_of_tree : string -> t -> Untyped_tree.value -> (value, Error.t) result
 val object_of_tree : Untyped_tree.value -> (object_, Error.t) result
 (** [object_of_tree doc] reads a job or a [cwl.output.json] without knowing any
     types: [null] is the empty object, and each key of [doc] is an entry, in
-    order. A nested object with [class: File] or [class: Directory] reads as a
-    File or Directory (through [fill_file_paths]), or stays a plain record if
-    one of its fields has the wrong type. Types are checked later, by
+    order. A File or Directory in it (see [class_of]) gets [fill_file_paths]; an
+    object whose [class] is [File] or [Directory] and that has a field of the
+    wrong type is a record. Types are checked later, by
     [apply_defaults_and_check] for a job. A [doc] that is neither an object nor
     [null] is [Error.Schema] at [/]. *)
 
@@ -156,23 +179,15 @@ val string_of_value : value -> string
     trailing zeros but keeping at least one fractional digit, except that an
     integral float below 1e15 in magnitude has no fraction ([3.] is [3], [1e-12]
     is [0.0]). An array prints as [[a, b]] and a record as [{k: v}]. A File or
-    Directory is its [file_path] or [dir_path], or the empty string if unset. *)
+    Directory is its [path], or the empty string if unset. *)
 
-val to_json : value -> string
-(** [to_json v] is [v] as compact JSON, with record keys in their stored order.
-    A File or Directory is an object of [class] and then the fields that are
-    set, in the order of [file] or [directory], with [file://] put before its
-    [location] unless that starts with [file:]. A float prints with no fraction
+val to_json : sorted:bool -> value -> string
+(** [to_json ~sorted v] is [v] as compact JSON. Object keys are in their stored
+    order, or sorted bytewise at every depth when [sorted]: [Expr] sorts for the
+    text a non-string value takes inside an interpolated string, where the spec
+    sorts object entries by key, and the output object [ccr] prints is not
+    sorted. The [location] of a File or Directory prints with [file://] put
+    before it unless it starts with [file:]. A float prints with no fraction
     when it is integral with magnitude below 1e15, else through
     [string_of_float], which keeps 12 significant digits and prints a non-finite
     float as [nan], [inf] or [-inf] (not valid JSON). *)
-
-val to_json_sorted : value -> string
-(** Like [to_json], with the keys of every record, File and Directory sorted
-    bytewise. [Expr] uses it for the text a non-string value takes inside an
-    interpolated string, where the spec sorts object entries by key. A string,
-    even a top-level one, stays quoted: [Expr] writes it bare itself. *)
-
-val object_to_json : object_ -> string
-(** [object_to_json o] is [to_json] of [o] as a record, keys in the order of
-    [o]: the output object [ccr] prints on stdout. *)

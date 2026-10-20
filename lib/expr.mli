@@ -49,13 +49,12 @@ module Param_ref : ENGINE
     digit, and a quoted key ends at its first closing quote. Spaces and tabs are
     allowed inside the parentheses and before a segment, not within one.
 
-    A segment looks up a field of a record; a field of a File ([location],
-    [path], [basename], [nameroot], [nameext], [checksum], [size]) or of a
-    Directory ([location], [path]), null when unset; the [class] of either; item
-    [n] of an array or byte [n] of a string; or, as the last segment, the
-    [length] of an array. A lookup that finds nothing (a missing field, an index
-    out of range, any segment on null or on a value of another kind), an unknown
-    root, and an unclosed [$(] or [${] are [Error.Expr].
+    A segment looks up a field of an object, a File or Directory included, as it
+    holds it: every field it was given, and those [Ty] fills in; item [n] of an
+    array or byte [n] of a string; or, as the last segment, the [length] of an
+    array. A lookup that finds nothing (a missing field, an index out of range,
+    any segment on null or on a value of another kind), an unknown root, and an
+    unclosed [$(] or [${] are [Error.Expr].
 
     A closed [${...}], and a closed [$(...)] that is not a reference, such as
     [$(1 + 1)], are [Error.Unsupported] for [InlineJavascriptRequirement]. *)
