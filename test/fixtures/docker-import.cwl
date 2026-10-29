@@ -3,7 +3,7 @@ class: CommandLineTool
 requirements:
   DockerRequirement:
     dockerImport: @ARCHIVE@
-    dockerImageId: ccr-import-test
+    dockerImageId: @TAG@
 baseCommand: [echo, imported]
 inputs: []
 outputs: []

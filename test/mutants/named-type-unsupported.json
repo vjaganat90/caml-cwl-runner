@@ -1,0 +1,6 @@
+{
+  "file": "lib/schema.ml",
+  "old": "| other -> Error.unsupported (\"type \" ^ other)",
+  "new": "| other -> warn [ diag (\"type \" ^ other) json_path ] Ty.String",
+  "why": "a named type is unsupported, never read as a string"
+}

@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "if Ty.matches t value then",
+  "new": "if true then",
+  "why": "a union binds through the first member whose type the value has"
+}

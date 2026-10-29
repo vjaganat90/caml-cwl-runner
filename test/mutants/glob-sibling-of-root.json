@@ -1,0 +1,6 @@
+{
+  "file": "lib/location.ml",
+  "old": "let prefix = root ^ \"/\" in",
+  "new": "let prefix = root in",
+  "why": "a sibling that shares the root's name is not under the root"
+}

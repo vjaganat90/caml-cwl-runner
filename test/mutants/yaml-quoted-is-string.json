@@ -1,0 +1,6 @@
+{
+  "file": "lib/untyped_tree.ml",
+  "old": "| `Scalar { value; _ } -> Ok (String value)",
+  "new": "| `Scalar { value; _ } -> Ok (resolve_plain value)",
+  "why": "a quoted scalar is a string whatever its text"
+}

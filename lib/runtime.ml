@@ -1,8 +1,6 @@
-(** Stage files and spawn processes. The local body is Eio; tests pack a fake.
-    Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
-
+open Cwl
+open Io
 open Error.Syntax
-include Data.Runtime
 
 (* A failure becomes a value. Cancellation is not a failure: it is how Eio
    stops a fiber, so it passes through. *)
@@ -12,21 +10,16 @@ let wrap f =
   | exn -> Error.runtime (Printexc.to_string exn)
 
 let confined_using realpath roots path =
+  let holds resolved root =
+    match realpath root with
+    | Ok r -> Location.under r resolved
+    | Error _ -> false
+  in
   if roots = [] then Error.runtime "confined: no roots"
   else
-    match realpath path with
-    | Error _ as e -> e
-    | Ok resolved ->
-        let rec go = function
-          | [] ->
-              Error.runtime
-                (Printf.sprintf "path %S is not under a legal root" path)
-          | root :: rest -> (
-              match realpath root with
-              | Ok r when Glob.under r resolved -> Ok ()
-              | Ok _ | Error _ -> go rest)
-        in
-        go roots
+    let* resolved = realpath path in
+    if List.exists (holds resolved) roots then Ok ()
+    else Error.runtime (Printf.sprintf "path %S is not under a legal root" path)
 
 let node_of = function
   | `Not_found -> `Not_found
@@ -93,6 +86,14 @@ let run_process eio console { cwd; argv; env }
       match Eio.Process.await proc with
       | `Exited n -> n
       | `Signaled s -> failwith (Printf.sprintf "process killed by signal %d" s))
+
+let reject_stdio_symlink lstat label = function
+  | None -> Ok ()
+  | Some f -> (
+      match lstat f with
+      | `Symlink ->
+          Error.runtime (Printf.sprintf "%s destination is a symlink" label)
+      | _ -> Ok ())
 
 let filesystem eio console launch =
   let p = path_of eio in
@@ -164,15 +165,12 @@ let filesystem eio console launch =
       let* path = wrap (fun () -> native s) in
       host_realpath path
 
-    let confined roots path = confined_using realpath roots path
+    let symlink src dst =
+      let* target = realpath src in
+      wrap (fun () -> Eio.Path.symlink ~link_to:target (p dst))
 
-    let reject_stdio_symlink label = function
-      | None -> Ok ()
-      | Some f -> (
-          match lstat f with
-          | `Symlink ->
-              Error.runtime (Printf.sprintf "%s destination is a symlink" label)
-          | _ -> Ok ())
+    let confined roots path = confined_using realpath roots path
+    let reject_stdio_symlink = reject_stdio_symlink lstat
 
     let spawn env cwd stdio argv =
       if argv = [] then Error.runtime "empty argv"
@@ -213,7 +211,9 @@ type docker_spec = {
   workdir : string;
   tag : string;
   mounts : (string * string) list;
+  read_only : string list;
   container_env : string list;
+  network : bool;
 }
 
 let mount_target s =
@@ -228,16 +228,11 @@ let docker_mount ~host ~workdir =
   (source, workdir)
 
 let docker_run_argv spec argv =
-  [
-    spec.bin;
-    "run";
-    "--rm";
-    "--user";
-    spec.user;
-    "-v";
-    spec.cwd ^ ":" ^ spec.workdir;
-  ]
+  [ spec.bin; "run"; "--rm" ]
+  @ (if spec.network then [] else [ "--network=none" ])
+  @ [ "--user"; spec.user; "-v"; spec.cwd ^ ":" ^ spec.workdir ]
   @ List.concat_map (fun (src, dst) -> [ "-v"; src ^ ":" ^ dst ]) spec.mounts
+  @ List.concat_map (fun p -> [ "-v"; p ^ ":" ^ p ^ ":ro" ]) spec.read_only
   @ List.concat_map (fun e -> [ "--env"; e ]) spec.container_env
   @ [ "-w"; spec.workdir; spec.tag ]
   @ argv
@@ -366,7 +361,7 @@ let prepare_image env console image =
       let+ _ = run_docker env console [ bin; "build"; "-t"; tag; dir ] in
       tag
 
-let docker ?console env (req : Schema.docker) =
+let docker ?console env ~network (req : Schema.docker) =
   let console = Option.value console ~default:(default_console env) in
   filesystem env console (fun tool cwd argv ->
       let* tag = prepare_image env console req.image in
@@ -379,6 +374,12 @@ let docker ?console env (req : Schema.docker) =
       in
       let* source, workdir = docker_mount ~host:cwd ~workdir in
       let* tmp = docker_mount ~host:tool.tmpdir ~workdir:tool.tmpdir in
+      let* read_only =
+        Error.map_list
+          (fun p -> Result.bind (host_realpath p) mount_target)
+          tool.inputs
+      in
+      let read_only = List.sort_uniq String.compare read_only in
       let container_env = [ "HOME=" ^ tool.home; "TMPDIR=" ^ tool.tmpdir ] in
       let spec =
         {
@@ -388,7 +389,9 @@ let docker ?console env (req : Schema.docker) =
           workdir;
           tag;
           mounts = [ tmp ];
+          read_only;
           container_env;
+          network;
         }
       in
       Ok { cwd = "/"; argv = docker_run_argv spec argv; env = client_env bin })
