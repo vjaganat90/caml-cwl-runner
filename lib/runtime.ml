@@ -1,8 +1,6 @@
-(** Stage files and spawn processes. The local body is Eio; tests pack a fake.
-    Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
-
+open Cwl
+open Io
 open Error.Syntax
-include Data.Runtime
 
 (* A failure becomes a value. Cancellation is not a failure: it is how Eio
    stops a fiber, so it passes through. *)
@@ -12,21 +10,16 @@ let wrap f =
   | exn -> Error.runtime (Printexc.to_string exn)
 
 let confined_using realpath roots path =
+  let holds resolved root =
+    match realpath root with
+    | Ok r -> Location.under r resolved
+    | Error _ -> false
+  in
   if roots = [] then Error.runtime "confined: no roots"
   else
-    match realpath path with
-    | Error _ as e -> e
-    | Ok resolved ->
-        let rec go = function
-          | [] ->
-              Error.runtime
-                (Printf.sprintf "path %S is not under a legal root" path)
-          | root :: rest -> (
-              match realpath root with
-              | Ok r when Glob.under r resolved -> Ok ()
-              | Ok _ | Error _ -> go rest)
-        in
-        go roots
+    let* resolved = realpath path in
+    if List.exists (holds resolved) roots then Ok ()
+    else Error.runtime (Printf.sprintf "path %S is not under a legal root" path)
 
 let node_of = function
   | `Not_found -> `Not_found
@@ -214,6 +207,7 @@ type docker_spec = {
   tag : string;
   mounts : (string * string) list;
   container_env : string list;
+  network : bool;
 }
 
 let mount_target s =
@@ -228,15 +222,9 @@ let docker_mount ~host ~workdir =
   (source, workdir)
 
 let docker_run_argv spec argv =
-  [
-    spec.bin;
-    "run";
-    "--rm";
-    "--user";
-    spec.user;
-    "-v";
-    spec.cwd ^ ":" ^ spec.workdir;
-  ]
+  [ spec.bin; "run"; "--rm" ]
+  @ (if spec.network then [] else [ "--network=none" ])
+  @ [ "--user"; spec.user; "-v"; spec.cwd ^ ":" ^ spec.workdir ]
   @ List.concat_map (fun (src, dst) -> [ "-v"; src ^ ":" ^ dst ]) spec.mounts
   @ List.concat_map (fun e -> [ "--env"; e ]) spec.container_env
   @ [ "-w"; spec.workdir; spec.tag ]
@@ -366,7 +354,7 @@ let prepare_image env console image =
       let+ _ = run_docker env console [ bin; "build"; "-t"; tag; dir ] in
       tag
 
-let docker ?console env (req : Schema.docker) =
+let docker ?console env ~network (req : Schema.docker) =
   let console = Option.value console ~default:(default_console env) in
   filesystem env console (fun tool cwd argv ->
       let* tag = prepare_image env console req.image in
@@ -389,6 +377,7 @@ let docker ?console env (req : Schema.docker) =
           tag;
           mounts = [ tmp ];
           container_env;
+          network;
         }
       in
       Ok { cwd = "/"; argv = docker_run_argv spec argv; env = client_env bin })

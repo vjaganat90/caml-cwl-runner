@@ -1,0 +1,6 @@
+{
+  "file": "lib/ty.ml",
+  "old": "  | Any, _ -> true",
+  "new": "  | Any, _ -> false",
+  "why": "Any validates for any non-null value"
+}

@@ -5,11 +5,10 @@ open Harness
 
 let run_tool tool job =
   Eio_main.run @@ fun env ->
-  Cwl.run (Cwl.Runtime.local env) (fixture tool) (Some (fixture job))
+  Cwl.run (Runtime.local env) (fixture tool) (Some (fixture job))
 
 type outcome =
   | Expect_ok of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
-  | Expect_ok_or_error of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
   | Expect_runtime
   | Expect_type
   | Expect_schema
@@ -28,18 +27,19 @@ let edge ?(job = "empty-job.json") ?(docker = false) name tool outcome =
 
 let collect_paths acc v =
   Cwl.Type.fold
-    (fun acc -> function
-      | Cwl.Type.Vfile f -> (
-          match Cwl.Type.file_path f with Some p -> p :: acc | None -> acc)
-      | Cwl.Type.Vdir d -> (
-          match Cwl.Type.dir_path d with Some p -> p :: acc | None -> acc)
-      | _ -> acc)
+    (fun acc v ->
+      Option.fold ~none:acc ~some:(fun p -> p :: acc) (Cwl.Type.path v))
     acc v
 
-let leaks_host p =
-  String.starts_with ~prefix:"/etc/" p
-  || String.starts_with ~prefix:"/usr/" p
-  || p = "/etc" || p = "/usr" || p = "/"
+(* The basename and checksum of each entry in the [listing] of output [id]. *)
+let listing id ann =
+  match Option.bind (lookup id ann) (Cwl.Type.get "listing") with
+  | Some (Cwl.Untyped_tree.Array entries) ->
+      List.map
+        (fun e ->
+          (Cwl.Type.get_string "basename" e, Cwl.Type.get_string "checksum" e))
+        entries
+  | _ -> []
 
 let execute_edges =
   [
@@ -67,18 +67,47 @@ let execute_edges =
     edge ~docker:true "docker_echo" "docker-req.cwl" (Expect_ok (fun _ -> ()));
     edge ~docker:true "docker_image_id" "docker-image-id.cwl"
       (Expect_ok (fun _ -> ()));
-    edge ~docker:true "docker_file" "docker-file.cwl" (Expect_ok (fun _ -> ()));
     edge ~docker:true "docker_json_escape" "docker-json-escape.cwl"
       Expect_runtime;
     edge "output_eval_no_json" "output-eval.cwl"
       (Expect_unsupported "outputEval");
+    edge "output_eval_no_glob" "output-eval-no-glob.cwl"
+      (Expect_ok (lookup_int "n" 3L));
     edge "json_ignores_output_eval" "json-and-eval.cwl"
       (Expect_ok (lookup_int "n" 1L));
     edge "stdin_cat" "stdin-cat.cwl" ~job:"stdin-job.json"
       (Expect_ok (lookup_bytes "out" "hello from file\n"));
+    edge "stdin_cat_percent" "stdin-cat.cwl" ~job:"percent-job.json"
+      (Expect_ok (lookup_bytes "out" "hello from file\n"));
+    edge "stdin_cat_literal" "stdin-cat.cwl" ~job:"literal-job.json"
+      (Expect_ok (lookup_bytes "out" "literal\n"));
+    edge "default_tool_relative" "default-loc/tool.cwl"
+      (Expect_ok (lookup_bytes "out" "hello from tool dir\n"));
+    edge "directory_from_tool_cwd" "dir-ls.cwl" ~job:"dir-in-job.json"
+      (Expect_ok (fun _ -> ()));
+    edge "undeclared_file_ignored" "file-in.cwl" ~job:"undeclared-job.json"
+      (Expect_ok (fun _ -> ()));
     edge "stderr_stream" "stderr-stream.cwl"
       (Expect_ok (lookup_bytes "err" "err\n"));
-    edge "dir_glob" "dir-glob.cwl" (Expect_ok (lookup_dir "d"));
+    edge "dir_glob" "dir-glob.cwl"
+      (Expect_ok
+         (fun ann ->
+           lookup_dir "d" ann;
+           Alcotest.(check (list (pair (option string) (option string))))
+             "listing"
+             [
+               (Some "f", Some "sha1$6fcf9dfbd479ed82697fee719b9f8c610a11ff2a");
+             ]
+             (listing "d" ann)));
+    edge "dir_listing_symlink_out" "dir-symlink.cwl" Expect_runtime;
+    edge "dir_literal_file_literal" "dir-literal.cwl"
+      ~job:"dir-literal-job.json"
+      (Expect_ok (lookup_bytes "out" "hi\n"));
+    edge "stdin_in_subdir" "stdin-dir.cwl" ~job:"dir-literal-job.json"
+      (Expect_ok (lookup_bytes "out" "hi\n"));
+    edge "dir_literal_located_file" "dir-literal.cwl"
+      ~job:"dir-located-job.json"
+      (Expect_ok (lookup_bytes "out" "hello from file\n"));
     edge "param_ref_glob" "param-ref-glob.cwl" ~job:"param-ref-job.json"
       (Expect_ok (lookup_file_basename "f" "hello.txt"));
     edge "json_relative_file" "json-relative.cwl"
@@ -96,10 +125,12 @@ let execute_edges =
          (fun ann ->
            let f = lookup_file "f" ann in
            Alcotest.(check (option string))
-             "nameroot" (Some "foo") f.Cwl.Type.nameroot;
+             "nameroot" (Some "foo")
+             (Cwl.Type.get_string "nameroot" f);
            Alcotest.(check (option string))
-             "nameext" (Some ".txt") f.Cwl.Type.nameext;
-           let json = Cwl.Type.to_json (Cwl.Type.Vfile f) in
+             "nameext" (Some ".txt")
+             (Cwl.Type.get_string "nameext" f);
+           let json = Cwl.Type.to_json ~sorted:false f in
            Alcotest.(check bool)
              "json nameroot" true
              (mem_sub ~sub:"\"nameroot\":\"foo\"" json);
@@ -129,9 +160,9 @@ let execute_edges =
     edge "glob_runtime_outdir" "glob-outdir.cwl"
       (Expect_ok
          (fun ann ->
-           match List.assoc_opt "d" ann.value with
+           match Option.map (classed "Directory" "d") (lookup "d" ann) with
            | Some v -> (
-               match dir_path v with
+               match Cwl.Type.path v with
                | Some p ->
                    Alcotest.(check bool) "is dir" true (Sys.is_directory p)
                | None -> Alcotest.fail "Directory missing path")
@@ -148,7 +179,10 @@ let execute_edges =
                Alcotest.(check string) "basename" "a.txt" (Filename.basename p);
                Alcotest.(check bool)
                  "not host path" true
-                 (not (String.starts_with ~prefix:"/etc/" p))
+                 (not (String.starts_with ~prefix:"/etc/" p));
+               Alcotest.(check (option string))
+                 "format kept" (Some "http://edamontology.org/format_2330")
+                 (Cwl.Type.get_string "format" (lookup_file "f" ann))
            | None -> Alcotest.fail "File missing path"));
     edge "json_extra_int_kept" "json-extra-int.cwl"
       (Expect_ok (lookup_int "n" 1L));
@@ -157,9 +191,11 @@ let execute_edges =
          (fun ann ->
            let f = lookup_file "f" ann in
            Alcotest.(check (option string))
-             "nameroot" (Some "foo") f.Cwl.Type.nameroot;
+             "nameroot" (Some "foo")
+             (Cwl.Type.get_string "nameroot" f);
            Alcotest.(check (option string))
-             "nameext" (Some "") f.Cwl.Type.nameext));
+             "nameext" (Some "")
+             (Cwl.Type.get_string "nameext" f)));
     edge "stdout_from_input" "stdout-named.cwl" ~job:"stdout-named-job.json"
       (Expect_ok
          (fun ann ->
@@ -189,16 +225,7 @@ let execute_edges =
       (Expect_ok (lookup_basenames "files" [ "a.txt" ]));
     edge "json_file_is_dir" "json-file-is-dir.cwl" Expect_type;
     edge "workflow_unsupported" "workflow.cwl" (Expect_unsupported "Workflow");
-    edge "glob_starstar_root" "glob-starstar.cwl"
-      (Expect_ok_or_error
-         (fun ann ->
-           let paths =
-             List.fold_left (fun acc (_, v) -> collect_paths acc v) [] ann.value
-           in
-           List.iter
-             (fun p ->
-               if leaks_host p then Alcotest.fail ("leaked host path " ^ p))
-             paths));
+    edge "glob_starstar_root" "glob-starstar.cwl" Expect_runtime;
   ]
 
 let run_edge e () =
@@ -207,43 +234,38 @@ let run_edge e () =
     if not e.docker then run_tool e.tool e.job
     else
       Eio_main.run @@ fun env ->
-      let local = Cwl.Runtime.local env in
-      let docker image = Cwl.Runtime.docker env image in
+      let local = Runtime.local env in
+      let docker ~network image = Runtime.docker env ~network image in
       Cwl.run local ~docker (fixture e.tool) (Some (fixture e.job))
   in
   match result with
   | Ok ann -> (
       match e.outcome with
-      | Expect_ok f | Expect_ok_or_error f -> f ann
+      | Expect_ok f -> f ann
       | Expect_runtime -> Alcotest.fail "expected Runtime error"
       | Expect_type -> Alcotest.fail "expected Type error"
       | Expect_schema -> Alcotest.fail "expected Schema error"
       | Expect_unsupported _ -> Alcotest.fail "expected Unsupported")
   | Error (Cwl.Error.Runtime _ as err) -> (
       match e.outcome with
-      | Expect_runtime | Expect_ok_or_error _ -> ()
+      | Expect_runtime -> ()
       | _ ->
           Alcotest.fail ("unexpected Runtime error: " ^ Cwl.Error.to_string err)
       )
   | Error (Cwl.Error.Type _) -> (
       match e.outcome with
-      | Expect_type | Expect_ok_or_error _ -> ()
+      | Expect_type -> ()
       | _ -> Alcotest.fail "unexpected Type error")
   | Error (Cwl.Error.Schema _) -> (
       match e.outcome with
       | Expect_schema -> ()
-      | Expect_ok_or_error _ -> ()
       | _ -> Alcotest.fail "unexpected Schema error")
   | Error (Cwl.Error.Unsupported { feature }) -> (
       match e.outcome with
       | Expect_unsupported want ->
           Alcotest.(check string) "feature" want feature
-      | Expect_ok_or_error _ -> ()
       | _ -> Alcotest.fail ("unexpected Unsupported " ^ feature))
-  | Error err -> (
-      match e.outcome with
-      | Expect_ok_or_error _ -> ()
-      | _ -> Alcotest.fail (Cwl.Error.to_string err))
+  | Error err -> Alcotest.fail (Cwl.Error.to_string err)
 
 let edge_cases =
   List.map
@@ -286,7 +308,7 @@ let output_under_outdir =
     `Quick,
     fun () ->
       Eio_main.run @@ fun env ->
-      let (module R) = Cwl.Runtime.local env in
+      let (module R) = Runtime.local env in
       let outdir = expect_ok (R.mkdtemp "ccr-under-") in
       let outdir = expect_ok (R.abspath outdir) in
       match

@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "Ty.Record fields when b.value_from = None ->",
+  "new": "Ty.Record fields when false ->",
+  "why": "a bound record binds its fields after its own words"
+}
