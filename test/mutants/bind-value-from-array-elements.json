@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "| Ty.Varray xs, _ -> elements e ctx key name Ty.String Ty.default_binding xs",
+  "new": "| Ty.Varray _, _ -> Ok []",
+  "why": "an array a valueFrom gives is its prefix, then each of its elements"
+}
