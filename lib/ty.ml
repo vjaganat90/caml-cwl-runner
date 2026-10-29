@@ -1,8 +1,3 @@
-(** Avro-ish CWL types and runtime values. Nested [inputBinding] on arrays lives
-    here so [Command_line_tool] can depend on [Type] without a cycle. Walkers
-    recurse into arrays and records; callers handle leaves. Does not load
-    documents or spawn. *)
-
 include Data.Type
 open Error.Syntax
 
@@ -50,30 +45,33 @@ let dir_loc (d : directory) = or_else d.location d.path
 let file_path (f : file) = or_else f.path f.location
 let dir_path (d : directory) = or_else d.path d.location
 
-let rec map f = function
-  | Varray xs -> Varray (List.map (map f) xs)
-  | Vrecord kvs -> Vrecord (List.map (fun (k, v) -> (k, map f v)) kvs)
-  | v -> f v
-
-let rec map_result f = function
-  | Varray xs ->
-      let+ xs = Error.map_list (map_result f) xs in
-      Varray xs
+(* The containers the walkers descend into: arrays and records. File and
+   Directory stay leaves until secondaryFiles and listing are walked. visit
+   returns a container's children and a function that rebuilds the container
+   from new children. *)
+let visit = function
+  | Varray xs -> Some (xs, fun ys -> Varray ys)
   | Vrecord kvs ->
-      let* kvs =
-        Error.map_list
-          (fun (k, v) ->
-            let+ v = map_result f v in
-            (k, v))
-          kvs
-      in
-      Ok (Vrecord kvs)
-  | v -> f v
+      Some
+        ( List.map snd kvs,
+          (* cannot raise: the walk returns one child per key it was given *)
+          fun ys -> Vrecord (List.map2 (fun (k, _) y -> (k, y)) kvs ys) )
+  | Vnull | Vbool _ | Vint _ | Vfloat _ | Vstring _ | Vfile _ | Vdir _ -> None
 
-let rec fold f acc = function
-  | Varray xs -> List.fold_left (fold f) acc xs
-  | Vrecord kvs -> List.fold_left (fun acc (_, v) -> fold f acc v) acc kvs
-  | v -> f acc v
+let rec map f v =
+  match visit v with None -> f v | Some (xs, put) -> put (List.map (map f) xs)
+
+let rec map_result f v =
+  match visit v with
+  | None -> f v
+  | Some (xs, put) ->
+      let+ xs = Error.map_list (map_result f) xs in
+      put xs
+
+let rec fold f acc v =
+  match visit v with
+  | None -> f acc v
+  | Some (xs, _) -> List.fold_left (fold f) acc xs
 
 let rec map_state f acc ys = function
   | [] -> Ok (List.rev ys, acc)
@@ -81,20 +79,12 @@ let rec map_state f acc ys = function
       let* y, acc = f acc x in
       map_state f acc (y :: ys) xs
 
-let rec fold_map f acc = function
-  | Varray xs ->
-      let+ xs, acc = map_state (fold_map f) acc [] xs in
-      (Varray xs, acc)
-  | Vrecord kvs ->
-      let+ kvs, acc =
-        map_state
-          (fun acc (k, v) ->
-            let+ v, acc = fold_map f acc v in
-            ((k, v), acc))
-          acc [] kvs
-      in
-      (Vrecord kvs, acc)
-  | v -> f acc v
+let rec fold_map f acc v =
+  match visit v with
+  | None -> f acc v
+  | Some (xs, put) ->
+      let+ ys, acc = map_state (fun acc x -> fold_map f acc x) acc [] xs in
+      (put ys, acc)
 
 let file_basename_of location_or_path =
   match location_or_path with
@@ -134,7 +124,6 @@ let rec matches ty value =
   | Null, Vnull -> true
   | Boolean, Vbool _ -> true
   | (Int | Long), Vint _ -> true
-  | (Int | Long), Vfloat f when Float.is_integer f -> true
   | (Float | Double), Vfloat _ -> true
   | (Float | Double), Vint _ -> true
   | String, Vstring _ -> true
@@ -154,32 +143,27 @@ let require_class param expected kvs =
         (Error.Type
            { param; expected; got = Format.asprintf "%a" Untyped_tree.pp v })
 
-let rec parse_file_object param kvs =
+let parse_file_object param kvs =
   let* () = require_class param "File" kvs in
-  Ok
-    (Vfile
-       (fill_file
-          {
-            location = Untyped_tree.string_field kvs "location";
-            path = Untyped_tree.string_field kvs "path";
-            basename = Untyped_tree.string_field kvs "basename";
-            nameroot = Untyped_tree.string_field kvs "nameroot";
-            nameext = Untyped_tree.string_field kvs "nameext";
-            checksum = Untyped_tree.string_field kvs "checksum";
-            size = Untyped_tree.int_field kvs "size";
-          }))
+  let string = Untyped_tree.string_field ~json_path:param kvs in
+  let* location = string "location" in
+  let* path = string "path" in
+  let* basename = string "basename" in
+  let* nameroot = string "nameroot" in
+  let* nameext = string "nameext" in
+  let* checksum = string "checksum" in
+  let+ size = Untyped_tree.int_field ~json_path:param kvs "size" in
+  Vfile
+    (fill_file { location; path; basename; nameroot; nameext; checksum; size })
 
-and parse_directory_object param kvs =
+let parse_directory_object param kvs =
   let* () = require_class param "Directory" kvs in
-  Ok
-    (fill_file_paths
-       (Vdir
-          {
-            location = Untyped_tree.string_field kvs "location";
-            path = Untyped_tree.string_field kvs "path";
-          }))
+  let string = Untyped_tree.string_field ~json_path:param kvs in
+  let* location = string "location" in
+  let+ path = string "path" in
+  fill_file_paths (Vdir { location; path })
 
-and value_of_tree param ty doc =
+let rec value_of_tree param ty doc =
   let fail expected =
     Error
       (Error.Type
@@ -208,8 +192,6 @@ and value_of_tree param ty doc =
   | Null, Untyped_tree.Null -> Ok Vnull
   | Boolean, Untyped_tree.Bool b -> Ok (Vbool b)
   | (Int | Long), Untyped_tree.Int n -> Ok (Vint n)
-  | (Int | Long), Untyped_tree.Float f when Float.is_integer f ->
-      Ok (Vint (Int64.of_float f))
   | (Float | Double), Untyped_tree.Float f -> Ok (Vfloat f)
   | (Float | Double), Untyped_tree.Int n -> Ok (Vfloat (Int64.to_float n))
   | String, Untyped_tree.String s -> Ok (Vstring s)
