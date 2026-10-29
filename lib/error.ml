@@ -1,7 +1,3 @@
-(** Failure of the current operation ([t]) vs a parsed construct that is not
-    implemented ([diagnostic]). [in_requirements] is fatal at execute, not at
-    argv. No I/O. *)
-
 include Data.Error
 
 module Syntax = struct
@@ -10,6 +6,32 @@ module Syntax = struct
 end
 
 open Syntax
+
+module Annotated = struct
+  type nonrec 'a t = ('a annotated, t) result
+
+  let return value = Ok { value; diagnostics = [] }
+  let warn diagnostics value = Ok { value; diagnostics }
+
+  let ( let* ) r f =
+    let* a = r in
+    let+ b = f a.value in
+    { b with diagnostics = a.diagnostics @ b.diagnostics }
+
+  let ( let+ ) r f = Result.map (fun a -> { a with value = f a.value }) r
+
+  let ( and+ ) r s =
+    let* a = r in
+    let+ b = s in
+    (a, b)
+
+  let all rs =
+    List.fold_right
+      (fun r acc ->
+        let+ x = r and+ xs = acc in
+        x :: xs)
+      rs (return [])
+end
 
 let runtime message = Error (Runtime { message })
 let schema path message = Error (Schema { path; message })

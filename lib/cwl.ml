@@ -1,8 +1,3 @@
-(** CommandLineTool facade: load, argv, spawn, capture outputs. Staging,
-    relocation, confinement, and checksums are [Workdir]. [command_line] stops
-    at argv; [run] executes. Does not implement Workflow or a JavaScript engine.
-*)
-
 module Error = Error
 module Untyped_tree = Untyped_tree
 module Schema = Schema
@@ -13,8 +8,9 @@ module Type = Ty
 module Expr = Expr
 module Bind = Bind
 module Glob = Glob
+module Location = Location
 module Workdir = Workdir
-module Runtime = Runtime
+module Io = Io
 open Error.Syntax
 
 let split_fragment path =
@@ -49,7 +45,7 @@ let eval_filename ctx s =
   let t = String.trim s in
   let* v = Expr.Param_ref.eval ctx t in
   match v with
-  | Ty.Vstring name ->
+  | Untyped_tree.String name ->
       Workdir.safe_leaf ~what:"stdout/stderr/stdin filename" name
   | other ->
       Error.runtime
@@ -59,12 +55,12 @@ let eval_filename ctx s =
 let eval_glob_pattern ctx pat =
   let* v = Expr.Param_ref.eval ctx pat in
   match v with
-  | Ty.Vstring s -> Ok [ s ]
-  | Ty.Vnull -> Ok []
-  | Ty.Varray xs ->
+  | Untyped_tree.String s -> Ok [ s ]
+  | Untyped_tree.Null -> Ok []
+  | Untyped_tree.Array xs ->
       Error.map_list
         (function
-          | Ty.Vstring s -> Ok s
+          | Untyped_tree.String s -> Ok s
           | other ->
               Error.runtime
                 (Printf.sprintf "glob array item must be string, got %s"
@@ -75,28 +71,27 @@ let eval_glob_pattern ctx pat =
         (Printf.sprintf "glob expression must yield string, got %s"
            (Ty.value_kind other))
 
-let file_of (module R : Runtime.READ) path =
-  let* size = R.file_size path in
-  Ok
-    (Ty.fill_file_paths
-       (Ty.Vfile
-          {
-            location = Some path;
-            path = Some path;
-            basename = Some (Filename.basename path);
-            nameroot = None;
-            nameext = None;
-            checksum = None;
-            size = Some size;
-          }))
+(* The File or Directory found at [path], with the fields the spec computes. *)
+let found cls path =
+  Ty.fill_file_paths
+    (Untyped_tree.Object
+       [
+         ("class", Untyped_tree.String cls);
+         ("location", Untyped_tree.String path);
+         ("path", Untyped_tree.String path);
+       ])
 
-let dir_of path = Ty.Vdir { location = Some path; path = Some path }
+let file_of (module R : Io.READ) path =
+  let+ size = R.file_size path in
+  Ty.set "size" (Untyped_tree.Int size) (found "File" path)
+
+let dir_of path = found "Directory" path
 
 let rec contains target = function
   | Ty.Union ts -> List.exists (contains target) ts
   | t -> t = target
 
-let value_of_hit (module R : Runtime.READ) ty path =
+let value_of_hit (module R : Io.READ) ty path =
   let rec go ty path =
     match ty with
     | Ty.Array { items; _ } -> go items path
@@ -118,22 +113,27 @@ let value_of_hit (module R : Runtime.READ) ty path =
   in
   go ty path
 
-let pack_hits (module R : Runtime.READ) id ty hits =
-  let optional = Ty.is_optional ty in
+(* The value of an output of type [ty] that nothing gives: null when it is
+   optional, an empty array for an array, else the error [missing]. *)
+let absent ty missing =
+  if Ty.is_optional ty then Ok Untyped_tree.Null
+  else
+    match ty with
+    | Ty.Array _ -> Ok (Untyped_tree.Array [])
+    | _ -> Error.runtime missing
+
+let pack_hits (module R : Io.READ) id ty hits =
   let inner = match ty with Ty.Array { items; _ } -> items | _ -> ty in
-  let is_array = match ty with Ty.Array _ -> true | _ -> false in
-  match (hits, is_array, optional) with
-  | [], false, true -> Ok Ty.Vnull
-  | [], false, false -> Error.runtime (Printf.sprintf "missing output '%s'" id)
-  | [], true, _ -> Ok (Ty.Varray [])
-  | [ p ], false, _ -> value_of_hit (module R) inner p
-  | ps, false, _ ->
+  match (hits, ty) with
+  | [], _ -> absent ty (Printf.sprintf "missing output '%s'" id)
+  | ps, Ty.Array _ ->
+      let+ vs = Error.map_list (value_of_hit (module R) inner) ps in
+      Untyped_tree.Array vs
+  | [ p ], _ -> value_of_hit (module R) inner p
+  | ps, _ ->
       Error.runtime
         (Printf.sprintf "output '%s' matched %d paths, expected one" id
            (List.length ps))
-  | ps, true, _ ->
-      let* vs = Error.map_list (value_of_hit (module R) inner) ps in
-      Ok (Ty.Varray vs)
 
 let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
   match o.stream with
@@ -157,15 +157,12 @@ let glob_patterns ctx stdout_name stderr_name (o : Schema.output) =
               let+ nested = Error.map_list (eval_glob_pattern ctx) glob in
               List.concat nested))
 
-let collect_output (module R : Runtime.READ) ~container outdir roots ctx
-    stdout_name stderr_name (o : Schema.output) =
+let collect_output (module R : Io.READ) ~container outdir roots ctx stdout_name
+    stderr_name (o : Schema.output) =
   let* pats = glob_patterns ctx stdout_name stderr_name o in
   if pats = [] then
-    if Ty.is_optional o.ty then Ok (o.id, Ty.Vnull)
-    else
-      match o.ty with
-      | Ty.Array _ -> Ok (o.id, Ty.Varray [])
-      | _ -> Error.runtime (Printf.sprintf "output '%s' has no glob" o.id)
+    let+ v = absent o.ty (Printf.sprintf "output '%s' has no glob" o.id) in
+    (o.id, v)
   else
     let pats =
       List.map
@@ -180,18 +177,11 @@ let collect_output (module R : Runtime.READ) ~container outdir roots ctx
 
 let collect_dir_roots acc v =
   Ty.fold
-    (fun acc -> function
-      | Ty.Vdir d -> (
-          match Ty.dir_path d with Some p -> p :: acc | None -> acc)
+    (fun acc v ->
+      match (Ty.class_of v, Ty.path v) with
+      | Some "Directory", Some p -> p :: acc
       | _ -> acc)
     acc v
-
-let missing_json_output (o : Schema.output) =
-  if Ty.is_optional o.ty then Ok (o.id, Ty.Vnull)
-  else
-    match o.ty with
-    | Ty.Array _ -> Ok (o.id, Ty.Varray [])
-    | _ -> Error.runtime (Printf.sprintf "cwl.output.json missing '%s'" o.id)
 
 let typed_json_output (o : Schema.output) v =
   if Ty.matches o.ty v then Ok (o.id, v)
@@ -206,7 +196,11 @@ let check_json_outputs outputs obj =
     Error.map_list
       (fun (o : Schema.output) ->
         match List.assoc_opt o.id obj with
-        | None -> missing_json_output o
+        | None ->
+            let+ v =
+              absent o.ty (Printf.sprintf "cwl.output.json missing '%s'" o.id)
+            in
+            (o.id, v)
         | Some v -> typed_json_output o v)
       outputs
   in
@@ -223,15 +217,54 @@ let designated_outdir (tool : Command_line_tool.t) host =
   | Some { output_directory = Some path; _ } -> (path :> string)
   | _ -> host
 
-let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
+(* Process.yml, File: a relative [location] "must be resolved relative to
+   the IRI of the document it appears in". So a job value is located against
+   the job file's directory and a [default] against the tool's, each made
+   absolute, since the tool runs in another directory. With no job file, the
+   job is empty. *)
+let job_inputs (module R : Io.READ) tool tool_path job =
+  let* tool_dir =
+    R.realpath (Filename.dirname (fst (split_fragment tool_path)))
+  in
+  let* job_dir, job_raw =
+    match job with
+    | None -> Ok (tool_dir, [])
+    | Some job_path ->
+        let* job_tree = Untyped_tree.load (module R) job_path in
+        let* job_raw = Type.object_of_tree job_tree in
+        let+ job_dir = R.realpath (Filename.dirname job_path) in
+        (job_dir, job_raw)
+  in
+  let locate_default (spec : Type.input_spec) =
+    let locate d = Result.map Option.some (Workdir.locate tool_dir d) in
+    let+ default = Option.fold ~none:(Ok None) ~some:locate spec.default in
+    { spec with default }
+  in
+  let* specs =
+    Error.map_list locate_default (Command_line_tool.input_specs tool)
+  in
+  (* A key no input declares is dropped by the check, so it is not read. *)
+  let declared k = List.exists (fun (s : Type.input_spec) -> s.id = k) specs in
+  let* job_raw =
+    Error.map_list
+      (fun (k, v) ->
+        if declared k then
+          let+ v = Workdir.locate job_dir v in
+          (k, v)
+        else Ok (k, v))
+      job_raw
+  in
+  Type.apply_defaults_and_check specs job_raw
+
+let run (module Local : Io.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
     tool_path job =
   let* tool, diagnostics = load_command_line_tool (module Local) tool_path in
   match Schema.first_unimplemented tool.requirements with
   | Some feature -> Error.unsupported feature
   | None ->
-      let* (module R : Runtime.RUNTIME) =
+      let* (module R : Io.RUNTIME) =
         match docker_image tool with
-        | None -> Ok (module Local : Runtime.RUNTIME)
+        | None -> Ok (module Local : Io.RUNTIME)
         | Some image -> (
             match docker with
             | None ->
@@ -250,26 +283,12 @@ let run (module Local : Runtime.RUNTIME) ?docker ?outdir ?(rm_tmpdir = true)
       Fun.protect ~finally:(fun () ->
           if rm_tmpdir then ignore (R.remove_tree tmpdir))
       @@ fun () ->
-      let* job_dir, job_raw =
-        match job with
-        | None -> Ok (Filename.dirname (fst (split_fragment tool_path)), [])
-        | Some job_path ->
-            let* job_tree = Untyped_tree.load (module Local) job_path in
-            let+ job_raw = Type.object_of_tree job_tree in
-            (Filename.dirname job_path, job_raw)
-      in
-      let* inputs =
-        Type.apply_defaults_and_check
-          (Command_line_tool.input_specs tool)
-          job_raw
-      in
+      let* inputs = job_inputs (module Local) tool tool_path job in
       let cores = Option.value (Command_line_tool.cores_min tool) ~default:1. in
       let container = designated_outdir tool outdir in
-      let* inputs =
-        Workdir.stage (module R) ~container ~outdir ~job_dir inputs
-      in
+      let* inputs = Workdir.stage (module R) ~container ~outdir inputs in
       let runtime = Expr.runtime_with ~outdir:container ~tmpdir ~cores in
-      let ctx = { Expr.inputs; self = Ty.Vnull; runtime } in
+      let ctx = { Expr.inputs; self = Untyped_tree.Null; runtime } in
       let* argv = Bind.argv (module Expr.Param_ref) tool inputs runtime in
       let stream_filename named stream default =
         match named with

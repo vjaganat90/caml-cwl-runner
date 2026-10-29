@@ -1,0 +1,6 @@
+{
+  "file": "lib/cwl.ml",
+  "old": "if declared k then",
+  "new": "if declared k || true then",
+  "why": "a job key that no input declares is passed through, not located"
+}
