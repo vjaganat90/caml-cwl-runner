@@ -37,7 +37,8 @@ let bound ?(ty = Cwl.Type.String) ?prefix ?separate ?item_separator
     unimplemented = [];
   }
 
-let strings xs = Cwl.Type.Varray (List.map (fun s -> Cwl.Type.Vstring s) xs)
+let strings xs =
+  Cwl.Untyped_tree.Array (List.map (fun s -> Cwl.Untyped_tree.String s) xs)
 
 let argv ?(base_command = [ "echo" ]) inputs job =
   Cwl.Bind.argv
@@ -83,10 +84,10 @@ let substitute text needle repl =
     go 0;
     Buffer.contents buf
 
-let with_runtime f = Eio_main.run @@ fun env -> f (Cwl.Runtime.local env)
+let with_runtime f = Eio_main.run @@ fun env -> f (Runtime.local env)
 
 let docker_ready () =
-  let bin = Filename.quote (Eio_main.run Cwl.Runtime.docker_executable) in
+  let bin = Filename.quote (Eio_main.run Runtime.docker_executable) in
   match Unix.system (bin ^ " info >/dev/null 2>&1") with
   | Unix.WEXITED 0 -> true
   | _ -> false
@@ -106,11 +107,12 @@ let expect_runtime = function
       Alcotest.fail ("expected Runtime error, got " ^ Cwl.Error.to_string e)
   | Ok _ -> Alcotest.fail "expected Runtime error"
 
-let file_basename = function
-  | Cwl.Type.Vfile f -> f.Cwl.Type.basename
-  | _ -> None
+(* The value of output [id] when it is a File or Directory, by [class]. *)
+let classed cls id v =
+  if Cwl.Type.class_of v = Some cls then v
+  else Alcotest.fail ("expected " ^ cls ^ " " ^ id)
 
-let dir_path = function Cwl.Type.Vdir d -> Cwl.Type.dir_path d | _ -> None
+let lookup id ann = List.assoc_opt id ann.Cwl.Error.value
 
 let mem_sub ~sub s =
   let n = String.length sub in
@@ -119,55 +121,57 @@ let mem_sub ~sub s =
   in
   go 0
 
-let file_bytes = function
-  | Cwl.Type.Vfile { path = Some p; _ } ->
-      In_channel.with_open_text p In_channel.input_all
-  | _ -> Alcotest.fail "expected File with path"
+let file_bytes v =
+  match Cwl.Type.get_string "path" (classed "File" "with path" v) with
+  | Some p -> In_channel.with_open_text p In_channel.input_all
+  | None -> Alcotest.fail "expected File with path"
 
 let lookup_file id ann =
-  match List.assoc_opt id ann.Cwl.Error.value with
-  | Some (Cwl.Type.Vfile f) -> f
-  | _ -> Alcotest.fail ("expected File " ^ id)
+  match lookup id ann with
+  | Some v -> classed "File" id v
+  | None -> Alcotest.fail ("expected File " ^ id)
 
 let lookup_file_basename id expected ann =
   Alcotest.(check (option string))
-    "basename" (Some expected) (lookup_file id ann).Cwl.Type.basename
+    "basename" (Some expected)
+    (Cwl.Type.get_string "basename" (lookup_file id ann))
 
-let lookup_file_path id ann = (lookup_file id ann).Cwl.Type.path
+let lookup_file_path id ann = Cwl.Type.get_string "path" (lookup_file id ann)
 
 let lookup_bytes id expected ann =
-  match List.assoc_opt id ann.Cwl.Error.value with
+  match lookup id ann with
   | Some v -> Alcotest.(check string) "bytes" expected (file_bytes v)
   | None -> Alcotest.fail ("missing " ^ id)
 
 let lookup_int id expected ann =
-  match List.assoc_opt id ann.Cwl.Error.value with
-  | Some (Cwl.Type.Vint n) -> Alcotest.(check int64) id expected n
+  match lookup id ann with
+  | Some (Cwl.Untyped_tree.Int n) -> Alcotest.(check int64) id expected n
   | _ -> Alcotest.fail ("expected " ^ id ^ " int")
 
 let lookup_null id ann =
-  match List.assoc_opt id ann.Cwl.Error.value with
-  | Some Cwl.Type.Vnull -> ()
+  match lookup id ann with
+  | Some Cwl.Untyped_tree.Null -> ()
   | _ -> Alcotest.fail "expected null"
 
 let lookup_empty_array id ann =
-  match List.assoc_opt id ann.Cwl.Error.value with
-  | Some (Cwl.Type.Varray []) -> ()
+  match lookup id ann with
+  | Some (Cwl.Untyped_tree.Array []) -> ()
   | _ -> Alcotest.fail "expected empty array"
 
 let lookup_basenames id expected ann =
-  match List.assoc_opt id ann.Cwl.Error.value with
-  | Some (Cwl.Type.Varray xs) ->
+  match lookup id ann with
+  | Some (Cwl.Untyped_tree.Array xs) ->
       let names =
-        List.filter_map file_basename xs |> List.sort String.compare
+        List.filter_map (Cwl.Type.get_string "basename") xs
+        |> List.sort String.compare
       in
       Alcotest.(check (list string)) "names" expected names
   | _ -> Alcotest.fail "expected File array"
 
 let lookup_dir id ann =
-  match List.assoc_opt id ann.Cwl.Error.value with
+  match lookup id ann with
   | Some v -> (
-      match dir_path v with
+      match Cwl.Type.path (classed "Directory" id v) with
       | Some p ->
           Alcotest.(check string) "basename" id (Filename.basename p);
           Alcotest.(check bool) "is dir" true (Sys.is_directory p)

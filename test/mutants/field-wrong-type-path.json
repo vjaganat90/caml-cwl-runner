@@ -1,0 +1,6 @@
+{
+  "file": "lib/untyped_tree.ml",
+  "old": "Error.schema (child json_path key)",
+  "new": "Error.schema json_path",
+  "why": "a field of the wrong type is an error at the field's own path"
+}

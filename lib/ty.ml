@@ -1,8 +1,3 @@
-(** Avro-ish CWL types and runtime values. Nested [inputBinding] on arrays lives
-    here so [Command_line_tool] can depend on [Type] without a cycle. Walkers
-    recurse into arrays and records; callers handle leaves. Does not load
-    documents or spawn. *)
-
 include Data.Type
 open Error.Syntax
 
@@ -33,47 +28,92 @@ let rec type_name = function
   | Array { items; _ } -> type_name items ^ "[]"
   | Union ts -> "[" ^ String.concat ", " (List.map type_name ts) ^ "]"
 
-let value_kind = function
-  | Vnull -> "null"
-  | Vbool _ -> "boolean"
-  | Vint _ -> "int"
-  | Vfloat _ -> "float"
-  | Vstring _ -> "string"
-  | Vfile _ -> "File"
-  | Vdir _ -> "Directory"
-  | Varray _ -> "array"
-  | Vrecord _ -> "record"
+(* The fields of a File or Directory that ccr reads as strings; a File's
+   [size] is an int. *)
+let string_fields = function
+  | "File" ->
+      [ "location"; "path"; "basename"; "nameroot"; "nameext"; "checksum" ]
+  | _ -> [ "location"; "path" ]
+
+let check_fields param cls kvs =
+  let* _ =
+    Error.map_list
+      (Untyped_tree.string_field ~json_path:param kvs)
+      (string_fields cls)
+  in
+  if cls = "File" then
+    let+ _ = Untyped_tree.int_field ~json_path:param kvs "size" in
+    ()
+  else Ok ()
+
+let class_of = function
+  | Untyped_tree.Object kvs -> (
+      match List.assoc_opt "class" kvs with
+      | Some (Untyped_tree.String (("File" | "Directory") as cls))
+        when Result.is_ok (check_fields "" cls kvs) ->
+          Some cls
+      | _ -> None)
+  | Untyped_tree.(Null | Bool _ | Int _ | Float _ | String _ | Array _) -> None
+
+let get key = function
+  | Untyped_tree.Object kvs -> (
+      match List.assoc_opt key kvs with
+      | None | Some Untyped_tree.Null -> None
+      | x -> x)
+  | _ -> None
+
+let get_string key v =
+  match get key v with Some (Untyped_tree.String s) -> Some s | _ -> None
+
+let set key x = function
+  | Untyped_tree.Object kvs when List.mem_assoc key kvs ->
+      Untyped_tree.Object
+        (List.map (fun (k, y) -> (k, if k = key then x else y)) kvs)
+  | Untyped_tree.Object kvs -> Untyped_tree.Object (kvs @ [ (key, x) ])
+  | v -> v
+
+let value_kind v =
+  match v with
+  | Untyped_tree.Null -> "null"
+  | Untyped_tree.Bool _ -> "boolean"
+  | Untyped_tree.Int _ -> "int"
+  | Untyped_tree.Float _ -> "float"
+  | Untyped_tree.String _ -> "string"
+  | Untyped_tree.Array _ -> "array"
+  | Untyped_tree.Object _ -> Option.value (class_of v) ~default:"record"
 
 let or_else a b = match a with Some _ as x -> x | None -> b
-let file_loc (f : file) = or_else f.location f.path
-let dir_loc (d : directory) = or_else d.location d.path
-let file_path (f : file) = or_else f.path f.location
-let dir_path (d : directory) = or_else d.path d.location
+let path v = or_else (get_string "path" v) (get_string "location" v)
 
-let rec map f = function
-  | Varray xs -> Varray (List.map (map f) xs)
-  | Vrecord kvs -> Vrecord (List.map (fun (k, v) -> (k, map f v)) kvs)
-  | v -> f v
+(* The containers the walkers descend into: arrays and records. File and
+   Directory stay leaves until secondaryFiles and listing are walked. visit
+   returns a container's children and a function that rebuilds the container
+   from new children. *)
+let visit v =
+  match v with
+  | Untyped_tree.Array xs -> Some (xs, fun ys -> Untyped_tree.Array ys)
+  | Untyped_tree.Object kvs when class_of v = None ->
+      Some
+        ( List.map snd kvs,
+          fun ys ->
+            (* cannot raise: the walk returns one child per key it was given *)
+            Untyped_tree.Object (List.map2 (fun (k, _) y -> (k, y)) kvs ys) )
+  | Untyped_tree.(Null | Bool _ | Int _ | Float _ | String _ | Object _) -> None
 
-let rec map_result f = function
-  | Varray xs ->
+let rec map f v =
+  match visit v with None -> f v | Some (xs, put) -> put (List.map (map f) xs)
+
+let rec map_result f v =
+  match visit v with
+  | None -> f v
+  | Some (xs, put) ->
       let+ xs = Error.map_list (map_result f) xs in
-      Varray xs
-  | Vrecord kvs ->
-      let* kvs =
-        Error.map_list
-          (fun (k, v) ->
-            let+ v = map_result f v in
-            (k, v))
-          kvs
-      in
-      Ok (Vrecord kvs)
-  | v -> f v
+      put xs
 
-let rec fold f acc = function
-  | Varray xs -> List.fold_left (fold f) acc xs
-  | Vrecord kvs -> List.fold_left (fun acc (_, v) -> fold f acc v) acc kvs
-  | v -> f acc v
+let rec fold f acc v =
+  match visit v with
+  | None -> f acc v
+  | Some (xs, _) -> List.fold_left (fold f) acc xs
 
 let rec map_state f acc ys = function
   | [] -> Ok (List.rev ys, acc)
@@ -81,26 +121,18 @@ let rec map_state f acc ys = function
       let* y, acc = f acc x in
       map_state f acc (y :: ys) xs
 
-let rec fold_map f acc = function
-  | Varray xs ->
-      let+ xs, acc = map_state (fold_map f) acc [] xs in
-      (Varray xs, acc)
-  | Vrecord kvs ->
-      let+ kvs, acc =
-        map_state
-          (fun acc (k, v) ->
-            let+ v, acc = fold_map f acc v in
-            ((k, v), acc))
-          acc [] kvs
-      in
-      (Vrecord kvs, acc)
-  | v -> f acc v
+let rec fold_map f acc v =
+  match visit v with
+  | None -> f acc v
+  | Some (xs, put) ->
+      let+ ys, acc = map_state (fun acc x -> fold_map f acc x) acc [] xs in
+      (put ys, acc)
 
 let file_basename_of location_or_path =
   match location_or_path with
   | None -> None
   | Some p ->
-      let base = Filename.basename p in
+      let base = Filename.basename (Location.to_path p) in
       if base = "" then None else Some base
 
 let split_name basename =
@@ -110,39 +142,37 @@ let split_name basename =
       ( String.sub basename 0 i,
         String.sub basename i (String.length basename - i) )
 
-let fill_file (f : file) =
-  let path = or_else f.path (file_basename_of f.location) in
-  let basename = or_else f.basename (Option.map Filename.basename path) in
-  let nameroot, nameext =
-    match basename with
-    | None -> (f.nameroot, f.nameext)
-    | Some b ->
-        let nr, ne = split_name b in
-        (or_else f.nameroot (Some nr), or_else f.nameext (Some ne))
+(* [fill v] sets the fields of the File or Directory [v] that the spec has an
+   implementation compute, where [v] leaves them unset. *)
+let fill v =
+  let default key x v =
+    match x with
+    | Some s when get_string key v = None -> set key (Untyped_tree.String s) v
+    | _ -> v
   in
-  { f with path; basename; nameroot; nameext }
+  let v = default "path" (file_basename_of (get_string "location" v)) v in
+  let v =
+    default "basename" (Option.map Filename.basename (get_string "path" v)) v
+  in
+  match (class_of v, get_string "basename" v) with
+  | Some "File", Some b ->
+      let nameroot, nameext = split_name b in
+      default "nameroot" (Some nameroot) v |> default "nameext" (Some nameext)
+  | _ -> v
 
-let fill_file_paths =
-  map (function
-    | Vfile f -> Vfile (fill_file f)
-    | Vdir d ->
-        Vdir { d with path = or_else d.path (file_basename_of d.location) }
-    | v -> v)
+let fill_file_paths = map (fun v -> if class_of v = None then v else fill v)
 
-let rec matches ty value =
-  match (ty, value) with
-  | Null, Vnull -> true
-  | Boolean, Vbool _ -> true
-  | (Int | Long), Vint _ -> true
-  | (Int | Long), Vfloat f when Float.is_integer f -> true
-  | (Float | Double), Vfloat _ -> true
-  | (Float | Double), Vint _ -> true
-  | String, Vstring _ -> true
-  | File, Vfile _ -> true
-  | Directory, Vdir _ -> true
-  | Array { items; _ }, Varray xs -> List.for_all (matches items) xs
+let rec matches ty v =
+  match (ty, v) with
+  | Null, Untyped_tree.Null -> true
+  | Boolean, Untyped_tree.Bool _ -> true
+  | (Int | Long), Untyped_tree.Int _ -> true
+  | (Float | Double), Untyped_tree.(Float _ | Int _) -> true
+  | String, Untyped_tree.String _ -> true
+  | File, v -> class_of v = Some "File"
+  | Directory, v -> class_of v = Some "Directory"
+  | Array { items; _ }, Untyped_tree.Array xs -> List.for_all (matches items) xs
   | Union ts, v -> List.exists (fun t -> matches t v) ts
-  | _, Vrecord _ -> false
   | _ -> false
 
 let require_class param expected kvs =
@@ -154,32 +184,12 @@ let require_class param expected kvs =
         (Error.Type
            { param; expected; got = Format.asprintf "%a" Untyped_tree.pp v })
 
-let rec parse_file_object param kvs =
-  let* () = require_class param "File" kvs in
-  Ok
-    (Vfile
-       (fill_file
-          {
-            location = Untyped_tree.string_field kvs "location";
-            path = Untyped_tree.string_field kvs "path";
-            basename = Untyped_tree.string_field kvs "basename";
-            nameroot = Untyped_tree.string_field kvs "nameroot";
-            nameext = Untyped_tree.string_field kvs "nameext";
-            checksum = Untyped_tree.string_field kvs "checksum";
-            size = Untyped_tree.int_field kvs "size";
-          }))
+let read_object param cls kvs =
+  let* () = require_class param cls kvs in
+  let+ () = check_fields param cls kvs in
+  fill (set "class" (Untyped_tree.String cls) (Untyped_tree.Object kvs))
 
-and parse_directory_object param kvs =
-  let* () = require_class param "Directory" kvs in
-  Ok
-    (fill_file_paths
-       (Vdir
-          {
-            location = Untyped_tree.string_field kvs "location";
-            path = Untyped_tree.string_field kvs "path";
-          }))
-
-and value_of_tree param ty doc =
+let rec coerce param ty doc =
   let fail expected =
     Error
       (Error.Type
@@ -190,7 +200,7 @@ and value_of_tree param ty doc =
       let rec try_ts = function
         | [] -> fail (type_name ty)
         | t :: rest -> (
-            match value_of_tree param t doc with
+            match coerce param t doc with
             | Ok v -> Ok v
             | Error _ -> try_ts rest)
       in
@@ -205,59 +215,36 @@ and value_of_tree param ty doc =
             @ List.filter (function Null -> true | _ -> false) ts
       in
       try_ts ordered
-  | Null, Untyped_tree.Null -> Ok Vnull
-  | Boolean, Untyped_tree.Bool b -> Ok (Vbool b)
-  | (Int | Long), Untyped_tree.Int n -> Ok (Vint n)
-  | (Int | Long), Untyped_tree.Float f when Float.is_integer f ->
-      Ok (Vint (Int64.of_float f))
-  | (Float | Double), Untyped_tree.Float f -> Ok (Vfloat f)
-  | (Float | Double), Untyped_tree.Int n -> Ok (Vfloat (Int64.to_float n))
-  | String, Untyped_tree.String s -> Ok (Vstring s)
-  | String, Untyped_tree.Int n -> Ok (Vstring (Int64.to_string n))
-  | String, Untyped_tree.Float f -> Ok (Vstring (string_of_float f))
-  | File, Untyped_tree.Object kvs -> parse_file_object param kvs
-  | Directory, Untyped_tree.Object kvs -> parse_directory_object param kvs
+  | Null, Untyped_tree.Null
+  | Boolean, Untyped_tree.Bool _
+  | (Int | Long), Untyped_tree.Int _
+  | (Float | Double), Untyped_tree.(Float _ | Int _)
+  | String, Untyped_tree.String _ ->
+      Ok doc
+  | String, Untyped_tree.Int n -> Ok (Untyped_tree.String (Int64.to_string n))
+  | String, Untyped_tree.Float f -> Ok (Untyped_tree.String (string_of_float f))
+  | File, Untyped_tree.Object kvs -> read_object param "File" kvs
+  | Directory, Untyped_tree.Object kvs -> read_object param "Directory" kvs
   | Array { items; _ }, Untyped_tree.Array xs ->
-      let+ xs = Error.map_list (value_of_tree param items) xs in
-      Varray xs
+      let+ xs = Error.map_list (coerce param items) xs in
+      Untyped_tree.Array xs
   | _, Untyped_tree.Null ->
-      if is_optional ty then Ok Vnull else fail (type_name ty)
+      if is_optional ty then Ok Untyped_tree.Null else fail (type_name ty)
   | _ -> fail (type_name ty)
 
-let object_of_tree = function
+let object_of_tree doc =
+  match doc with
   | Untyped_tree.Null -> Ok []
   | Untyped_tree.Object kvs ->
-      (* Loose decode: files/dirs recognized by class, else generic. *)
-      let rec of_any = function
-        | Untyped_tree.Null -> Vnull
-        | Untyped_tree.Bool b -> Vbool b
-        | Untyped_tree.Int n -> Vint n
-        | Untyped_tree.Float f -> Vfloat f
-        | Untyped_tree.String s -> Vstring s
-        | Untyped_tree.Array xs -> Varray (List.map of_any xs)
-        | Untyped_tree.Object kvs -> (
-            match List.assoc_opt "class" kvs with
-            | Some (Untyped_tree.String "File") -> (
-                match parse_file_object "job" kvs with
-                | Ok v -> v
-                | Error _ ->
-                    Vrecord (List.map (fun (k, v) -> (k, of_any v)) kvs))
-            | Some (Untyped_tree.String "Directory") -> (
-                match parse_directory_object "job" kvs with
-                | Ok v -> v
-                | Error _ ->
-                    Vrecord (List.map (fun (k, v) -> (k, of_any v)) kvs))
-            | _ -> Vrecord (List.map (fun (k, v) -> (k, of_any v)) kvs))
-      in
-      Ok (List.map (fun (k, v) -> (k, of_any v)) kvs)
-  | other ->
+      Ok (List.map (fun (k, v) -> (k, fill_file_paths v)) kvs)
+  | Untyped_tree.(Bool _ | Int _ | Float _ | String _ | Array _) ->
       Error
         (Error.Schema
            {
              path = "/";
              message =
                Printf.sprintf "job must be a YAML/JSON object, got %s"
-                 (Format.asprintf "%a" Untyped_tree.pp other);
+                 (Format.asprintf "%a" Untyped_tree.pp doc);
            })
 
 let apply_defaults_and_check inputs job =
@@ -267,10 +254,10 @@ let apply_defaults_and_check inputs job =
         let provided = List.assoc_opt spec.id job in
         let raw =
           match provided with
-          | Some Vnull | None -> (
+          | Some Untyped_tree.Null | None -> (
               match spec.default with
               | Some d -> Ok (Some (fill_file_paths d))
-              | None when is_optional spec.ty -> Ok (Some Vnull)
+              | None when is_optional spec.ty -> Ok (Some Untyped_tree.Null)
               | None -> Error (Error.Missing { param = spec.id }))
           | Some v -> Ok (Some v)
         in
@@ -280,7 +267,10 @@ let apply_defaults_and_check inputs job =
         | Ok (Some v) ->
             if
               matches spec.ty v
-              || match v with Vnull -> is_optional spec.ty | _ -> false
+              ||
+              match v with
+              | Untyped_tree.Null -> is_optional spec.ty
+              | _ -> false
             then go ((spec.id, fill_file_paths v) :: acc) rest
             else
               Error
@@ -293,12 +283,12 @@ let apply_defaults_and_check inputs job =
   in
   go [] inputs
 
-let rec string_of_value = function
-  | Vnull -> "null"
-  | Vbool true -> "true"
-  | Vbool false -> "false"
-  | Vint n -> Int64.to_string n
-  | Vfloat f ->
+let rec string_of_value v =
+  match v with
+  | Untyped_tree.Null -> "null"
+  | Untyped_tree.Bool b -> string_of_bool b
+  | Untyped_tree.Int n -> Int64.to_string n
+  | Untyped_tree.Float f ->
       if Float.is_integer f && Float.abs f < 1e15 then Printf.sprintf "%.0f" f
       else
         let s = Printf.sprintf "%.10f" f in
@@ -310,15 +300,15 @@ let rec string_of_value = function
           else s
         in
         trim s
-  | Vstring s -> s
-  | Vfile f -> Option.value (file_path f) ~default:""
-  | Vdir d -> Option.value (dir_path d) ~default:""
-  | Varray xs -> "[" ^ String.concat ", " (List.map string_of_value xs) ^ "]"
-  | Vrecord kvs ->
+  | Untyped_tree.String s -> s
+  | Untyped_tree.Array xs ->
+      "[" ^ String.concat ", " (List.map string_of_value xs) ^ "]"
+  | Untyped_tree.Object kvs when class_of v = None ->
       "{"
       ^ String.concat ", "
           (List.map (fun (k, v) -> k ^ ": " ^ string_of_value v) kvs)
       ^ "}"
+  | Untyped_tree.Object _ -> Option.value (path v) ~default:""
 
 let json_string s =
   let buf = Buffer.create (String.length s + 2) in
@@ -338,54 +328,27 @@ let json_string s =
   Buffer.add_char buf '"';
   Buffer.contents buf
 
-let json_object fields =
-  let body =
-    String.concat "," (List.map (fun (k, v) -> json_string k ^ ":" ^ v) fields)
-  in
-  "{" ^ body ^ "}"
-
-let add_opt name conv v fields =
-  match v with None -> fields | Some x -> fields @ [ (name, conv x) ]
-
-let file_uri loc =
-  if String.starts_with ~prefix:"file:" loc then loc else "file://" ^ loc
-
-let file_fields (f : file) =
-  [ ("class", json_string "File") ]
-  |> add_opt "location" (fun loc -> json_string (file_uri loc)) f.location
-  |> add_opt "path" json_string f.path
-  |> add_opt "basename" json_string f.basename
-  |> add_opt "nameroot" json_string f.nameroot
-  |> add_opt "nameext" json_string f.nameext
-  |> add_opt "checksum" json_string f.checksum
-  |> add_opt "size" Int64.to_string f.size
-
-let dir_fields (d : directory) =
-  [ ("class", json_string "Directory") ]
-  |> add_opt "location" (fun loc -> json_string (file_uri loc)) d.location
-  |> add_opt "path" json_string d.path
-
-let rec to_json = function
-  | Vnull -> "null"
-  | Vbool true -> "true"
-  | Vbool false -> "false"
-  | Vint n -> Int64.to_string n
-  | Vfloat f ->
-      if Float.is_integer f && Float.abs f < 1e15 then Printf.sprintf "%.0f" f
-      else string_of_float f
-  | Vstring s -> json_string s
-  | Vfile f -> json_object (file_fields f)
-  | Vdir d -> json_object (dir_fields d)
-  | Varray xs -> "[" ^ String.concat "," (List.map to_json xs) ^ "]"
-  | Vrecord kvs -> json_object (List.map (fun (k, v) -> (k, to_json v)) kvs)
-
-let object_to_json obj = to_json (Vrecord obj)
 let by_key fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields
 
-let rec to_json_sorted = function
-  | Varray xs -> "[" ^ String.concat "," (List.map to_json_sorted xs) ^ "]"
-  | Vrecord kvs ->
-      json_object (List.map (fun (k, v) -> (k, to_json_sorted v)) (by_key kvs))
-  | Vfile f -> json_object (by_key (file_fields f))
-  | Vdir d -> json_object (by_key (dir_fields d))
-  | v -> to_json v
+let rec to_json ~sorted v =
+  match v with
+  | Untyped_tree.Null -> "null"
+  | Untyped_tree.Bool b -> string_of_bool b
+  | Untyped_tree.Int n -> Int64.to_string n
+  | Untyped_tree.Float f ->
+      if Float.is_integer f && Float.abs f < 1e15 then Printf.sprintf "%.0f" f
+      else string_of_float f
+  | Untyped_tree.String s -> json_string s
+  | Untyped_tree.Array xs ->
+      "[" ^ String.concat "," (List.map (to_json ~sorted) xs) ^ "]"
+  | Untyped_tree.Object kvs ->
+      let field (k, x) =
+        json_string k ^ ":"
+        ^
+        match x with
+        | Untyped_tree.String loc when k = "location" && class_of v <> None ->
+            json_string (Location.to_uri loc)
+        | x -> to_json ~sorted x
+      in
+      let kvs = if sorted then by_key kvs else kvs in
+      "{" ^ String.concat "," (List.map field kvs) ^ "}"
