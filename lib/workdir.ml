@@ -1,7 +1,3 @@
-(** File and Directory values against a work directory. Stages inputs, relocates
-    container paths, confines outputs, and fills checksums. Does not glob,
-    spawn, or build argv. *)
-
 open Error.Syntax
 
 let safe_leaf ~what s =
@@ -14,45 +10,47 @@ let safe_leaf ~what s =
       (Printf.sprintf "%s must be a single path segment, got %S" what s)
   else Ok s
 
-let strip_file_uri loc =
-  if String.starts_with ~prefix:"file://" loc then
-    let rest = String.sub loc 7 (String.length loc - 7) in
-    if String.starts_with ~prefix:"//" rest then
-      match String.index_from_opt rest 2 '/' with
-      | Some i -> String.sub rest i (String.length rest - i)
-      | None -> rest
-    else rest
-  else loc
+(* Only a [file] URI, or a reference with no scheme, names a local file. *)
+let local_path s =
+  let scheme =
+    match String.index_opt s ':' with
+    | Some i
+      when i > 0
+           && String.length s > i + 2
+           && s.[i + 1] = '/'
+           && s.[i + 2] = '/' ->
+        (* cannot raise: i is an index of s *)
+        String.lowercase_ascii (String.sub s 0 i)
+    | _ -> "file"
+  in
+  if scheme = "file" then Ok (Location.to_path s)
+  else Error.runtime (Printf.sprintf "unsupported location scheme %S" scheme)
 
-let ensure_local_path s =
-  match String.index_opt s ':' with
-  | Some i
-    when i > 0 && String.length s > i + 2 && s.[i + 1] = '/' && s.[i + 2] = '/'
-    ->
-      let scheme = String.lowercase_ascii (String.sub s 0 i) in
-      if scheme = "file" then Ok (strip_file_uri s)
-      else
-        Error.runtime (Printf.sprintf "unsupported location scheme %S" scheme)
-  | _ -> Ok s
+(* A [location] is a URI reference and a [path] a plain path. *)
+let source ~dir ~what location path =
+  let+ src =
+    match (location, path) with
+    | Some loc, _ -> local_path loc
+    | None, Some path -> Ok path
+    | None, None ->
+        Error.runtime (Printf.sprintf "%s input missing location" what)
+  in
+  if Filename.is_relative src then Filename.concat dir src else src
 
-let resolve ~job_dir loc =
-  let loc = strip_file_uri loc in
-  if Filename.is_relative loc then Filename.concat job_dir loc else loc
+let locate dir v =
+  Ty.map_result
+    (function
+      | Ty.Vfile f ->
+          let+ src = source ~dir ~what:"File" f.location f.path in
+          Ty.Vfile { f with location = Some src }
+      | Ty.Vdir d ->
+          let+ src = source ~dir ~what:"Directory" d.location d.path in
+          Ty.Vdir { location = Some src; path = Some src }
+      | v -> Ok v)
+    v
 
-let trim_slash s =
-  if String.length s > 1 && String.ends_with ~suffix:"/" s then
-    String.sub s 0 (String.length s - 1)
-  else s
-
-let source ~job_dir ~what loc =
-  match Option.map (resolve ~job_dir) loc with
-  | None -> Error.runtime (Printf.sprintf "%s input missing location" what)
-  | Some s -> ensure_local_path s
-
-let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
-  function
-  | Ty.Vfile f ->
-      let* src = source ~job_dir ~what:"File" (Ty.file_loc f) in
+let stage_leaf (module R : Runtime.WRITE) ~container ~outdir used = function
+  | Ty.Vfile ({ location = Some src; _ } as f) ->
       let raw_base = Option.value f.basename ~default:(Filename.basename src) in
       let* base = safe_leaf ~what:"File basename" raw_base in
       if List.mem base used then
@@ -60,7 +58,7 @@ let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
       else
         let dst = Filename.concat outdir base in
         let* () = R.copy_file src dst in
-        let seen = trim_slash container ^ "/" ^ base in
+        let seen = Location.trim_slash container ^ "/" ^ base in
         Ok
           ( Ty.Vfile
               {
@@ -70,54 +68,28 @@ let stage_leaf (module R : Runtime.WRITE) ~container ~outdir ~job_dir used =
                 location = Some seen;
               },
             base :: used )
-  | Ty.Vdir d ->
-      let* src = source ~job_dir ~what:"Directory" (Ty.dir_loc d) in
-      Ok (Ty.Vdir { location = Some src; path = Some src }, used)
   | v -> Ok (v, used)
 
-let stage_value (module R : Runtime.WRITE) ~container ~outdir ~job_dir used v =
-  Ty.fold_map (stage_leaf (module R) ~container ~outdir ~job_dir) used v
+let stage_value (module R : Runtime.WRITE) ~container ~outdir used v =
+  Ty.fold_map (stage_leaf (module R) ~container ~outdir) used v
 
-let stage (module R : Runtime.WRITE) ~container ~outdir ~job_dir inputs =
+let stage (module R : Runtime.WRITE) ~container ~outdir inputs =
   let rec go used acc = function
     | [] -> Ok (List.rev acc)
     | (k, v) :: rest ->
-        let* v, used =
-          stage_value (module R) ~container ~outdir ~job_dir used v
-        in
+        let* v, used = stage_value (module R) ~container ~outdir used v in
         go used ((k, v) :: acc) rest
   in
   go [] [] inputs
 
-let normalize_abs path =
-  let segs = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
-  let rec go acc = function
-    | [] -> Some (List.rev acc)
-    | "." :: rest -> go acc rest
-    | ".." :: _ -> None
-    | seg :: rest -> go (seg :: acc) rest
-  in
-  match go [] segs with
-  | None -> None
-  | Some [] -> Some "/"
-  | Some segs -> Some ("/" ^ String.concat "/" segs)
-
 let relocate ~container ~host path =
-  if container = host || not (String.starts_with ~prefix:"/" path) then path
+  let dotdot = List.mem ".." (String.split_on_char '/' path) in
+  if container = host || Filename.is_relative path || dotdot then path
   else
-    match normalize_abs path with
+    match Location.relative container (Location.normalize path) with
     | None -> path
-    | Some normalized ->
-        let container = trim_slash container in
-        let host = trim_slash host in
-        if normalized = container then host
-        else
-          let prefix = container ^ "/" in
-          if String.starts_with ~prefix normalized then
-            host
-            ^ String.sub normalized (String.length container)
-                (String.length normalized - String.length container)
-          else path
+    | Some "" -> Location.trim_slash host
+    | Some rest -> Location.trim_slash host ^ "/" ^ rest
 
 let map_paths f = function
   | Ty.Vfile file ->
@@ -139,14 +111,15 @@ let map_paths_result f = function
 
 let resolve_paths ~container host v =
   let abs p =
-    let p = strip_file_uri p in
     let p = relocate ~container ~host p in
     if Filename.is_relative p then Filename.concat host p else p
   in
   let endpoints preferred location =
     let path = Option.map abs preferred in
     let location =
-      match Option.map abs location with Some _ as kept -> kept | None -> path
+      match Option.map (fun l -> abs (Location.to_path l)) location with
+      | Some _ as kept -> kept
+      | None -> path
     in
     (path, location)
   in

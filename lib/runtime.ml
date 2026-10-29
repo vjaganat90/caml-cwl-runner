@@ -1,6 +1,3 @@
-(** Stage files and spawn processes. The local body is Eio; tests pack a fake.
-    Child cwd is the CWL outdir. Does not parse CWL or build argv. *)
-
 open Error.Syntax
 include Data.Runtime
 
@@ -23,7 +20,7 @@ let confined_using realpath roots path =
                 (Printf.sprintf "path %S is not under a legal root" path)
           | root :: rest -> (
               match realpath root with
-              | Ok r when Glob.under r resolved -> Ok ()
+              | Ok r when Location.under r resolved -> Ok ()
               | Ok _ | Error _ -> go rest)
         in
         go roots
