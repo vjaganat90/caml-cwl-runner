@@ -45,10 +45,7 @@ let parse_arguments ~json_path v =
               in
               Ok (Binding b, d))
         xs
-  | other ->
-      Error.schema json_path
-        (Format.asprintf "expected arguments array, got %a" Untyped_tree.pp
-           other)
+  | other -> Schema.expected ~json_path ~what:"arguments array" other
 
 let parse_base_command v =
   match v with
@@ -57,19 +54,10 @@ let parse_base_command v =
       Schema.strings ~json_path:"baseCommand" ~expected:"string" xs
   | Untyped_tree.Null -> Ok []
   | other ->
-      Error.schema "baseCommand"
-        (Format.asprintf "expected string or array, got %a" Untyped_tree.pp
-           other)
+      Schema.expected ~json_path:"baseCommand" ~what:"string or array" other
 
 let parse_success_codes v =
-  let one path x =
-    match x with
-    | Untyped_tree.Int n -> Ok (Int64.to_int n)
-    | Untyped_tree.Float f when Float.is_integer f -> Ok (int_of_float f)
-    | other ->
-        Error.schema path
-          (Format.asprintf "expected int, got %a" Untyped_tree.pp other)
-  in
+  let one = Schema.parse_int in
   match v with
   | Untyped_tree.Null -> Ok [ 0 ]
   | Untyped_tree.Int _ | Untyped_tree.Float _ ->
@@ -85,18 +73,16 @@ let parse_success_codes v =
       in
       ns
   | other ->
-      Error.schema "successCodes"
-        (Format.asprintf "expected int or array of int, got %a" Untyped_tree.pp
-           other)
+      Schema.expected ~json_path:"successCodes" ~what:"int or array of int"
+        other
 
 let of_tree doc =
   match doc with
   | Untyped_tree.Array _ ->
       Error.schema "/" "$graph / packed documents are not implemented"
   | Untyped_tree.Object kvs ->
-      let class_ =
-        Option.value (Untyped_tree.string_field kvs "class") ~default:""
-      in
+      let* class_ = Untyped_tree.string_field ~json_path:"" kvs "class" in
+      let class_ = Option.value class_ ~default:"" in
       let* cwl_version = Schema.parse_cwl_version kvs in
       let* () =
         let forbidden k =
@@ -117,36 +103,21 @@ let of_tree doc =
         else [ Schema.diag class_ "class" ]
       in
       let* base_command =
-        match List.assoc_opt "baseCommand" kvs with
-        | None -> Ok []
-        | Some v -> parse_base_command v
+        Option.fold ~none:(Ok []) ~some:parse_base_command
+          (List.assoc_opt "baseCommand" kvs)
       in
       let* arguments, arg_diags =
         Schema.parse_opt parse_arguments "arguments" kvs
       in
-      let* inputs, in_diags =
-        Schema.parse_opt Schema.parse_inputs "inputs" kvs
+      let* (inputs, outputs, requirements, hints), process_diags =
+        Schema.parse_process kvs
       in
-      let* outputs, out_diags =
-        Schema.parse_opt Schema.parse_outputs "outputs" kvs
-      in
-      let* requirements, req_diags =
-        Schema.parse_opt
-          (Schema.parse_req_list ~in_requirements:true)
-          "requirements" kvs
-      in
-      let* hints, hint_diags =
-        Schema.parse_opt
-          (Schema.parse_req_list ~in_requirements:false)
-          "hints" kvs
-      in
-      let stdout = Untyped_tree.string_field kvs "stdout" in
-      let stdin = Untyped_tree.string_field kvs "stdin" in
-      let stderr = Untyped_tree.string_field kvs "stderr" in
+      let* stdout = Untyped_tree.string_field ~json_path:"" kvs "stdout" in
+      let* stdin = Untyped_tree.string_field ~json_path:"" kvs "stdin" in
+      let* stderr = Untyped_tree.string_field ~json_path:"" kvs "stderr" in
       let* success_codes =
-        match List.assoc_opt "successCodes" kvs with
-        | None -> Ok [ 0 ]
-        | Some v -> parse_success_codes v
+        Option.fold ~none:(Ok [ 0 ]) ~some:parse_success_codes
+          (List.assoc_opt "successCodes" kvs)
       in
       let tool =
         {
@@ -163,15 +134,9 @@ let of_tree doc =
           hints;
         }
       in
-      let diagnostics =
-        top_diags @ class_diag @ arg_diags @ in_diags @ out_diags @ req_diags
-        @ hint_diags
-      in
+      let diagnostics = top_diags @ class_diag @ arg_diags @ process_diags in
       Ok { Error.value = tool; diagnostics }
-  | other ->
-      Error.schema "/"
-        (Format.asprintf "expected a CWL document object, got %a"
-           Untyped_tree.pp other)
+  | other -> Schema.expected ~json_path:"/" ~what:"a CWL document object" other
 
 let cores_min tool =
   let from_list rs =
