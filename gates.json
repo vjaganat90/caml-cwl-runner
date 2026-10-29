@@ -1,0 +1,14 @@
+{
+  "budgets": {
+    "feat":     {"code": 150, "tests": 60},
+    "fix":      {"code": 40,  "tests": 40},
+    "test":     {"code": 0,   "tests": 40},
+    "refactor": {"code": 0,   "tests": 0},
+    "other":    {"code": 0,   "tests": 0}
+  },
+  "window": 10,
+  "max_function": 60,
+  "top_level": [".github", ".gitignore", ".gitmodules", ".ocamlformat", "AGENTS.md", "LICENSE",
+                "README.md", "bin", "caml-cwl-runner.opam", "design_docs", "dune", "dune-project",
+                "gates.json", "lib", "scripts", "test", "vendor"]
+}
