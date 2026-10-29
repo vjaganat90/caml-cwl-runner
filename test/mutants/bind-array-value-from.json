@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "let* bound = value_from e ctx b v in",
+  "new": "let* bound = match ty with Ty.Array _ when b.item_separator = None -> Ok v | _ -> value_from e ctx b v in",
+  "why": "valueFrom on the binding of an array input gives the value that is bound"
+}
