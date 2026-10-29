@@ -1,0 +1,6 @@
+{
+  "file": "lib/schema.ml",
+  "old": "| Untyped_tree.Null -> return [] (* a null process field is absent *)",
+  "new": "",
+  "why": "a null process field such as inputs is absent"
+}

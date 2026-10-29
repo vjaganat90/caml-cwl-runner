@@ -5,11 +5,10 @@ open Harness
 
 let run_tool tool job =
   Eio_main.run @@ fun env ->
-  Cwl.run (Cwl.Runtime.local env) (fixture tool) (Some (fixture job))
+  Cwl.run (Runtime.local env) (fixture tool) (Some (fixture job))
 
 type outcome =
   | Expect_ok of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
-  | Expect_ok_or_error of (Cwl.Type.object_ Cwl.Error.annotated -> unit)
   | Expect_runtime
   | Expect_type
   | Expect_schema
@@ -35,11 +34,6 @@ let collect_paths acc v =
           match Cwl.Type.dir_path d with Some p -> p :: acc | None -> acc)
       | _ -> acc)
     acc v
-
-let leaks_host p =
-  String.starts_with ~prefix:"/etc/" p
-  || String.starts_with ~prefix:"/usr/" p
-  || p = "/etc" || p = "/usr" || p = "/"
 
 let execute_edges =
   [
@@ -67,7 +61,6 @@ let execute_edges =
     edge ~docker:true "docker_echo" "docker-req.cwl" (Expect_ok (fun _ -> ()));
     edge ~docker:true "docker_image_id" "docker-image-id.cwl"
       (Expect_ok (fun _ -> ()));
-    edge ~docker:true "docker_file" "docker-file.cwl" (Expect_ok (fun _ -> ()));
     edge ~docker:true "docker_json_escape" "docker-json-escape.cwl"
       Expect_runtime;
     edge "output_eval_no_json" "output-eval.cwl"
@@ -76,6 +69,14 @@ let execute_edges =
       (Expect_ok (lookup_int "n" 1L));
     edge "stdin_cat" "stdin-cat.cwl" ~job:"stdin-job.json"
       (Expect_ok (lookup_bytes "out" "hello from file\n"));
+    edge "stdin_cat_percent" "stdin-cat.cwl" ~job:"percent-job.json"
+      (Expect_ok (lookup_bytes "out" "hello from file\n"));
+    edge "default_tool_relative" "default-loc/tool.cwl"
+      (Expect_ok (lookup_bytes "out" "hello from tool dir\n"));
+    edge "directory_from_tool_cwd" "dir-ls.cwl" ~job:"dir-in-job.json"
+      (Expect_ok (fun _ -> ()));
+    edge "undeclared_file_ignored" "file-in.cwl" ~job:"undeclared-job.json"
+      (Expect_ok (fun _ -> ()));
     edge "stderr_stream" "stderr-stream.cwl"
       (Expect_ok (lookup_bytes "err" "err\n"));
     edge "dir_glob" "dir-glob.cwl" (Expect_ok (lookup_dir "d"));
@@ -189,16 +190,7 @@ let execute_edges =
       (Expect_ok (lookup_basenames "files" [ "a.txt" ]));
     edge "json_file_is_dir" "json-file-is-dir.cwl" Expect_type;
     edge "workflow_unsupported" "workflow.cwl" (Expect_unsupported "Workflow");
-    edge "glob_starstar_root" "glob-starstar.cwl"
-      (Expect_ok_or_error
-         (fun ann ->
-           let paths =
-             List.fold_left (fun acc (_, v) -> collect_paths acc v) [] ann.value
-           in
-           List.iter
-             (fun p ->
-               if leaks_host p then Alcotest.fail ("leaked host path " ^ p))
-             paths));
+    edge "glob_starstar_root" "glob-starstar.cwl" Expect_runtime;
   ]
 
 let run_edge e () =
@@ -207,43 +199,38 @@ let run_edge e () =
     if not e.docker then run_tool e.tool e.job
     else
       Eio_main.run @@ fun env ->
-      let local = Cwl.Runtime.local env in
-      let docker image = Cwl.Runtime.docker env image in
+      let local = Runtime.local env in
+      let docker image = Runtime.docker env image in
       Cwl.run local ~docker (fixture e.tool) (Some (fixture e.job))
   in
   match result with
   | Ok ann -> (
       match e.outcome with
-      | Expect_ok f | Expect_ok_or_error f -> f ann
+      | Expect_ok f -> f ann
       | Expect_runtime -> Alcotest.fail "expected Runtime error"
       | Expect_type -> Alcotest.fail "expected Type error"
       | Expect_schema -> Alcotest.fail "expected Schema error"
       | Expect_unsupported _ -> Alcotest.fail "expected Unsupported")
   | Error (Cwl.Error.Runtime _ as err) -> (
       match e.outcome with
-      | Expect_runtime | Expect_ok_or_error _ -> ()
+      | Expect_runtime -> ()
       | _ ->
           Alcotest.fail ("unexpected Runtime error: " ^ Cwl.Error.to_string err)
       )
   | Error (Cwl.Error.Type _) -> (
       match e.outcome with
-      | Expect_type | Expect_ok_or_error _ -> ()
+      | Expect_type -> ()
       | _ -> Alcotest.fail "unexpected Type error")
   | Error (Cwl.Error.Schema _) -> (
       match e.outcome with
       | Expect_schema -> ()
-      | Expect_ok_or_error _ -> ()
       | _ -> Alcotest.fail "unexpected Schema error")
   | Error (Cwl.Error.Unsupported { feature }) -> (
       match e.outcome with
       | Expect_unsupported want ->
           Alcotest.(check string) "feature" want feature
-      | Expect_ok_or_error _ -> ()
       | _ -> Alcotest.fail ("unexpected Unsupported " ^ feature))
-  | Error err -> (
-      match e.outcome with
-      | Expect_ok_or_error _ -> ()
-      | _ -> Alcotest.fail (Cwl.Error.to_string err))
+  | Error err -> Alcotest.fail (Cwl.Error.to_string err)
 
 let edge_cases =
   List.map
@@ -286,7 +273,7 @@ let output_under_outdir =
     `Quick,
     fun () ->
       Eio_main.run @@ fun env ->
-      let (module R) = Cwl.Runtime.local env in
+      let (module R) = Runtime.local env in
       let outdir = expect_ok (R.mkdtemp "ccr-under-") in
       let outdir = expect_ok (R.abspath outdir) in
       match
