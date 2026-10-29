@@ -1,0 +1,6 @@
+{
+  "file": "lib/bind.ml",
+  "old": "| Untyped_tree.Array xs, Ty.Array { items; item_binding = Some ib }, None ->",
+  "new": "| Untyped_tree.Array xs, Ty.Array { items; item_binding = ib }, None -> let ib = Option.value ib ~default:Ty.default_binding in",
+  "why": "an array input with no inputBinding, and no inputBinding in its type, adds nothing"
+}

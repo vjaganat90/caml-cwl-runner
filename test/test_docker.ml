@@ -33,16 +33,18 @@ let prop_docker_argv_suffix =
       let argv = List.map (fun s -> "c" ^ s) raw in
       let spec =
         {
-          Cwl.Runtime.bin = "/bin/docker";
+          Runtime.bin = "/bin/docker";
           user = "1:1";
           cwd = "/host-out";
           workdir;
           tag = "alpine";
           mounts = [];
+          read_only = [];
           container_env = [];
+          network = true;
         }
       in
-      let got = Cwl.Runtime.docker_run_argv spec argv in
+      let got = Runtime.docker_run_argv spec argv in
       let n = List.length argv in
       let pre_len = List.length got - n in
       let flag name =
@@ -267,8 +269,8 @@ let designated_cases =
     ("glob trimmed", Glob_file " /other/thing", true);
     ("glob trimmed outside", Glob_file " /etc/passwd", false);
     ("absent is host outdir", Host_outdir, true);
-    ("staged location is container path", Input_container, true);
-    ("staged location stays host path", Input_host, true);
+    ("staged location outside container outdir", Input_container, true);
+    ("staged location outside host outdir", Input_host, true);
   ]
 
 let docker_mount_table () =
@@ -280,7 +282,7 @@ let docker_mount_table () =
   Unix.symlink real link;
   let real = Unix.realpath real in
   let check_ok ~host ~workdir ~source ~target =
-    match Cwl.Runtime.docker_mount ~host ~workdir with
+    match Runtime.docker_mount ~host ~workdir with
     | Ok (got_source, got_target) ->
         Alcotest.(check string) "source" source got_source;
         Alcotest.(check string) "target" target got_target
@@ -290,7 +292,7 @@ let docker_mount_table () =
   check_ok ~host:link ~workdir:link ~source:real ~target:link;
   List.iter
     (fun workdir ->
-      match Cwl.Runtime.docker_mount ~host:real ~workdir with
+      match Runtime.docker_mount ~host:real ~workdir with
       | Error (Cwl.Error.Runtime _) -> ()
       | Ok (src, dst) ->
           Alcotest.failf "accepted mount %S -> %S:%S" workdir src dst
@@ -317,18 +319,23 @@ let designated_outdir_table () =
       let argv_ok = ref false in
       let result =
         Eio_main.run @@ fun env ->
-        let (module Local) = Cwl.Runtime.local env in
+        let (module Local) = Runtime.local env in
         let module R = struct
           include Local
 
-          let spawn _env cwd _stdio argv =
+          let spawn (env : Cwl.Io.tool_env) cwd _stdio argv =
             (argv_ok :=
                match case with
                | Host_outdir -> List.mem cwd argv
-               | Input_host -> List.mem (Filename.concat cwd "hello.txt") argv
-               | Input_container ->
-                   List.mem "/other/hello.txt" argv
-                   && not (List.mem (Filename.concat cwd "hello.txt") argv)
+               | Input_host | Input_container ->
+                   (* staged outside the outdir, under a mounted input root *)
+                   List.exists
+                     (fun a ->
+                       Filename.basename a = "hello.txt"
+                       && List.mem
+                            (Filename.dirname (Filename.dirname a))
+                            env.inputs)
+                     argv
                | _ -> List.mem "/other" argv);
             match write_file (Filename.concat cwd "thing") "ok\n" with
             | Error _ as e -> e
@@ -354,7 +361,10 @@ let designated_outdir_table () =
                     | Ok () -> Ok 0
                     | Error _ as e -> e))
         end in
-        Cwl.run (module Local) ~docker:(fun _req -> (module R)) tool (Some job)
+        Cwl.run
+          (module Local)
+          ~docker:(fun ~network:_ _req -> (module R))
+          tool (Some job)
       in
       if not !argv_ok then
         Alcotest.failf "%s: $(runtime.outdir) was not the designated directory"
@@ -365,9 +375,9 @@ let designated_outdir_table () =
             match case with
             | Input_container | Input_host -> ()
             | Glob_dir _ -> (
-                match List.assoc_opt "d" ann.value with
-                | Some (Cwl.Type.Vdir d) -> (
-                    match Cwl.Type.dir_path d with
+                match lookup "d" ann with
+                | Some d when Cwl.Type.class_of d = Some "Directory" -> (
+                    match Cwl.Type.path d with
                     | Some p ->
                         Alcotest.(check bool) name true (Sys.is_directory p);
                         Alcotest.(check bool) name false (p = "/other")
@@ -388,7 +398,7 @@ let designated_outdir_table () =
     designated_cases
 
 let docker_prefix () =
-  let bin = Eio_main.run Cwl.Runtime.docker_executable in
+  let bin = Eio_main.run Runtime.docker_executable in
   let q = Filename.quote bin in
   let prefix =
     if Filename.is_relative bin then ""
@@ -396,16 +406,20 @@ let docker_prefix () =
   in
   (prefix, q)
 
-let run_archive_tool ~dir ~template ~archive () =
-  let tool =
-    write_text
-      (Filename.concat dir "tool.cwl")
-      (substitute template "@ARCHIVE@" archive)
+(** Runs the tool [template] from [dir] after each [(placeholder, value)]
+    substitution. [@TAG@] always becomes the name of [dir], so the images of two
+    test runs on one machine never share a name. *)
+let run_template ~dir template substitutions =
+  let fill text (placeholder, value) = substitute text placeholder value in
+  let text =
+    List.fold_left fill template
+      (("@TAG@", Filename.basename dir) :: substitutions)
   in
+  let tool = write_text (Filename.concat dir "tool.cwl") text in
   let job = write_text (Filename.concat dir "job.json") "{}\n" in
   Eio_main.run @@ fun env ->
-  let local = Cwl.Runtime.local env in
-  let docker image = Cwl.Runtime.docker env image in
+  let local = Runtime.local env in
+  let docker ~network image = Runtime.docker env ~network image in
   match Cwl.run local ~docker tool (Some job) with
   | Ok _ -> ()
   | Error e -> Alcotest.fail (Cwl.Error.to_string e)
@@ -417,6 +431,11 @@ let gzip_to ~src ~dst =
          (Filename.quote dst))
     <> 0
   then Alcotest.fail "gzip failed"
+
+let remove_image tag =
+  let prefix, q = docker_prefix () in
+  ignore
+    (Sys.command (Printf.sprintf "%s%s rmi -f %s >/dev/null 2>&1" prefix q tag))
 
 let with_cwd dir f =
   let back = Sys.getcwd () in
@@ -438,9 +457,8 @@ let docker_load_saved =
              prefix q (Filename.quote tar))
       in
       if code <> 0 then Alcotest.fail "docker save failed";
-      run_archive_tool ~dir
-        ~template:(read_fixture "docker-load.cwl")
-        ~archive:tar () )
+      run_template ~dir (read_fixture "docker-load.cwl") [ ("@ARCHIVE@", tar) ]
+  )
 
 let docker_import_saved =
   ( "docker_import_saved",
@@ -449,36 +467,53 @@ let docker_import_saved =
       require_docker ();
       let dir = Filename.temp_dir "ccr-import-" "" in
       let tar = Filename.concat dir "rootfs.tar" in
+      let name = Filename.basename dir in
       let prefix, q = docker_prefix () in
       let code =
         Sys.command
           (Printf.sprintf
-             "%s%s rm -f ccr-export >/dev/null 2>&1; %s%s create --name \
-              ccr-export alpine true >/dev/null && %s%s export ccr-export -o \
-              %s && %s%s rm ccr-export >/dev/null"
-             prefix q prefix q prefix q (Filename.quote tar) prefix q)
+             "%s%s create --name %s alpine true >/dev/null && %s%s export %s \
+              -o %s && %s%s rm %s >/dev/null"
+             prefix q name prefix q name (Filename.quote tar) prefix q name)
       in
       if code <> 0 then Alcotest.fail "docker export failed";
       let template = read_fixture "docker-import.cwl" in
-      let import ~archive = run_archive_tool ~dir ~template ~archive () in
+      (* Each import is a new image that takes the fixture's tag from the one
+         before, which would stay behind untagged, so each is removed. *)
+      let import archive =
+        Fun.protect
+          ~finally:(fun () -> remove_image name)
+          (fun () -> run_template ~dir template [ ("@ARCHIVE@", archive) ])
+      in
       let gz = Filename.concat dir "rootfs.tar.gz" in
       gzip_to ~src:tar ~dst:gz;
-      import ~archive:gz;
-      with_cwd dir (fun () -> import ~archive:"rootfs.tar.gz");
+      import gz;
+      with_cwd dir (fun () -> import "rootfs.tar.gz");
       let tgz = Filename.concat dir "rootfs.tgz" in
       gzip_to ~src:tar ~dst:tgz;
-      with_cwd dir (fun () -> import ~archive:"rootfs.tgz") )
+      with_cwd dir (fun () -> import "rootfs.tgz") )
+
+let docker_file_built =
+  ( "docker_file",
+    `Slow,
+    fun () ->
+      require_docker ();
+      let dir = Filename.temp_dir "ccr-file-" "" in
+      Fun.protect ~finally:(fun () -> remove_image (Filename.basename dir))
+      @@ fun () -> run_template ~dir (read_fixture "docker-file.cwl") [] )
 
 let docker_run_argv_env_and_mounts () =
   let spec =
     {
-      Cwl.Runtime.bin = "docker";
+      Runtime.bin = "docker";
       user = "501:20";
       cwd = "/host/out";
       workdir = "/out";
       tag = "alpine";
       mounts = [ ("/host/tmp", "/host/tmp") ];
+      read_only = [ "/host/stg" ];
       container_env = [ "HOME=/out"; "TMPDIR=/host/tmp" ];
+      network = true;
     }
   in
   Alcotest.(check (list string))
@@ -493,6 +528,8 @@ let docker_run_argv_env_and_mounts () =
       "/host/out:/out";
       "-v";
       "/host/tmp:/host/tmp";
+      "-v";
+      "/host/stg:/host/stg:ro";
       "--env";
       "HOME=/out";
       "--env";
@@ -503,7 +540,74 @@ let docker_run_argv_env_and_mounts () =
       "echo";
       "hi";
     ]
-    (Cwl.Runtime.docker_run_argv spec [ "echo"; "hi" ])
+    (Runtime.docker_run_argv spec [ "echo"; "hi" ])
+
+let docker_run_argv_network () =
+  let spec network =
+    {
+      Runtime.bin = "docker";
+      user = "1:1";
+      cwd = "/h";
+      workdir = "/w";
+      tag = "alpine";
+      mounts = [];
+      read_only = [];
+      container_env = [];
+      network;
+    }
+  in
+  let has network =
+    List.mem "--network=none" (Runtime.docker_run_argv (spec network) [ "x" ])
+  in
+  Alcotest.(check (pair bool bool))
+    "none unless granted" (true, false)
+    (has false, has true)
+
+let network_access_of src =
+  match parse_src src with
+  | Ok { Cwl.Error.value = tool; _ } ->
+      Ok (Cwl.Command_line_tool.network_access tool)
+  | Error _ as e -> e
+
+let network_access_documents () =
+  let doc section body =
+    "cwlVersion: v1.2\nclass: CommandLineTool\n" ^ section
+    ^ ":\n  NetworkAccess:\n    networkAccess: " ^ body
+    ^ "\nbaseCommand: echo\ninputs: []\noutputs: []\n"
+  in
+  let check name expect src =
+    match (network_access_of src, expect) with
+    | Ok got, `Net want -> Alcotest.(check bool) name want got
+    | Error (Cwl.Error.Schema _), `Schema -> ()
+    | _ -> Alcotest.failf "%s: unexpected result" name
+  in
+  check "required" (`Net true) (doc "requirements" "true");
+  check "hint" (`Net true) (doc "hints" "true");
+  check "false" (`Net false) (doc "requirements" "false");
+  check "absent" (`Net false)
+    "cwlVersion: v1.2\n\
+     class: CommandLineTool\n\
+     baseCommand: echo\n\
+     inputs: []\n\
+     outputs: []\n";
+  check "int" `Schema (doc "requirements" "1");
+  check "repeated" `Schema
+    "cwlVersion: v1.2\n\
+     class: CommandLineTool\n\
+     baseCommand: echo\n\
+     inputs: []\n\
+     outputs: []\n\
+     requirements:\n\
+    \  - class: NetworkAccess\n\
+    \    networkAccess: true\n\
+    \  - class: NetworkAccess\n\
+    \    networkAccess: false\n";
+  match parse_src (doc "requirements" "$(inputs.n)") with
+  | Ok { Cwl.Error.value = tool; _ } ->
+      Alcotest.(check (option string))
+        "expression" (Some "NetworkAccess")
+        (Cwl.Schema.first_unimplemented tool.requirements)
+  | Error _ -> Alcotest.fail "expression rejected"
 
 let tests =
   [
@@ -519,7 +623,10 @@ let tests =
         ("documents", `Quick, docker_output_documents);
         ("mount", `Quick, docker_mount_table);
         ("run_argv_env_and_mounts", `Quick, docker_run_argv_env_and_mounts);
+        ("network", `Quick, docker_run_argv_network);
+        ("network_access", `Quick, network_access_documents);
         ("designated", `Quick, designated_outdir_table);
       ] );
-    ("docker_image", [ docker_load_saved; docker_import_saved ]);
+    ( "docker_image",
+      [ docker_load_saved; docker_import_saved; docker_file_built ] );
   ]

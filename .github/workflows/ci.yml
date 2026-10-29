@@ -8,10 +8,12 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
+          fetch-depth: 0
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "5.5"
@@ -26,10 +28,6 @@ jobs:
       - run: pip install -c scripts/requirements.txt cwltest
       # On a PR, compare against ccr built from the base branch: a test that
       # passes there must still pass. On a push to main, just report.
-      - if: github.event_name == 'pull_request'
-        run: git fetch --no-tags --depth=1 origin +refs/heads/$BASE:refs/remotes/origin/$BASE
-        env:
-          BASE: ${{ github.base_ref }}
       - name: v1.2 conformance
         run: opam exec -- python scripts/conformance.py --suite v1.2 ${BASE:+--baseline origin/$BASE}
         env:
@@ -45,3 +43,41 @@ jobs:
         with:
           name: conformance
           path: _build/conformance/
+
+  # Size and shape (AGENTS.md). Its own job, so it is its own required check.
+  # The gate and gates.json come from the base branch, so a PR that edits
+  # them is measured by the old ones, and .github/CODEOWNERS makes the owner
+  # read any change to them or to this file. It checks the PR's own commits,
+  # up to the PR head, not GitHub's merge commit.
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASE: ${{ github.base_ref }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5"
+      - run: opam install . --deps-only --with-test -y
+      - run: opam install ocamlformat.0.29.0 -y
+      - name: build the gate from the base branch
+        run: |
+          src=.
+          if [ -n "$BASE" ] && git cat-file -e "origin/$BASE:scripts/gates/dune" 2> /dev/null; then
+            src="$RUNNER_TEMP/base"
+            git worktree add --detach "$src" "origin/$BASE"
+          fi
+          (cd "$src" && opam exec -- dune build scripts/gates/gates.exe)
+          cp "$src/_build/default/scripts/gates/gates.exe" "$RUNNER_TEMP/gates"
+      - name: every commit
+        if: github.event_name == 'pull_request'
+        run: opam exec -- "$RUNNER_TEMP/gates" --base "origin/$BASE" --head "$HEAD"
+      - name: every commit builds, keeps its test cases, and has tests that need it
+        if: github.event_name == 'pull_request'
+        run: opam exec -- "$RUNNER_TEMP/gates" --each --base "origin/$BASE" --head "$HEAD"
+      - name: mutants
+        run: opam exec -- "$RUNNER_TEMP/gates" --mutants

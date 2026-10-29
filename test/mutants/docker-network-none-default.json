@@ -1,0 +1,6 @@
+{
+  "file": "lib/runtime.ml",
+  "old": "  @ (if spec.network then [] else [ \"--network=none\" ])",
+  "new": "  @ (if spec.network then [ \"--network=none\" ] else [])",
+  "why": "A container has no network unless the tool is granted it"
+}

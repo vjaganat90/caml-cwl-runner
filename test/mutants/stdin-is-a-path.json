@@ -1,0 +1,6 @@
+{
+  "file": "lib/cwl.ml",
+  "old": "let+ p = eval_filename Result.ok ctx s in",
+  "new": "let+ p = eval_filename (Workdir.safe_leaf ~what:\"stdin\") ctx s in",
+  "why": "stdin is a path to a file, which may be in a subdirectory, not a single name"
+}

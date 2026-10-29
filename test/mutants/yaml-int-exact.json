@@ -1,0 +1,6 @@
+{
+  "file": "lib/untyped_tree.ml",
+  "old": "| Some n, _ when is_int && (n >= 0L || sign = 1) -> Int n",
+  "new": "| Some n, _ when false -> Int n",
+  "why": "an integer scalar is an exact int64, not a float"
+}
