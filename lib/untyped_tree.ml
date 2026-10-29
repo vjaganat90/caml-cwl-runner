@@ -27,18 +27,6 @@ let of_yaml_string ?(path = "") s =
       let path = if path = "" then None else Some path in
       Error (Error.Parse { path; message = msg })
 
-let string_field kvs key =
-  match List.assoc_opt key kvs with Some (String s) -> Some s | _ -> None
-
-let bool_field kvs key =
-  match List.assoc_opt key kvs with Some (Bool b) -> Some b | _ -> None
-
-let int_field kvs key =
-  match List.assoc_opt key kvs with
-  | Some (Int n) -> Some n
-  | Some (Float f) when Float.is_integer f -> Some (Int64.of_float f)
-  | _ -> None
-
 let rec pp fmt = function
   | Null -> Format.pp_print_string fmt "null"
   | Bool b -> Format.pp_print_bool fmt b
@@ -57,6 +45,29 @@ let rec pp fmt = function
            ~pp_sep:(fun fmt () -> Format.pp_print_string fmt ", ")
            (fun fmt (k, v) -> Format.fprintf fmt "%s: %a" k pp v))
         kvs
+
+let child path key = if path = "" then key else path ^ "." ^ key
+
+(* A missing key and [null] are both absent. A present value that [read] does
+   not accept is a schema error at the key's path, never [None]. *)
+let field what read ~json_path kvs key =
+  match List.assoc_opt key kvs with
+  | None | Some Null -> Ok None
+  | Some v -> (
+      match read v with
+      | Some x -> Ok (Some x)
+      | None ->
+          Error.schema (child json_path key)
+            (Format.asprintf "expected %s, got %a" what pp v))
+
+let string_field = field "string" (function String s -> Some s | _ -> None)
+let bool_field = field "boolean" (function Bool b -> Some b | _ -> None)
+
+let int_field =
+  field "int" (function
+    | Int n -> Some n
+    | Float f when Float.is_integer f -> Some (Int64.of_float f)
+    | _ -> None)
 
 let is_remote s =
   String.starts_with ~prefix:"http://" s
