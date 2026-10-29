@@ -1,0 +1,6 @@
+{
+  "file": "lib/ty.ml",
+  "old": "matches f.ty (field_value f v)",
+  "new": "matches f.ty (field_value f v) || true",
+  "why": "a record value matches only when each field matches its type"
+}

@@ -1,7 +1,3 @@
-(** POSIX / Python glob against an abstract filesystem. CWL outputBinding rules
-    ([**], reject [..], roots) live here. Runtime only implements [FS]; this
-    module does not spawn or touch Eio. *)
-
 include Data.Glob
 open Error.Syntax
 
@@ -11,6 +7,8 @@ let join a b =
   else if String.ends_with ~suffix:"/" a then a ^ b
   else a ^ "/" ^ b
 
+(* Splits at [/] and drops the empty components. A backslash is dropped and the
+   character after it kept, even a [/] or a wildcard. *)
 let split_pattern s =
   let buf = Buffer.create (String.length s) in
   let rec go i acc escaped =
@@ -56,25 +54,11 @@ let compile_component s =
            { message = Printf.sprintf "invalid glob pattern '%s'" s })
   | Ok re -> Ok (Re.compile re)
 
-let trim_slash s =
-  let n = String.length s in
-  if n > 1 && s.[n - 1] = '/' then String.sub s 0 (n - 1) else s
-
-let strip_prefix ~prefix s =
-  let prefix = trim_slash prefix in
-  if s = prefix then Some ""
-  else
-    let p = prefix ^ "/" in
-    if String.starts_with ~prefix:p s then
-      Some (String.sub s (String.length p) (String.length s - String.length p))
-    else None
-
 let relativize ~root pattern =
-  let root = trim_slash root in
   let pattern = String.trim pattern in
   if pattern = "" || pattern = "." then Ok []
   else if String.starts_with ~prefix:"/" pattern then
-    match strip_prefix ~prefix:root pattern with
+    match Location.relative root pattern with
     | Some rest -> Ok (split_pattern rest)
     | None ->
         Error
@@ -92,12 +76,8 @@ let sort_unique xs =
 
 let max_glob_depth = 64
 
-let under root path =
-  let root = trim_slash root in
-  let path = trim_slash path in
-  path = root || String.starts_with ~prefix:(root ^ "/") path
-
-let in_roots ~roots path = List.exists (fun root -> under root path) roots
+let in_roots ~roots path =
+  List.exists (fun root -> Location.under root path) roots
 
 let may_list (module FS : FS) ~roots dir =
   match FS.realpath dir with
@@ -154,15 +134,16 @@ let collect (module FS : FS) ~roots ~depth dir parts =
   go ~depth dir parts
 
 let glob (module FS : FS) ?roots root pattern =
-  let root = trim_slash root in
+  let root = Location.trim_slash root in
   let roots =
     match roots with
     | None | Some [] -> [ root ]
-    | Some rs -> List.map trim_slash rs
+    | Some rs -> List.map Location.trim_slash rs
   in
   let roots =
     List.map
-      (fun r -> match FS.realpath r with Ok p -> trim_slash p | Error _ -> r)
+      (fun r ->
+        match FS.realpath r with Ok p -> Location.trim_slash p | Error _ -> r)
       roots
   in
   let* parts = relativize ~root pattern in

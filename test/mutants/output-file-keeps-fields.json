@@ -1,0 +1,6 @@
+{
+  "file": "lib/workdir.ml",
+  "old": "Ty.fill_file_paths (set_paths v (Some path, Some path))",
+  "new": "Ty.fill_file_paths (set_paths (Untyped_tree.Object [ (\"class\", Untyped_tree.String cls) ]) (Some path, Some path))",
+  "why": "an output File keeps the fields it was given, such as format"
+}
