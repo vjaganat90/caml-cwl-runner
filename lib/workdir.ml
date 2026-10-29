@@ -1,7 +1,3 @@
-(** File and Directory values against a work directory. Stages inputs, relocates
-    container paths, confines outputs, and fills checksums. Does not glob,
-    spawn, or build argv. *)
-
 open Error.Syntax
 
 let safe_leaf ~what s =

@@ -1,8 +1,3 @@
-(** Nested YAML/JSON file contents, before CWL types. The only document reader.
-    [load] resolves local [$import] and [$include], reading every file through
-    the [FILE] it is given. Does not leak [Yaml.value]. Not [Document]
-    (CommandLineTool | Workflow) and not [Type.value]. *)
-
 include Data.Untyped_tree
 open Error.Syntax
 
@@ -27,18 +22,6 @@ let of_yaml_string ?(path = "") s =
       let path = if path = "" then None else Some path in
       Error (Error.Parse { path; message = msg })
 
-let string_field kvs key =
-  match List.assoc_opt key kvs with Some (String s) -> Some s | _ -> None
-
-let bool_field kvs key =
-  match List.assoc_opt key kvs with Some (Bool b) -> Some b | _ -> None
-
-let int_field kvs key =
-  match List.assoc_opt key kvs with
-  | Some (Int n) -> Some n
-  | Some (Float f) when Float.is_integer f -> Some (Int64.of_float f)
-  | _ -> None
-
 let rec pp fmt = function
   | Null -> Format.pp_print_string fmt "null"
   | Bool b -> Format.pp_print_bool fmt b
@@ -57,6 +40,28 @@ let rec pp fmt = function
            ~pp_sep:(fun fmt () -> Format.pp_print_string fmt ", ")
            (fun fmt (k, v) -> Format.fprintf fmt "%s: %a" k pp v))
         kvs
+
+let child path key = if path = "" then key else path ^ "." ^ key
+let expected what value = Format.asprintf "expected %s, got %a" what pp value
+
+(* A missing key and [null] are both absent. A present value that [read] does
+   not accept is a schema error at the key's path, never [None]. *)
+let field what read ~json_path kvs key =
+  match List.assoc_opt key kvs with
+  | None | Some Null -> Ok None
+  | Some v -> (
+      match read v with
+      | Some x -> Ok (Some x)
+      | None -> Error.schema (child json_path key) (expected what v))
+
+let string_field = field "string" (function String s -> Some s | _ -> None)
+let bool_field = field "boolean" (function Bool b -> Some b | _ -> None)
+
+let int_field =
+  field "int" (function
+    | Int n -> Some n
+    | Float f when Float.is_integer f -> Some (Int64.of_float f)
+    | _ -> None)
 
 let is_remote s =
   String.starts_with ~prefix:"http://" s
@@ -130,9 +135,7 @@ let resolve (module F : FILE) ~base ~stack tree =
           let* path = locate ~feature:"remote $base" ~base raw in
           if String.ends_with ~suffix:"/" (strip_file raw) then Ok (`Dir path)
           else Ok (`File path)
-      | Some other ->
-          Error.schema "$base"
-            (Format.asprintf "expected string, got %a" pp other)
+      | Some other -> Error.schema "$base" (expected "string" other)
     in
     match (List.assoc_opt "$import" kvs, List.assoc_opt "$include" kvs) with
     | Some _, Some _ ->
