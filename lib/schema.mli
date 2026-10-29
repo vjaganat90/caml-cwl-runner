@@ -15,6 +15,14 @@ val map_i :
   'a list ->
   ('b list * Error.diagnostic list, Error.t) result
 
+val expected :
+  json_path:string -> what:string -> Untyped_tree.value -> ('a, Error.t) result
+(** Schema error whose message is [expected <what>, got <value>]. *)
+
+val parse_int : string -> Untyped_tree.value -> (int, Error.t) result
+(** [parse_int json_path v] is [v] as an int: an int, or a float that is an
+    integer. Anything else is a schema error at [json_path]. *)
+
 val strings :
   json_path:string ->
   expected:string ->

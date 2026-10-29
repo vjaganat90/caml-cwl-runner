@@ -442,6 +442,11 @@ let docker_load_saved =
         ~template:(read_fixture "docker-load.cwl")
         ~archive:tar () )
 
+let remove_image tag =
+  let prefix, q = docker_prefix () in
+  ignore
+    (Sys.command (Printf.sprintf "%s%s rmi -f %s >/dev/null 2>&1" prefix q tag))
+
 let docker_import_saved =
   ( "docker_import_saved",
     `Slow,
@@ -460,7 +465,13 @@ let docker_import_saved =
       in
       if code <> 0 then Alcotest.fail "docker export failed";
       let template = read_fixture "docker-import.cwl" in
-      let import ~archive = run_archive_tool ~dir ~template ~archive () in
+      (* Each import is a new image that takes the fixture's tag from the one
+         before, which would stay behind untagged, so each is removed. *)
+      let import ~archive =
+        Fun.protect
+          ~finally:(fun () -> remove_image "ccr-import-test")
+          (run_archive_tool ~dir ~template ~archive)
+      in
       let gz = Filename.concat dir "rootfs.tar.gz" in
       gzip_to ~src:tar ~dst:gz;
       import ~archive:gz;
