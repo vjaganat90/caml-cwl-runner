@@ -4,6 +4,21 @@
 open Harness
 open QCheck2
 
+let union_array_item_prefixes () =
+  let arr items prefix =
+    Cwl.Type.Array { items; item_binding = Some (binding ~prefix ()) }
+  in
+  let inputs =
+    [
+      bound "xs"
+        ~ty:(Cwl.Type.Union [ arr Cwl.Type.Int "-n"; arr Cwl.Type.String "-s" ]);
+    ]
+  in
+  match argv inputs [ ("xs", strings [ "a"; "b" ]) ] with
+  | Error e -> Alcotest.fail (Cwl.Error.to_string e)
+  | Ok got ->
+      Alcotest.(check (list string)) "argv" [ "echo"; "-s"; "a"; "-s"; "b" ] got
+
 let example_cases =
   [
     example_case ~docker:true "cl_basic_generation" "bwa-mem-tool.cwl"
@@ -39,11 +54,68 @@ let example_cases =
       ];
   ]
 
+(* One row per binding rule of CommandLineTool.yml: a name, the tool's
+   [inputs] and [arguments] as YAML lines, the job, and the argv. *)
+let rules =
+  [
+    ( "a string argument is an expression",
+      "inputs: []\narguments: [$(runtime.cores)]",
+      [],
+      [ "echo"; "1" ] );
+    ( "an empty array adds nothing, not even its prefix",
+      "inputs: {xs: {type: 'string[]', inputBinding: {prefix: -x}}}",
+      [ ("xs", strings []) ],
+      [ "echo" ] );
+    ( "an array with no binding adds nothing",
+      "inputs: {xs: 'string[]'}",
+      [ ("xs", strings [ "a" ]) ],
+      [ "echo" ] );
+    ( "valueFrom on an array binding replaces the array",
+      "inputs: {xs: {type: 'string[]', inputBinding: {valueFrom: \
+       $(self.length)}}}",
+      [ ("xs", strings [ "a"; "b" ]) ],
+      [ "echo"; "2" ] );
+    ( "an array from valueFrom is its prefix, then its elements",
+      "inputs: {xs: 'string[]'}\n\
+       arguments: [{prefix: -x, valueFrom: $(inputs.xs)}]",
+      [ ("xs", strings [ "a"; "b" ]) ],
+      [ "echo"; "-x"; "a"; "b" ] );
+    ( "record fields bind by position after the record's own words",
+      "inputs: {r: {inputBinding: {prefix: -r}, type: {type: record, fields: \
+       {b: {type: int, inputBinding: {position: 2, prefix: -b}}, c: {type: \
+       int, inputBinding: {position: 1, prefix: -c}}}}}}",
+      [
+        ( "r",
+          Cwl.Untyped_tree.Object
+            [ ("b", Cwl.Untyped_tree.Int 1L); ("c", Cwl.Untyped_tree.Int 2L) ]
+        );
+      ],
+      [ "echo"; "-r"; "-c"; "2"; "-b"; "1" ] );
+  ]
+
+let rule (name, fields, job, expected) =
+  let header =
+    "cwlVersion: v1.2\nclass: CommandLineTool\nbaseCommand: echo\n"
+  in
+  let got =
+    let open Cwl.Error.Syntax in
+    let* tree =
+      Cwl.Untyped_tree.of_yaml_string (header ^ "outputs: []\n" ^ fields)
+    in
+    let* tool = Cwl.Command_line_tool.of_tree tree in
+    Cwl.Bind.argv
+      (module Cwl.Expr.Param_ref)
+      tool.value job Cwl.Expr.default_runtime
+  in
+  ( name,
+    `Quick,
+    fun () -> Alcotest.(check (list string)) name expected (expect_ok got) )
+
 let prop_boolean_flag =
   Test.make ~name:"boolean flag" ~count:100 Gen.bool (fun b ->
       argv_ok
         [ bound "flag" ~ty:Cwl.Type.Boolean ~prefix:"-f" ]
-        [ ("flag", Cwl.Type.Vbool b) ]
+        [ ("flag", Cwl.Untyped_tree.Bool b) ]
         (if b then [ "echo"; "-f" ] else [ "echo" ]))
 
 let prop_optional_null_silent =
@@ -54,7 +126,7 @@ let prop_optional_null_silent =
             ~ty:(Cwl.Type.Union [ Cwl.Type.String; Cwl.Type.Null ])
             ~prefix:"--msg";
         ]
-        [ ("msg", Cwl.Type.Vnull) ]
+        [ ("msg", Cwl.Untyped_tree.Null) ]
         [ "echo" ])
 
 let prop_item_separator =
@@ -77,7 +149,7 @@ let prop_separate_false =
     (fun s ->
       argv_ok
         [ bound "v" ~prefix:"-i" ~separate:false ]
-        [ ("v", Cwl.Type.Vstring s) ]
+        [ ("v", Cwl.Untyped_tree.String s) ]
         [ "echo"; "-i" ^ s ])
 
 let prop_base_command_prefix =
@@ -92,7 +164,10 @@ let prop_position_order =
       match
         argv
           [ bound "a" ~position:p1; bound "b" ~position:p2 ]
-          [ ("a", Cwl.Type.Vstring "A"); ("b", Cwl.Type.Vstring "B") ]
+          [
+            ("a", Cwl.Untyped_tree.String "A");
+            ("b", Cwl.Untyped_tree.String "B");
+          ]
       with
       | Error _ -> false
       | Ok argv ->
@@ -103,7 +178,9 @@ let prop_position_order =
 
 let tests =
   [
-    ("bind_examples", example_cases);
+    ( "bind_examples",
+      ("union_array_item_prefixes", `Quick, union_array_item_prefixes)
+      :: (example_cases @ List.map rule rules) );
     ( "bind_properties",
       List.map
         (QCheck_alcotest.to_alcotest ~speed_level:`Quick)

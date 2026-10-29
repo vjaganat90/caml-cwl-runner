@@ -1,0 +1,6 @@
+{
+  "file": "lib/ty.ml",
+  "old": "Untyped_tree.Object (List.map2 (fun (k, _) y -> (k, y)) kvs ys)",
+  "new": "Untyped_tree.Object (List.rev (List.map2 (fun (k, _) y -> (k, y)) kvs ys))",
+  "why": "walking a record keeps its key order"
+}

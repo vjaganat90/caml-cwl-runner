@@ -1,0 +1,6 @@
+{
+  "file": "lib/workdir.ml",
+  "old": "let* () = R.mkdir_p dst in",
+  "new": "let* () = R.mkdir_p (Filename.dirname dst) in",
+  "why": "staging a Directory literal creates it under its basename, so its entries can be staged inside it"
+}
